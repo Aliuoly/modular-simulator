@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+import json
 from math import isfinite
 from typing import Protocol
 
@@ -17,6 +18,23 @@ from modular_simulation.connection.hydraulic_compile import solve_compiled_hydra
 from modular_simulation.connection.hydraulic_solver import HydraulicSolveResult
 from modular_simulation.connection.network import ConnectionNetwork
 from modular_simulation.connection.state import PortCondition
+
+CONNECTED_PLANT_PHASE_ORDER: tuple[str, ...] = (
+    "subsystem_sensor_update",
+    "subsystem_calculation_update",
+    "plant_calculation_update",
+    "subsystem_controller_update",
+    "subsystem_process_step",
+    "connection_runtime_coupling",
+)
+
+HOT_INSTALL_STATE_MACHINE: tuple[str, ...] = (
+    "Queued",
+    "Staged",
+    "Applied",
+    "Skipped",
+    "RolledBack",
+)
 
 
 @dataclass(frozen=True)
@@ -69,6 +87,21 @@ class RuntimeBoundaryPropagationStep(Protocol):
 
 
 class ConnectionRuntimeOrchestrator:
+    """Runtime coupling orchestrator with deterministic barrier-commit semantics.
+
+    Contract snapshot:
+    - Connected-plant phase order is fixed by ``CONNECTED_PLANT_PHASE_ORDER``.
+    - Runtime reconfiguration is a hot-install state machine: ``Queued -> Staged -> Applied``
+      and ``Queued -> Staged -> Skipped`` for exact idempotent replay, or
+      ``Queued -> Staged -> RolledBack`` on any failure.
+    - Requests are applied in deterministic FIFO queue order.
+    - Requests queued during a running macro-step are accepted but visible only at the next
+      barrier, before the next macro-step executes.
+    - Reusing an ``idempotency_key`` with a different payload is rejected as a poison request
+      with no state change.
+    - Any poison request at queue head strictly blocks following requests in that barrier.
+    """
+
     def __init__(
         self,
         *,
@@ -101,6 +134,7 @@ class ConnectionRuntimeOrchestrator:
         self._macro_step_index: int = 0
         self._macro_step_active: bool = False
         self._committed_idempotency_keys: set[str] = set()
+        self._committed_idempotency_payloads: dict[str, str] = {}
 
     @property
     def simulation_time_s(self) -> float:
@@ -129,7 +163,8 @@ class ConnectionRuntimeOrchestrator:
         self._simulation_time_s = simulation_time_s
         self._macro_step_index = macro_step_index
         self._macro_step_active = macro_step_active
-        self._committed_idempotency_keys = set(committed_idempotency_keys)
+        self._committed_idempotency_keys = {key.strip() for key in committed_idempotency_keys}
+        self._committed_idempotency_payloads = {}
 
     def step(
         self, *, network: ConnectionNetwork, macro_step_time_s: float
@@ -291,6 +326,7 @@ class ConnectionRuntimeOrchestrator:
             self._simulation_time_s,
             self._macro_step_index,
             set(self._committed_idempotency_keys),
+            dict(self._committed_idempotency_payloads),
         )
 
         applied_request_ids: list[str] = []
@@ -298,10 +334,24 @@ class ConnectionRuntimeOrchestrator:
         try:
             for request in queued_requests:
                 idempotency_key = request.idempotency_key
+                payload_fingerprint = self._mutation_payload_fingerprint(request.mutations)
                 if (
                     idempotency_key is not None
                     and idempotency_key in self._committed_idempotency_keys
                 ):
+                    committed_fingerprint = self._committed_idempotency_payloads.get(
+                        idempotency_key
+                    )
+                    if committed_fingerprint is None:
+                        raise ValueError(
+                            f"request '{request.request_id}' reuses idempotency_key "
+                            + f"'{idempotency_key}' but committed payload is unavailable"
+                        )
+                    if committed_fingerprint != payload_fingerprint:
+                        raise ValueError(
+                            f"request '{request.request_id}' reuses idempotency_key "
+                            + f"'{idempotency_key}' with different payload"
+                        )
                     skipped_request_ids.append(request.request_id)
                     continue
 
@@ -315,6 +365,7 @@ class ConnectionRuntimeOrchestrator:
 
                 if idempotency_key is not None:
                     self._committed_idempotency_keys.add(idempotency_key)
+                    self._committed_idempotency_payloads[idempotency_key] = payload_fingerprint
                 applied_request_ids.append(request.request_id)
 
             if applied_request_ids:
@@ -341,7 +392,16 @@ class ConnectionRuntimeOrchestrator:
             self._simulation_time_s = runtime_snapshot[0]
             self._macro_step_index = runtime_snapshot[1]
             self._committed_idempotency_keys = runtime_snapshot[2]
+            self._committed_idempotency_payloads = runtime_snapshot[3]
             raise RuntimeError(f"reconfiguration transaction rollback: {error}") from error
+
+    def _mutation_payload_fingerprint(self, mutations: Sequence[Mapping[str, object]]) -> str:
+        return json.dumps(
+            [dict(mutation) for mutation in mutations],
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
 
     def _apply_mutation(
         self, *, network: ConnectionNetwork, mutation: Mapping[str, object]
@@ -497,6 +557,8 @@ class ConnectionRuntimeOrchestrator:
 
 
 __all__ = [
+    "CONNECTED_PLANT_PHASE_ORDER",
+    "HOT_INSTALL_STATE_MACHINE",
     "BarrierReconfigurationReport",
     "ConnectionRuntimeOrchestrator",
     "ConnectionRuntimeStepResult",
