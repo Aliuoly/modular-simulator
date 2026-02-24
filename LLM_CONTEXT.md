@@ -168,3 +168,42 @@ Base class: `src/modular_simulation/components/abstract_component.py`.
 - Root README in working tree is `readme.md`.
 - No Cursor rules detected at `.cursor/rules/**` or `.cursorrules`.
 - No Copilot instructions detected at `.github/copilot-instructions.md`.
+
+## Connection Migration and Connected-Plant Guidance
+
+Use the connected-plant path as the active default for connection-layer work.
+
+- Primary runtime composition:
+  - `SubsystemRuntimeDescriptor` describes subsystem identity, process binding identity, and publication map.
+  - `Subsystem` owns subsystem-local installers and phase execution (`run_sensor_phase`, `run_calculation_phase`, `run_controller_phase`, `run_process_phase`).
+  - `ConnectedPlantOrchestrator` coordinates macro-step phase ordering and runtime coupling.
+- Subsystem installer contract:
+  - `Subsystem.add_sensor(...)` and `Subsystem.add_control_element(...)` validate tags against the subsystem-local published process view.
+  - Invalid tags fail fast with explicit configuration errors, no silent fallback wiring.
+- Plant calculation contract:
+  - Register with `ConnectedPlantOrchestrator.add_calculation(calculation_id, input_tags, output_tags, evaluate)`.
+  - Output-tag collisions are rejected against both subsystem publications and existing plant-calculation outputs.
+  - Resolution order is deterministic from published subsystem keys plus previously resolved plant outputs.
+  - Unresolvable sets raise an `ExceptionGroup` listing per-calculation missing inputs.
+- Publication key and namespacing rules:
+  - Canonical key shape is `<subsystem>/<published_tag>`.
+  - Bare publication tags are normalized to `<descriptor_id>/<published_tag>`.
+  - Cross-subsystem collisions on the same published tag are fail-fast and identify both subsystem owners.
+
+### Break-and-replace API mapping
+
+Legacy process-interface symbols are intentionally removed in `modular_simulation.connection.process_interface`.
+
+- `ProcessInterface` -> `ConnectionNetwork.compile().process_bindings['<process_id>']` + `ProcessBinding.bind_inlets(...)` / `ProcessBinding.bind_outlets(...)`
+- `ProcessModelAdapter` -> `ConnectionNetwork.compile().process_bindings['<process_id>']`
+- `ProcessBalanceTerm` -> `ProcessBinding.get_outlet('<port_name>')` fields (`normalized_inlet_flow`, `inlet_flow`, `outlet_flow`)
+
+Guardrail expectation:
+
+- Removed symbols raise `AttributeError` with actionable migration guidance.
+- Legacy flow should not be documented or presented as recommended fallback behavior.
+
+### Example command for migrated path
+
+- Run `.venv/bin/python examples/connection_layer/two_tank_reaction_comparison.py --no-show`.
+- Expect printed trajectory rows and parity metrics (`max_abs_error_a`, `max_abs_error_b`, `rmse_b`, `b_lag_steps`, monotonic flags).

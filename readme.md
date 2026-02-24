@@ -46,6 +46,56 @@ python examples/simplified_gas_phase_system/run_simulation.py
 
 This will execute the simulation and generate plots and logs demonstrating the system's behavior.
 
+For connection-layer work, use the connected-plant flow as the default:
+
+```bash
+.venv/bin/python examples/connection_layer/two_tank_reaction_comparison.py --no-show
+```
+
+This command runs the migrated subsystem-based two-tank benchmark and prints CSV-style trajectory rows plus parity metrics such as `max_abs_error_a`, `max_abs_error_b`, `rmse_b`, and `b_lag_steps`.
+
+## Connected-Plant API (Recommended)
+
+The recommended authoring flow is:
+
+1. Build topology with `ConnectionNetwork`.
+2. Compile once and use `compiled.process_bindings['<process_id>']` for port binding.
+3. Define each subsystem with `SubsystemRuntimeDescriptor` and `Subsystem`.
+4. Install local runtime components through subsystem installers (`add_sensor`, `add_control_element`).
+5. Coordinate macro-steps with `ConnectedPlantOrchestrator.step(...)`.
+
+### Subsystem installers
+
+- `Subsystem.add_sensor(sensor)` validates `sensor.measurement_tag` against subsystem-local published tags.
+- `Subsystem.add_control_element(control_element)` validates controller CV/MV tags against subsystem-local published tags.
+- Validation is fail-fast and raises explicit configuration errors when tags are unresolved.
+
+### Plant calculations
+
+- Register plant-level calculations with `ConnectedPlantOrchestrator.add_calculation(calculation_id, input_tags, output_tags, evaluate)`.
+- Output tags must be unique and must not collide with subsystem-published tags or existing plant-calculation outputs.
+- Resolution order is deterministic, based on currently published subsystem tags plus previously resolved plant outputs.
+- Unresolvable dependency sets fail as an `ExceptionGroup` with per-calculation missing-input details.
+
+### Namespaced publication keys and collision policy
+
+- Published measurements use `<subsystem>/<published_tag>` keys.
+- If a subsystem publication omits a namespace, the descriptor id is prepended automatically.
+- Cross-subsystem ownership collision on the same `published_tag` fails fast.
+- Collision errors are explicit, they identify the conflicting subsystems and stop registration/evaluation.
+
+## Break-and-Replace Migration Map
+
+Legacy `modular_simulation.connection.process_interface` symbols are removed, they are not a fallback path.
+
+| Removed API | Replacement |
+| --- | --- |
+| `ProcessInterface` | Use `ProcessBinding` from `ConnectionNetwork.compile().process_bindings['<process_id>']`, bind ports with `bind_inlets` and `bind_outlets`. |
+| `ProcessModelAdapter` | Use `ConnectionNetwork.compile().process_bindings['<process_id>']` directly for explicit inlet and outlet wiring. |
+| `ProcessBalanceTerm` | Use `ProcessBinding.get_outlet('<port_name>')`, read `normalized_inlet_flow`, `inlet_flow`, and `outlet_flow` from the returned mapping. |
+
+Guardrail behavior is strict by design: attempts to access removed symbols raise actionable migration errors that point to `ConnectionNetwork.compile().process_bindings['<process_id>']` and the `ProcessBinding` API (`bind_inlets`, `bind_outlets`, `get_outlet`, `validate`).
+
 ## Architecture & Interactions
 
 The framework orchestrates interactions between the **System** (simulation engine), **Process Model** (physics/chemistry), **Sensors**, **Calculations**, and **Controllers**.

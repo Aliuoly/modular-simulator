@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Annotated, Any, cast, override
@@ -10,10 +10,18 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.integrate import solve_ivp
 
+from modular_simulation.connection.connected_plant_orchestrator import (
+    ConnectedPlantOrchestrator,
+    ConnectedPlantPhaseHooks,
+)
+from modular_simulation.connection.connection_layer import TransportAndMixingUpdate
+from modular_simulation.connection.hydraulic_solver import HydraulicSolveResult
 from modular_simulation.connection.junction import mix_junction_state
 from modular_simulation.connection.network import ConnectionNetwork
 from modular_simulation.connection.process_binding import ProcessBinding
+from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
 from modular_simulation.connection.state import MaterialState, PortCondition
+from modular_simulation.connection.subsystem_descriptor import Subsystem, SubsystemRuntimeDescriptor
 from modular_simulation.measurables.process_model import (
     ProcessModel,
     StateMetadata as M,
@@ -36,6 +44,7 @@ class TankCascadeConfig:
     tank_b_holdup_mol: float = 2.2
     tank_a_rate_constant_per_s: float = 0.35
     tank_b_rate_constant_per_s: float = 0.18
+    use_subsystem_abstraction: bool = True
 
 
 @dataclass(frozen=True)
@@ -134,7 +143,7 @@ def _attach_default_solver_options(process_model: ProcessModel) -> None:
     process_model.attach_system(cast(Any, dummy_system))
 
 
-def _build_two_tank_network() -> tuple[ProcessBinding, ProcessBinding]:
+def _build_two_tank_network() -> tuple[ConnectionNetwork, ProcessBinding, ProcessBinding]:
     network = ConnectionNetwork()
     network.add_boundary_source("feed")
     network.add_process("tank_a", inlet_ports=("inlet",), outlet_ports=("outlet",))
@@ -144,7 +153,82 @@ def _build_two_tank_network() -> tuple[ProcessBinding, ProcessBinding]:
     network.connect("tank_a.outlet", "tank_b.inlet")
     network.connect("tank_b.outlet", "product")
     compiled = network.compile()
-    return compiled.process_bindings["tank_a"], compiled.process_bindings["tank_b"]
+    return network, compiled.process_bindings["tank_a"], compiled.process_bindings["tank_b"]
+
+
+def _constant_hydraulic_result(*, edge_flow: float) -> HydraulicSolveResult:
+    return HydraulicSolveResult(
+        converged=True,
+        iterations=1,
+        residual_norm=1.0e-10,
+        solution_vector=np.asarray([edge_flow, 5.0], dtype=np.float64),
+        unknowns={"flow": edge_flow, "pressure": 5.0},
+        unknown_index_map={"flow": 0, "pressure": 1},
+        residual_index_map={"balance": 0, "ref": 1},
+    )
+
+
+@dataclass
+class _TankSubsystemRuntime:
+    descriptor: SubsystemRuntimeDescriptor
+    model: FirstOrderLiquidTankModel
+    binding: ProcessBinding
+    pressure_pa: float
+    temperature_k: float
+    outlet_flow_mol_per_s: float
+    inlet_reactant_fraction: float
+    inlet_molar_flow_rate: float
+    outlet_state: MaterialState = field(init=False)
+    subsystem_handle: Subsystem | None = None
+
+    def __post_init__(self) -> None:
+        self.outlet_state = _material_state_from_reactant_fraction(
+            float(self.model.reactant_fraction),
+            pressure_pa=self.pressure_pa,
+            temperature_k=self.temperature_k,
+        )
+
+    def run_sensor_phase(self) -> None:
+        return
+
+    def run_calculation_phase(self) -> None:
+        return
+
+    def run_controller_phase(self) -> None:
+        return
+
+    def run_process_phase(self, duration: float) -> None:
+        outlet_state_for_binding = _material_state_from_reactant_fraction(
+            float(self.model.reactant_fraction),
+            pressure_pa=self.pressure_pa,
+            temperature_k=self.temperature_k,
+        )
+        self.binding.bind_inlets({"inlet": self.inlet_molar_flow_rate})
+        self.binding.bind_outlets(
+            {
+                "outlet": {
+                    "role": "outlet",
+                    "flow": self.outlet_flow_mol_per_s,
+                    "composition": outlet_state_for_binding.mole_fractions,
+                }
+            }
+        )
+        outlet_binding = self.binding.get_outlet("outlet")
+        self.model.inlet_reactant_fraction = self.inlet_reactant_fraction
+        self.model.inlet_molar_flow_rate = cast(float, outlet_binding["outlet_flow"])
+        self.model.step(duration)
+        self.outlet_state = _material_state_from_reactant_fraction(
+            float(self.model.reactant_fraction),
+            pressure_pa=self.pressure_pa,
+            temperature_k=self.temperature_k,
+        )
+
+    def snapshot_published_measurements(self) -> dict[str, float]:
+        return {
+            f"{self.descriptor.descriptor_id}/reactant_fraction": float(
+                self.model.reactant_fraction
+            )
+        }
 
 
 def _material_state_from_reactant_fraction(
@@ -177,6 +261,8 @@ def _port_condition_from_state(
 def _simulate_connection_layer(
     config: TankCascadeConfig,
 ) -> tuple[FloatArray, FloatArray, FloatArray]:
+    if getattr(config, "use_subsystem_abstraction", False):
+        return _simulate_subsystem_path(config)
     n_steps = int(round(config.horizon_s / config.dt_s))
     times: FloatArray = np.linspace(0.0, config.horizon_s, n_steps + 1, dtype=np.float64)
 
@@ -197,7 +283,7 @@ def _simulate_connection_layer(
 
     _attach_default_solver_options(tank_a)
     _attach_default_solver_options(tank_b)
-    binding_a, binding_b = _build_two_tank_network()
+    _, binding_a, binding_b = _build_two_tank_network()
 
     feed_state = _material_state_from_reactant_fraction(
         config.feed_reactant_fraction,
@@ -269,6 +355,150 @@ def _simulate_connection_layer(
         tank_b_trajectory[step] = float(tank_b.reactant_fraction)
 
     return times, tank_a_trajectory, tank_b_trajectory
+
+
+def _simulate_subsystem_path(
+    config: TankCascadeConfig,
+) -> tuple[FloatArray, FloatArray, FloatArray]:
+    n_steps = int(round(config.horizon_s / config.dt_s))
+    times: FloatArray = np.linspace(0.0, config.horizon_s, n_steps + 1, dtype=np.float64)
+
+    tank_a_model = FirstOrderLiquidTankModel(
+        reactant_fraction=config.feed_reactant_fraction,
+        inlet_reactant_fraction=config.feed_reactant_fraction,
+        inlet_molar_flow_rate=config.flow_rate_mol_per_s,
+        liquid_holdup_mol=config.tank_a_holdup_mol,
+        first_order_rate_constant=config.tank_a_rate_constant_per_s,
+    )
+    tank_b_model = FirstOrderLiquidTankModel(
+        reactant_fraction=config.feed_reactant_fraction,
+        inlet_reactant_fraction=config.feed_reactant_fraction,
+        inlet_molar_flow_rate=config.flow_rate_mol_per_s,
+        liquid_holdup_mol=config.tank_b_holdup_mol,
+        first_order_rate_constant=config.tank_b_rate_constant_per_s,
+    )
+    _attach_default_solver_options(tank_a_model)
+    _attach_default_solver_options(tank_b_model)
+
+    network, binding_a, binding_b = _build_two_tank_network()
+    feed_state = _material_state_from_reactant_fraction(
+        config.feed_reactant_fraction,
+        pressure_pa=config.pressure_pa,
+        temperature_k=config.temperature_k,
+    )
+    feed_reactant_fraction = float(feed_state.mole_fractions[0])
+
+    tank_a_runtime = _TankSubsystemRuntime(
+        descriptor=SubsystemRuntimeDescriptor(
+            descriptor_id="tank_a",
+            process_id="tank_a",
+            inlet_ports=("inlet",),
+            outlet_ports=("outlet",),
+            publication_map={"tank_a/reactant_fraction": float(tank_a_model.reactant_fraction)},
+        ),
+        model=tank_a_model,
+        binding=binding_a,
+        pressure_pa=config.pressure_pa,
+        temperature_k=config.temperature_k,
+        outlet_flow_mol_per_s=config.flow_rate_mol_per_s,
+        inlet_reactant_fraction=feed_reactant_fraction,
+        inlet_molar_flow_rate=config.flow_rate_mol_per_s,
+    )
+    tank_b_runtime = _TankSubsystemRuntime(
+        descriptor=SubsystemRuntimeDescriptor(
+            descriptor_id="tank_b",
+            process_id="tank_b",
+            inlet_ports=("inlet",),
+            outlet_ports=("outlet",),
+            publication_map={"tank_b/reactant_fraction": float(tank_b_model.reactant_fraction)},
+        ),
+        model=tank_b_model,
+        binding=binding_b,
+        pressure_pa=config.pressure_pa,
+        temperature_k=config.temperature_k,
+        outlet_flow_mol_per_s=config.flow_rate_mol_per_s,
+        inlet_reactant_fraction=feed_reactant_fraction,
+        inlet_molar_flow_rate=config.flow_rate_mol_per_s,
+    )
+
+    coupling_state: dict[str, MaterialState] = {"previous_b_inlet": feed_state}
+
+    runtime_orchestrator = ConnectionRuntimeOrchestrator(
+        hydraulic_solve_step=(
+            lambda *, network, macro_step_time_s: _constant_hydraulic_result(
+                edge_flow=config.flow_rate_mol_per_s
+            )
+        ),
+        transport_and_mixing_step=(
+            lambda *, network, hydraulic_result, macro_step_time_s: TransportAndMixingUpdate(
+                transport_results={}
+            )
+        ),
+        boundary_propagation_step=(
+            lambda *,
+            network,
+            hydraulic_result,
+            transport_and_mixing_update,
+            macro_step_time_s: _update_coupling_state(
+                config=config,
+                macro_step_time_s=macro_step_time_s,
+                tank_a_runtime=tank_a_runtime,
+                tank_b_runtime=tank_b_runtime,
+                coupling_state=coupling_state,
+            )
+        ),
+    )
+
+    orchestrator = ConnectedPlantOrchestrator(
+        subsystems=(tank_a_runtime, tank_b_runtime),
+        network=network,
+        runtime_orchestrator=runtime_orchestrator,
+        phase_hooks=ConnectedPlantPhaseHooks(),
+    )
+
+    tank_a_trajectory: FloatArray = np.zeros(n_steps + 1, dtype=np.float64)
+    tank_b_trajectory: FloatArray = np.zeros(n_steps + 1, dtype=np.float64)
+    tank_a_trajectory[0] = tank_a_model.reactant_fraction
+    tank_b_trajectory[0] = tank_b_model.reactant_fraction
+
+    for step in range(1, n_steps + 1):
+        _ = orchestrator.step(macro_step_time_s=config.dt_s)
+        tank_a_trajectory[step] = float(tank_a_model.reactant_fraction)
+        tank_b_trajectory[step] = float(tank_b_model.reactant_fraction)
+
+    return times, tank_a_trajectory, tank_b_trajectory
+
+
+def _update_coupling_state(
+    *,
+    config: TankCascadeConfig,
+    macro_step_time_s: float,
+    tank_a_runtime: _TankSubsystemRuntime,
+    tank_b_runtime: _TankSubsystemRuntime,
+    coupling_state: dict[str, MaterialState],
+) -> dict[str, PortCondition]:
+    tank_a_outlet_condition = _port_condition_from_state(
+        tank_a_runtime.outlet_state,
+        through_molar_flow_rate=config.flow_rate_mol_per_s,
+        macro_step_time_s=macro_step_time_s,
+    )
+    mixed_b_inlet = mix_junction_state(
+        incoming_port_conditions={"edge_a_to_b": tank_a_outlet_condition},
+        previous_state=coupling_state["previous_b_inlet"],
+    )
+    coupling_state["previous_b_inlet"] = mixed_b_inlet.state
+
+    tank_b_runtime.inlet_reactant_fraction = float(mixed_b_inlet.state.mole_fractions[0])
+    tank_b_runtime.inlet_molar_flow_rate = mixed_b_inlet.total_incoming_flow_rate
+
+    return {
+        "tank_a.outlet": tank_a_outlet_condition,
+        "tank_b.inlet": _port_condition_from_state(
+            mixed_b_inlet.state,
+            through_molar_flow_rate=mixed_b_inlet.total_incoming_flow_rate,
+            macro_step_time_s=macro_step_time_s,
+        ),
+    }
 
 
 def _ad_hoc_coupled_rhs(
