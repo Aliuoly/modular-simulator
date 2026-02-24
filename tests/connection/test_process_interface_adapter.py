@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+import modular_simulation.connection.process_interface as process_interface_module
 from modular_simulation.connection.network import ConnectionNetwork
 from modular_simulation.connection.process_binding import BindingError, ProcessBinding
 
@@ -66,3 +67,36 @@ def test_binding_validation_requires_explicit_inlet_and_outlet_bindings() -> Non
     with pytest.raises(BindingError) as unbound_outlet_error:
         binding.validate()
     assert str(unbound_outlet_error.value) == "Unbound outlet ports: ['product']"
+
+
+@pytest.mark.parametrize(
+    ("legacy_symbol", "replacement_hint"),
+    [
+        (
+            "ProcessInterface",
+            "Use ProcessBinding from compiled network bindings.",
+        ),
+        (
+            "ProcessModelAdapter",
+            "Use ConnectionNetwork.compile().process_bindings['<process_id>']",
+        ),
+        (
+            "ProcessBalanceTerm",
+            "Use ProcessBinding.get_outlet('<port_name>')",
+        ),
+    ],
+)
+def test_removed_process_interface_symbols_emit_actionable_migration_guidance(
+    legacy_symbol: str,
+    replacement_hint: str,
+) -> None:
+    with pytest.raises(AttributeError) as migration_error:
+        getattr(process_interface_module, legacy_symbol)
+
+    message = str(migration_error.value)
+    assert message.startswith(
+        f"Legacy API 'modular_simulation.connection.process_interface.{legacy_symbol}' was removed by the break-and-replace migration."
+    )
+    assert replacement_hint in message
+    assert "ConnectionNetwork.compile().process_bindings['<process_id>']" in message
+    assert "ProcessBinding API (bind_inlets, bind_outlets, get_outlet, validate)" in message

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportPrivateUsage=false, reportUnusedCallResult=false
 
 from collections.abc import Mapping
 import pytest
@@ -263,6 +263,61 @@ def test_restore_requires_barrier_inactive_and_is_atomic_when_process_validation
         process_runtime_state=process_runtime_state,
     )
     assert after_restore == before_restore
+
+
+def test_restore_preserves_idempotency_conflict_rejection_when_payload_is_unavailable() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network(runtime)
+    process_runtime_state: dict[str, object] = {}
+
+    _ = network.queue_reconfiguration(
+        {
+            "operation": "add_boundary_sink",
+            "boundary_id": "sink_a",
+            "idempotency_key": "sink-key",
+        }
+    )
+    _ = network.step(macro_step_time_s=0.5)
+    snapshot = save_runtime_snapshot_contract(
+        runtime=runtime,
+        network=network,
+        process_runtime_state=process_runtime_state,
+    )
+
+    _ = network.queue_reconfiguration(
+        {
+            "operation": "add_boundary_sink",
+            "boundary_id": "sink_temp",
+        }
+    )
+
+    restore_runtime_snapshot_contract(
+        runtime=runtime,
+        network=network,
+        process_runtime_state_sink=process_runtime_state,
+        snapshot=snapshot,
+    )
+
+    replay = network.queue_reconfiguration(
+        {
+            "operation": "add_boundary_sink",
+            "boundary_id": "sink_b",
+            "idempotency_key": "sink-key",
+        }
+    )
+    assert replay == "rq_0002"
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "reconfiguration transaction rollback: request 'rq_0002' reuses "
+            "idempotency_key 'sink-key' but committed payload is unavailable"
+        ),
+    ):
+        _ = network.step(macro_step_time_s=0.5)
+
+    assert "sink_b" not in network._boundary_specs
+    assert tuple(item.request_id for item in network.queued_reconfigurations) == ("rq_0002",)
 
 
 def test_schema_marker_and_version_are_explicit_and_stable() -> None:

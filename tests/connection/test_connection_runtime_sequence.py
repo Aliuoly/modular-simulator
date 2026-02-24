@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportPrivateUsage=false, reportUnusedCallResult=false
 
+from dataclasses import dataclass
 from typing import cast
 
 import numpy as np
@@ -10,6 +11,10 @@ import pytest
 from modular_simulation.connection.connection_layer import (
     PicardIterationGateConfig,
     TransportAndMixingUpdate,
+)
+from modular_simulation.connection.connected_plant_orchestrator import (
+    ConnectedPlantOrchestrator,
+    ConnectedPlantPhaseHooks,
 )
 from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
 from modular_simulation.connection.hydraulic_solver import (
@@ -20,10 +25,12 @@ from modular_simulation.connection.hydraulic_solver import (
 from modular_simulation.connection.junction import JunctionMixingResult
 from modular_simulation.connection.network import ConnectionNetwork
 from modular_simulation.connection.runtime import (
+    CONNECTED_PLANT_PHASE_ORDER,
     ConnectionRuntimeOrchestrator,
     ConnectionRuntimeStepResult,
 )
 from modular_simulation.connection.state import MaterialState, PortCondition
+from modular_simulation.connection.subsystem_descriptor import SubsystemRuntimeDescriptor
 from modular_simulation.connection.transport import LagTransportState, LagTransportUpdateResult
 
 
@@ -95,7 +102,34 @@ def _transport_result(*, held_for_near_zero_flow: bool) -> LagTransportUpdateRes
     )
 
 
+@dataclass
+class _NoOpSubsystem:
+    descriptor: SubsystemRuntimeDescriptor
+
+    def run_sensor_phase(self) -> None:
+        return
+
+    def run_calculation_phase(self) -> None:
+        return
+
+    def run_controller_phase(self) -> None:
+        return
+
+    def run_process_phase(self, duration: float) -> None:
+        del duration
+        return
+
+
 def test_runtime_step_uses_fixed_macro_sequence_and_deterministic_bookkeeping() -> None:
+    assert CONNECTED_PLANT_PHASE_ORDER == (
+        "subsystem_sensor_update",
+        "subsystem_calculation_update",
+        "plant_calculation_update",
+        "subsystem_controller_update",
+        "subsystem_process_step",
+        "connection_runtime_coupling",
+    )
+
     call_order: list[str] = []
 
     def hydraulic_solve_step(
@@ -287,3 +321,122 @@ def test_reconfiguration_commit_rejection_keeps_time_and_active_revision_unchang
 
     assert after_snapshot == before_snapshot
     assert after_revision == before_revision
+
+
+def test_connected_plant_step_defers_queue_mutations_enqueued_in_coupling_hook() -> None:
+    runtime = ConnectionRuntimeOrchestrator(
+        hydraulic_solve_step=(
+            lambda *, network, macro_step_time_s: _hydraulic_result(edge_flow=0.8)
+        ),
+        transport_and_mixing_step=(
+            lambda *, network, hydraulic_result, macro_step_time_s: TransportAndMixingUpdate(
+                transport_results={}
+            )
+        ),
+        boundary_propagation_step=(
+            lambda *, network, hydraulic_result, transport_and_mixing_update, macro_step_time_s: {}
+        ),
+    )
+    network = _network(runtime)
+
+    subsystem = _NoOpSubsystem(
+        descriptor=SubsystemRuntimeDescriptor(
+            descriptor_id="subsystem_runtime",
+            process_id="reactor",
+            inlet_ports=("feed",),
+            outlet_ports=("product",),
+            publication_map={"subsystem_runtime/temperature": 300.0},
+        )
+    )
+
+    enqueue_once = {"done": False}
+    phase_hook_calls: list[tuple[str, int, float]] = []
+
+    def _record_phase_hook(phase_name: str):
+        def _record(macro_step_index: int, simulation_time_s: float) -> None:
+            phase_hook_calls.append((phase_name, macro_step_index, simulation_time_s))
+
+        return _record
+
+    def enqueue_during_coupling_hook(macro_step_index: int, simulation_time_s: float) -> None:
+        phase_hook_calls.append(
+            ("connection_runtime_coupling", macro_step_index, simulation_time_s)
+        )
+        if enqueue_once["done"] or macro_step_index != 1:
+            return
+        request_id = network.queue_reconfiguration(
+            {
+                "operation": "batch_update",
+                "mutations": [
+                    {"operation": "add_boundary_sink", "boundary_id": "purge_sink"},
+                    {
+                        "operation": "add_connection",
+                        "source": "reactor.product",
+                        "target": "purge_sink",
+                    },
+                ],
+            }
+        )
+        assert request_id == "rq_0001"
+        enqueue_once["done"] = True
+
+    orchestrator = ConnectedPlantOrchestrator(
+        subsystems=(subsystem,),
+        network=network,
+        runtime_orchestrator=runtime,
+        phase_hooks=ConnectedPlantPhaseHooks(
+            subsystem_sensor_update=_record_phase_hook("subsystem_sensor_update"),
+            subsystem_calculation_update=_record_phase_hook("subsystem_calculation_update"),
+            plant_calculation_update=_record_phase_hook("plant_calculation_update"),
+            subsystem_controller_update=_record_phase_hook("subsystem_controller_update"),
+            subsystem_process_step=_record_phase_hook("subsystem_process_step"),
+            connection_runtime_coupling=enqueue_during_coupling_hook,
+        ),
+    )
+
+    first_step = orchestrator.step(macro_step_time_s=1.0)
+    assert first_step.phase_order == CONNECTED_PLANT_PHASE_ORDER
+    assert first_step.macro_step_index == 1
+    assert first_step.simulation_time_s == pytest.approx(1.0)
+    assert first_step.graph_revision == "graph_rev_0001"
+    assert first_step.runtime_step_result.barrier_reconfiguration.applied_request_ids == ()
+    assert first_step.runtime_step_result.barrier_reconfiguration.skipped_request_ids == ()
+    assert first_step.runtime_step_result.bookkeeping.executed_sequence == (
+        "hydraulics_solve",
+        "transport_update",
+        "boundary_state_propagation",
+    )
+    assert first_step.runtime_step_result.bookkeeping.updated_port_keys == ()
+    assert "purge_sink" not in network._boundary_specs
+    assert tuple(item.request_id for item in network.queued_reconfigurations) == ("rq_0001",)
+
+    second_step = orchestrator.step(macro_step_time_s=1.0)
+    assert second_step.phase_order == CONNECTED_PLANT_PHASE_ORDER
+    assert second_step.macro_step_index == 2
+    assert second_step.simulation_time_s == pytest.approx(2.0)
+    assert second_step.graph_revision == "graph_rev_0002"
+    assert second_step.runtime_step_result.barrier_reconfiguration.applied_request_ids == (
+        "rq_0001",
+    )
+    assert second_step.runtime_step_result.barrier_reconfiguration.skipped_request_ids == ()
+    assert second_step.runtime_step_result.bookkeeping.executed_sequence == (
+        "hydraulics_solve",
+        "transport_update",
+        "boundary_state_propagation",
+    )
+    assert second_step.runtime_step_result.bookkeeping.updated_port_keys == ()
+    assert "purge_sink" in network._boundary_specs
+    assert phase_hook_calls == [
+        ("subsystem_sensor_update", 1, 1.0),
+        ("subsystem_calculation_update", 1, 1.0),
+        ("plant_calculation_update", 1, 1.0),
+        ("subsystem_controller_update", 1, 1.0),
+        ("subsystem_process_step", 1, 1.0),
+        ("connection_runtime_coupling", 1, 1.0),
+        ("subsystem_sensor_update", 2, 2.0),
+        ("subsystem_calculation_update", 2, 2.0),
+        ("plant_calculation_update", 2, 2.0),
+        ("subsystem_controller_update", 2, 2.0),
+        ("subsystem_process_step", 2, 2.0),
+        ("connection_runtime_coupling", 2, 2.0),
+    ]
