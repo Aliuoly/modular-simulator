@@ -1,0 +1,43 @@
+{
+  "processes": [
+    {
+      "process_id": "reactor",
+      "inlet_ports": ["feed"],
+      "outlet_ports": ["product"]
+    },
+    {
+      "process_id": "reactor_b",
+      "inlet_ports": ["feed"],
+      "outlet_ports": ["product"]
+    }
+  ],
+  "boundaries": [
+    {
+      "boundary_id": "feed_boundary",
+      "direction": "source",
+      "port_name": "outlet"
+    },
+    {
+      "boundary_id": "product_boundary",
+      "direction": "sink",
+      "port_name": "inlet"
+    }
+  ],
+  "lines": [
+    {
+      "line_id": "edge_0001",
+      "source": "feed_boundary.outlet",
+      "target": "reactor.feed"
+    },
+    {
+      "line_id": "edge_0002",
+      "source": "reactor.product",
+      "target": "reactor_b.feed"
+    },
+    {
+      "line_id": "edge_0003",
+      "source": "reactor_b.product",
+      "target": "product_boundary.inlet"
+    }
+  ]
+}

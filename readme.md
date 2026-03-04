@@ -41,7 +41,7 @@ uv sync
 The project includes several example systems in the `examples/` directory. To run the simplified gas phase system:
 
 ```bash
-python examples/simplified_gas_phase_system/run_simulation.py
+uv run python examples/dynamic_api_cli/minimal_command_quickstart.py
 ```
 
 This will execute the simulation and generate plots and logs demonstrating the system's behavior.
@@ -49,10 +49,62 @@ This will execute the simulation and generate plots and logs demonstrating the s
 For connection-layer work, use the connected-plant flow as the default:
 
 ```bash
-.venv/bin/python examples/connection_layer/two_tank_reaction_comparison.py --no-show
+uv run python examples/connection_layer/two_tank_reaction_comparison.py --no-show
 ```
 
 This command runs the migrated subsystem-based two-tank benchmark and prints CSV-style trajectory rows plus parity metrics such as `max_abs_error_a`, `max_abs_error_b`, `rmse_b`, and `b_lag_steps`.
+
+## Dynamic API and CLI Quickstarts
+
+These examples are operator-first and minimal boilerplate. Run them with UV.
+
+### Command-based path
+
+```bash
+uv run python examples/dynamic_api_cli/minimal_command_quickstart.py
+```
+
+What it covers:
+
+- Two-process wiring with `ModularCli` commands
+- Junction-as-unit setup with `JunctionProcess`
+- Barrier apply confirmation and graph revision bump
+
+### Spec-based path
+
+```bash
+uv run python examples/dynamic_api_cli/minimal_spec_quickstart.py
+```
+
+What it covers:
+
+- `spec_diff` preview against `examples/dynamic_api_cli/minimal_spec.json`
+- `spec_apply` execution through explicit transaction batches
+- Deterministic applied request ids and resulting topology shape
+
+### Valve + sensor + controller loop, plus save/load/continue
+
+```bash
+uv run python examples/dynamic_api_cli/minimal_control_loop_save_load.py
+```
+
+What it covers:
+
+- Runtime valve configuration and controller activation from queued mutations
+- Sensor binding and control loop response (`heater_power` moves above zero)
+- Save/load/continue round trip for both direct API (`ConnectionNetwork`) and CLI (`ModularCli`)
+
+### Pytest `-k` filter note
+
+Use boolean expressions in `-k` filters. Plain space-separated words are invalid.
+
+```bash
+# valid
+uv run python -m pytest -q tests/integration/test_examples_smoke.py -k "quickstart and two and process"
+
+# invalid
+uv run python -m pytest -q tests/integration/test_examples_smoke.py -k "quickstart two process"
+```
 
 ## Connected-Plant API (Recommended)
 
