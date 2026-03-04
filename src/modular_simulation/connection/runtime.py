@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from importlib import import_module
 import json
 from math import isfinite
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from modular_simulation.connection.connection_layer import (
     MacroStepBookkeeping,
@@ -33,6 +33,9 @@ from modular_simulation.connection.error_catalog import (
     revision_details,
 )
 from modular_simulation.connection.state import PortCondition
+
+if TYPE_CHECKING:
+    from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 
 CONNECTED_PLANT_PHASE_ORDER: tuple[str, ...] = (
     "subsystem_sensor_update",
@@ -271,6 +274,7 @@ class ConnectionRuntimeOrchestrator:
         sensor_mutation_dispatcher: RuntimeSensorMutationDispatcher | None = None,
         controller_mutation_dispatcher: RuntimeControllerMutationDispatcher | None = None,
         picard_gate_config: PicardIterationGateConfig | None = None,
+        runtime_context: SimulationRuntimeContext | None = None,
     ) -> None:
         self._macro_step_hook: Callable[[ConnectionNetwork, int, float], None] | None = (
             macro_step_hook
@@ -285,11 +289,14 @@ class ConnectionRuntimeOrchestrator:
             if transport_and_mixing_step is not None
             else self._default_transport_and_mixing_step
         )
+        self._runtime_context: SimulationRuntimeContext | None = runtime_context
+        self._use_context_boundary_propagation: bool = boundary_propagation_step is None
         self._boundary_propagation_step: RuntimeBoundaryPropagationStep = (
             boundary_propagation_step
             if boundary_propagation_step is not None
             else self._default_boundary_propagation_step
         )
+        self._refresh_boundary_propagation_step_from_context()
         self._sensor_mutation_dispatcher: RuntimeSensorMutationDispatcher | None = (
             sensor_mutation_dispatcher
         )
@@ -324,6 +331,26 @@ class ConnectionRuntimeOrchestrator:
     @property
     def committed_idempotency_keys(self) -> tuple[str, ...]:
         return tuple(sorted(self._committed_idempotency_keys))
+
+    @property
+    def runtime_context(self) -> SimulationRuntimeContext | None:
+        return self._runtime_context
+
+    def set_runtime_context(self, runtime_context: SimulationRuntimeContext | None) -> None:
+        self._runtime_context = runtime_context
+        self._refresh_boundary_propagation_step_from_context()
+
+    def _refresh_boundary_propagation_step_from_context(self) -> None:
+        if not self._use_context_boundary_propagation:
+            return
+        if self._runtime_context is None:
+            self._boundary_propagation_step = self._default_boundary_propagation_step
+            return
+        from modular_simulation.connection.thermo_coupling import ThermoBoundaryPropagationStep
+
+        self._boundary_propagation_step = ThermoBoundaryPropagationStep(
+            runtime_context=self._runtime_context
+        )
 
     def set_runtime_state(
         self,

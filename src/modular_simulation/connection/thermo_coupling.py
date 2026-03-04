@@ -1,0 +1,584 @@
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from math import isfinite
+from typing import TYPE_CHECKING, Literal, cast
+
+import numpy as np
+from numpy.typing import NDArray
+
+from modular_simulation.connection.connection_layer import TransportAndMixingUpdate
+from modular_simulation.connection.hydraulic_solver import HydraulicSolveResult
+from modular_simulation.connection.junction import (
+    NEAR_ZERO_INCOMING_FLOW_EPSILON,
+    JunctionMixingResult,
+    mix_junction_state,
+    mix_junction_state_with_enthalpy,
+)
+from modular_simulation.connection.process_binding import BindingError
+from modular_simulation.connection.state import MaterialState, PortCondition
+from modular_simulation.thermodynamics.species import SpeciesProjection
+
+if TYPE_CHECKING:
+    from modular_simulation.connection.network import ConnectionNetwork
+    from modular_simulation.thermodynamics.property_package import PropertyPackage
+    from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
+
+
+ManualOverrideHook = Callable[[Mapping[str, PortCondition]], Mapping[str, PortCondition]]
+
+
+@dataclass(frozen=True)
+class ThermoBoundaryPropagationConfig:
+    mode: Literal["auto", "manual", "hybrid"] = "auto"
+    auto_propagate_species: bool = True
+    auto_propagate_energy: bool = True
+    default_pressure_pa: float = 101325.0
+    default_temperature_k: float = 298.15
+    default_phase_hint: str | None = "liquid"
+    manual_port_conditions: Mapping[str, PortCondition] | None = None
+    manual_override_hook: ManualOverrideHook | None = None
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"auto", "manual", "hybrid"}:
+            raise ValueError("mode must be one of 'auto', 'manual', or 'hybrid'")
+        if not isfinite(self.default_pressure_pa) or self.default_pressure_pa <= 0.0:
+            raise ValueError("default_pressure_pa must be finite and positive")
+        if not isfinite(self.default_temperature_k) or self.default_temperature_k <= 0.0:
+            raise ValueError("default_temperature_k must be finite and positive")
+
+
+class ThermoBoundaryPropagationStep:
+    def __init__(
+        self,
+        *,
+        runtime_context: SimulationRuntimeContext,
+        config: ThermoBoundaryPropagationConfig | None = None,
+    ) -> None:
+        self._runtime_context: SimulationRuntimeContext = runtime_context
+        self._config: ThermoBoundaryPropagationConfig = (
+            config if config is not None else ThermoBoundaryPropagationConfig()
+        )
+
+    def __call__(
+        self,
+        *,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+        transport_and_mixing_update: TransportAndMixingUpdate,
+        macro_step_time_s: float,
+    ) -> Mapping[str, PortCondition]:
+        auto_conditions: dict[str, PortCondition] = {}
+        if self._config.mode in {"auto", "hybrid"}:
+            auto_conditions = self._build_auto_conditions(
+                network=network,
+                hydraulic_result=hydraulic_result,
+                transport_and_mixing_update=transport_and_mixing_update,
+                macro_step_time_s=macro_step_time_s,
+            )
+
+        manual_overrides = self._resolve_manual_overrides(auto_conditions)
+        if self._config.mode == "manual":
+            return manual_overrides
+        if self._config.mode == "hybrid":
+            merged = dict(auto_conditions)
+            merged.update(manual_overrides)
+            return merged
+        return auto_conditions
+
+    def _build_auto_conditions(
+        self,
+        *,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+        transport_and_mixing_update: TransportAndMixingUpdate,
+        macro_step_time_s: float,
+    ) -> dict[str, PortCondition]:
+        compiled = network.compiled
+        if compiled is None:
+            return {}
+
+        conditions: dict[str, PortCondition] = {}
+        property_package: PropertyPackage | None = getattr(
+            self._runtime_context, "property_package", None
+        )
+        species_ids = self._runtime_context.species_registry.cas_list
+        transport_results = transport_and_mixing_update.transport_results
+        incoming_conditions_by_target: dict[str, list[PortCondition]] = {}
+        target_bindings: dict[str, tuple[object, str]] = {}
+
+        for edge in sorted(compiled.topology.edges, key=lambda item: item.edge_id):
+            source_binding = compiled.process_bindings.get(edge.source.node_id)
+            target_binding = compiled.process_bindings.get(edge.target.node_id)
+            if source_binding is None or target_binding is None:
+                continue
+
+            outlet_payload = self._safe_get_outlet_payload(source_binding, edge.source.port_name)
+            transport_result = transport_results.get(edge.edge_id)
+            source_projection = self._lookup_projection(edge.source.node_id)
+            target_projection = self._lookup_projection(edge.target.node_id)
+            state = self._build_material_state(
+                edge_id=edge.edge_id,
+                source_node_id=edge.source.node_id,
+                hydraulic_result=hydraulic_result,
+                property_package=property_package,
+                species_ids=species_ids,
+                source_projection=source_projection,
+                outlet_payload=outlet_payload,
+                transport_result=transport_result,
+            )
+            if state is None:
+                continue
+
+            if self._config.auto_propagate_species:
+                state = self._project_state_for_target(
+                    edge_id=edge.edge_id,
+                    source_node_id=edge.source.node_id,
+                    target_node_id=edge.target.node_id,
+                    state=state,
+                    source_projection=source_projection,
+                    target_projection=target_projection,
+                    global_species_ids=species_ids,
+                )
+
+            flow_rate = self._resolve_flow_rate(
+                edge_id=edge.edge_id,
+                hydraulic_result=hydraulic_result,
+                outlet_payload=outlet_payload,
+            )
+            target_key = f"{edge.target.node_id}.{edge.target.port_name}"
+            condition = PortCondition(
+                state=state,
+                species_ids=state.species_ids,
+                through_molar_flow_rate=flow_rate,
+                macro_step_time_s=macro_step_time_s,
+            )
+
+            incoming_conditions_by_target.setdefault(target_key, []).append(condition)
+            target_bindings[target_key] = (target_binding, edge.target.port_name)
+
+        for target_key in sorted(incoming_conditions_by_target):
+            incoming_conditions = incoming_conditions_by_target[target_key]
+            if not incoming_conditions:
+                continue
+
+            mixed_result = self._mix_target_port_conditions(
+                incoming_conditions=incoming_conditions,
+                property_package=property_package,
+            )
+            mixed_state = mixed_result.state
+            conditions[target_key] = PortCondition(
+                state=mixed_state,
+                species_ids=mixed_state.species_ids,
+                through_molar_flow_rate=mixed_result.total_incoming_flow_rate,
+                macro_step_time_s=macro_step_time_s,
+            )
+
+            target_binding, target_port_name = target_bindings[target_key]
+            set_inlet = getattr(target_binding, "set_inlet", None)
+            if not callable(set_inlet):
+                continue
+            try:
+                set_inlet(target_port_name, mixed_result.total_incoming_flow_rate)
+            except BindingError:
+                continue
+
+        return conditions
+
+    def _mix_target_port_conditions(
+        self,
+        *,
+        incoming_conditions: list[PortCondition],
+        property_package: PropertyPackage | None,
+    ) -> JunctionMixingResult:
+        if len(incoming_conditions) == 1:
+            condition = incoming_conditions[0]
+            return JunctionMixingResult(
+                state=condition.state,
+                total_incoming_flow_rate=condition.through_molar_flow_rate,
+                used_fallback=False,
+            )
+
+        if property_package is None:
+            incoming_by_edge = {
+                f"incoming_{index:04d}": incoming_condition
+                for index, incoming_condition in enumerate(incoming_conditions)
+            }
+            return mix_junction_state(
+                incoming_port_conditions=incoming_by_edge,
+                previous_state=incoming_conditions[0].state,
+                near_zero_incoming_flow_epsilon=NEAR_ZERO_INCOMING_FLOW_EPSILON,
+            )
+
+        return mix_junction_state_with_enthalpy(
+            incoming_states=incoming_conditions,
+            property_package=property_package,
+            near_zero_incoming_flow_epsilon=NEAR_ZERO_INCOMING_FLOW_EPSILON,
+        )
+
+    def _build_material_state(
+        self,
+        *,
+        edge_id: str,
+        source_node_id: str,
+        hydraulic_result: HydraulicSolveResult,
+        property_package: PropertyPackage | None,
+        species_ids: tuple[str, ...],
+        source_projection: SpeciesProjection | None,
+        outlet_payload: Mapping[str, object] | None,
+        transport_result: object,
+    ) -> MaterialState | None:
+        composition: tuple[float, ...] | None = None
+        temperature: float | None = None
+
+        if transport_result is not None:
+            state = getattr(transport_result, "state", None)
+            if state is not None:
+                raw_composition = getattr(state, "composition", None)
+                raw_temperature = getattr(state, "temperature", None)
+                if (
+                    isinstance(raw_composition, tuple)
+                    and raw_composition
+                    and all(isinstance(item, (float, int)) for item in raw_composition)
+                ):
+                    composition = tuple(float(item) for item in raw_composition)
+                if isinstance(raw_temperature, (float, int)) and isfinite(float(raw_temperature)):
+                    temperature = float(raw_temperature)
+
+        if composition is None and outlet_payload is not None:
+            raw_composition = outlet_payload.get("composition")
+            if isinstance(raw_composition, tuple) and raw_composition:
+                composition = tuple(float(item) for item in raw_composition)
+
+        if composition is None:
+            return None
+
+        resolved_composition = self._resolve_source_composition(
+            edge_id=edge_id,
+            source_node_id=source_node_id,
+            composition=composition,
+            source_projection=source_projection,
+            global_species_ids=species_ids,
+        )
+
+        if temperature is None:
+            temperature = self._config.default_temperature_k
+
+        pressure = self._resolve_pressure(
+            edge_id=edge_id,
+            hydraulic_result=hydraulic_result,
+            outlet_payload=outlet_payload,
+            transport_result=transport_result,
+        )
+        phase = self._config.default_phase_hint
+        enthalpy_molar: float | None = None
+        entropy_molar: float | None = None
+
+        if property_package is not None and len(resolved_composition) == len(species_ids):
+            flash_state = property_package.flash_tp(temperature, pressure, resolved_composition)
+            if self._config.auto_propagate_species:
+                phase = flash_state.phase
+            if self._config.auto_propagate_energy:
+                enthalpy_phase = flash_state.phase if phase is None else phase
+                enthalpy_molar = property_package.enthalpy(
+                    temperature,
+                    pressure,
+                    resolved_composition,
+                    enthalpy_phase,
+                )
+                entropy_molar = property_package.entropy(
+                    temperature,
+                    pressure,
+                    resolved_composition,
+                    enthalpy_phase,
+                )
+
+        propagated_species_ids: tuple[str, ...] | None = None
+        if self._config.auto_propagate_species and len(species_ids) == len(resolved_composition):
+            propagated_species_ids = species_ids
+
+        return MaterialState(
+            pressure=pressure,
+            temperature=temperature,
+            mole_fractions=resolved_composition,
+            species_ids=propagated_species_ids,
+            phase=phase,
+            enthalpy_molar=enthalpy_molar,
+            entropy_molar=entropy_molar,
+        )
+
+    def _lookup_projection(self, node_id: str) -> SpeciesProjection | None:
+        species_context = getattr(self._runtime_context, "species_context", None)
+        if species_context is None:
+            return None
+        get_projection = getattr(species_context, "get_projection", None)
+        if not callable(get_projection):
+            return None
+        try:
+            return cast(SpeciesProjection, get_projection(node_id))
+        except KeyError:
+            return None
+
+    def _resolve_source_composition(
+        self,
+        *,
+        edge_id: str,
+        source_node_id: str,
+        composition: tuple[float, ...],
+        source_projection: SpeciesProjection | None,
+        global_species_ids: tuple[str, ...],
+    ) -> tuple[float, ...]:
+        if source_projection is None:
+            return composition
+
+        if len(composition) == source_projection.n_global:
+            return composition
+        if len(composition) == source_projection.n_local:
+            projected = source_projection.to_global(composition)
+            return tuple(float(value) for value in projected)
+
+        raise ValueError(
+            "Incompatible source species vector for "
+            f"edge '{edge_id}' from '{source_node_id}': got length {len(composition)} but expected "
+            f"{source_projection.n_local} (local) or {source_projection.n_global} (global) based on "
+            f"runtime species registry size {len(global_species_ids)}."
+        )
+
+    def _project_state_for_target(
+        self,
+        *,
+        edge_id: str,
+        source_node_id: str,
+        target_node_id: str,
+        state: MaterialState,
+        source_projection: SpeciesProjection | None,
+        target_projection: SpeciesProjection | None,
+        global_species_ids: tuple[str, ...],
+    ) -> MaterialState:
+        if target_projection is None:
+            return state
+
+        global_composition = self._state_to_global_composition(
+            edge_id=edge_id,
+            source_node_id=source_node_id,
+            state=state,
+            source_projection=source_projection,
+            global_species_ids=global_species_ids,
+        )
+        projected = target_projection.to_local(global_composition)
+        dropped = float(np.sum(global_composition) - np.sum(projected))
+        if dropped > 1.0e-12:
+            dropped_species = tuple(
+                global_species_ids[index]
+                for index in range(len(global_species_ids))
+                if index not in set(target_projection.global_to_local.tolist())
+                and global_composition[index] > 1.0e-12
+            )
+            raise ValueError(
+                "Incompatible species mapping for "
+                f"edge '{edge_id}' from '{source_node_id}' to '{target_node_id}': target species set "
+                "would drop non-zero source composition for "
+                f"{dropped_species}."
+            )
+
+        target_species_ids = tuple(
+            global_species_ids[int(index)] for index in target_projection.global_to_local
+        )
+        return MaterialState(
+            pressure=state.pressure,
+            temperature=state.temperature,
+            mole_fractions=tuple(float(value) for value in projected),
+            species_ids=target_species_ids,
+            phase=state.phase,
+            enthalpy_molar=state.enthalpy_molar,
+            entropy_molar=state.entropy_molar,
+        )
+
+    def _state_to_global_composition(
+        self,
+        *,
+        edge_id: str,
+        source_node_id: str,
+        state: MaterialState,
+        source_projection: SpeciesProjection | None,
+        global_species_ids: tuple[str, ...],
+    ) -> NDArray[np.float64]:
+        composition = np.asarray(state.mole_fractions, dtype=float)
+        n_global = len(global_species_ids)
+        if composition.shape == (n_global,):
+            return composition
+        if source_projection is not None and composition.shape == (source_projection.n_local,):
+            return source_projection.to_global(composition)
+        raise ValueError(
+            "Incompatible source species metadata for "
+            f"edge '{edge_id}' from '{source_node_id}': cannot project vector length "
+            f"{composition.shape[0]} into global registry length {n_global}."
+        )
+
+    def _resolve_pressure(
+        self,
+        *,
+        edge_id: str,
+        hydraulic_result: HydraulicSolveResult,
+        outlet_payload: Mapping[str, object] | None,
+        transport_result: object,
+    ) -> float:
+        outlet_pressure = self._pressure_from_outlet_payload(outlet_payload)
+        if outlet_pressure is not None:
+            return outlet_pressure
+
+        transport_pressure = self._pressure_from_transport_state(transport_result)
+        if transport_pressure is not None:
+            return transport_pressure
+
+        hydraulic_pressure = self._resolve_hydraulic_pressure(
+            edge_id=edge_id, hydraulic_result=hydraulic_result
+        )
+        if hydraulic_pressure is not None:
+            return hydraulic_pressure
+
+        return self._config.default_pressure_pa
+
+    def _pressure_from_outlet_payload(
+        self,
+        outlet_payload: Mapping[str, object] | None,
+    ) -> float | None:
+        if outlet_payload is None:
+            return None
+        for key in ("pressure", "pressure_pa"):
+            value = outlet_payload.get(key)
+            if isinstance(value, (float, int)) and isfinite(float(value)) and float(value) > 0.0:
+                return float(value)
+        state_value = outlet_payload.get("state")
+        if isinstance(state_value, Mapping):
+            state_pressure = state_value.get("pressure")
+            if (
+                isinstance(state_pressure, (float, int))
+                and isfinite(float(state_pressure))
+                and float(state_pressure) > 0.0
+            ):
+                return float(state_pressure)
+        return None
+
+    def _pressure_from_transport_state(self, transport_result: object) -> float | None:
+        state = getattr(transport_result, "state", None)
+        if state is None:
+            return None
+        state_pressure = getattr(state, "pressure", None)
+        if (
+            isinstance(state_pressure, (float, int))
+            and isfinite(float(state_pressure))
+            and float(state_pressure) > 0.0
+        ):
+            return float(state_pressure)
+        return None
+
+    def _resolve_hydraulic_pressure(
+        self,
+        *,
+        edge_id: str,
+        hydraulic_result: HydraulicSolveResult,
+    ) -> float | None:
+        unknowns = hydraulic_result.unknowns
+        candidate_keys = [
+            f"{edge_id}.pressure",
+            f"{edge_id}:pressure",
+            f"{edge_id}_pressure",
+            f"pressure_{edge_id}",
+            "pressure",
+        ]
+        for key in candidate_keys:
+            value = unknowns.get(key)
+            if isinstance(value, (float, int)) and isfinite(float(value)) and float(value) > 0.0:
+                return float(value)
+        return None
+
+    def _resolve_flow_rate(
+        self,
+        *,
+        edge_id: str,
+        hydraulic_result: HydraulicSolveResult,
+        outlet_payload: Mapping[str, object] | None,
+    ) -> float:
+        hydraulic_flow = self._resolve_hydraulic_flow(
+            edge_id=edge_id, hydraulic_result=hydraulic_result
+        )
+        if hydraulic_flow is not None:
+            return hydraulic_flow
+
+        if outlet_payload is None:
+            return 0.0
+
+        fallback = outlet_payload.get("outlet_flow")
+        if isinstance(fallback, (float, int)) and isfinite(float(fallback)):
+            return float(fallback)
+        fallback = outlet_payload.get("flow")
+        if isinstance(fallback, (float, int)) and isfinite(float(fallback)):
+            return abs(float(fallback))
+        return 0.0
+
+    def _resolve_hydraulic_flow(
+        self,
+        *,
+        edge_id: str,
+        hydraulic_result: HydraulicSolveResult,
+    ) -> float | None:
+        unknowns = hydraulic_result.unknowns
+        candidate_keys = [
+            edge_id,
+            f"flow_{edge_id}",
+            f"{edge_id}_flow",
+            f"{edge_id}:flow",
+            f"{edge_id}.flow",
+        ]
+        for key in candidate_keys:
+            value = unknowns.get(key)
+            if isinstance(value, (float, int)) and isfinite(float(value)):
+                return float(value)
+
+        flow_like_values = [
+            float(value)
+            for key, value in unknowns.items()
+            if "flow" in key.casefold()
+            and isinstance(value, (float, int))
+            and isfinite(float(value))
+        ]
+        if len(flow_like_values) == 1:
+            return flow_like_values[0]
+        return None
+
+    def _safe_get_outlet_payload(
+        self,
+        binding: object,
+        outlet_port: str,
+    ) -> Mapping[str, object] | None:
+        getter = getattr(binding, "get_outlet", None)
+        if not callable(getter):
+            return None
+        try:
+            raw = getter(outlet_port)
+        except BindingError:
+            return None
+        if isinstance(raw, Mapping):
+            return cast(Mapping[str, object], raw)
+        return None
+
+    def _resolve_manual_overrides(
+        self,
+        auto_conditions: Mapping[str, PortCondition],
+    ) -> dict[str, PortCondition]:
+        resolved: dict[str, PortCondition] = {}
+        if self._config.manual_port_conditions is not None:
+            resolved.update(self._config.manual_port_conditions)
+
+        hook = self._config.manual_override_hook
+        if hook is not None:
+            resolved.update(hook(dict(auto_conditions)))
+        return resolved
+
+
+__all__ = [
+    "ThermoBoundaryPropagationConfig",
+    "ThermoBoundaryPropagationStep",
+]

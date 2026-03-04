@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from numbers import Real
-from typing import Protocol, TypeAlias, cast
+from typing import TYPE_CHECKING, Protocol, TypeAlias, cast
 
 from modular_simulation.connection.network import (
     ConnectionNetwork,
@@ -16,6 +16,9 @@ from modular_simulation.connection.runtime import (
 )
 from modular_simulation.connection.subsystem_descriptor import SubsystemRuntimeDescriptor
 from modular_simulation.validation.exceptions import MeasurableConfigurationError
+
+if TYPE_CHECKING:
+    from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 
 
 PlantCalculationEvaluator: TypeAlias = Callable[[Mapping[str, float]], Mapping[str, float]]
@@ -76,10 +79,17 @@ class ConnectedPlantOrchestrator:
         network: ConnectionNetwork,
         runtime_orchestrator: ConnectionRuntimeOrchestrator,
         phase_hooks: ConnectedPlantPhaseHooks | None = None,
+        runtime_context: SimulationRuntimeContext | None = None,
     ) -> None:
         self._subsystems: tuple[SubsystemPhaseRuntime, ...] = tuple(subsystems)
         self._network: ConnectionNetwork = network
         self._runtime_orchestrator: ConnectionRuntimeOrchestrator = runtime_orchestrator
+        self._runtime_context: SimulationRuntimeContext | None = (
+            runtime_context
+            if runtime_context is not None
+            else self._runtime_orchestrator.runtime_context
+        )
+        self._runtime_orchestrator.set_runtime_context(self._runtime_context)
         self._phase_hooks: ConnectedPlantPhaseHooks = (
             phase_hooks if phase_hooks is not None else ConnectedPlantPhaseHooks()
         )
@@ -103,6 +113,10 @@ class ConnectedPlantOrchestrator:
     @property
     def plant_calculation_outputs(self) -> Mapping[str, float]:
         return dict(self._plant_calculation_outputs)
+
+    @property
+    def runtime_context(self) -> SimulationRuntimeContext | None:
+        return self._runtime_context
 
     def add_calculation(
         self,

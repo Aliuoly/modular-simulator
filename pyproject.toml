@@ -38,6 +38,8 @@ dependencies = [
   "matplotlib",
   "astropy",
   "nicegui",
+  "thermo>=0.3.0",
+  "chemicals>=1.2.0",
   "pytest",
 ]
 
