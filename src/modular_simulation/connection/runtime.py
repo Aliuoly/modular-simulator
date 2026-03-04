@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false
-
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from importlib import import_module
 import json
 from math import isfinite
-from typing import Protocol
+from typing import Protocol, cast
 
 from modular_simulation.connection.connection_layer import (
     MacroStepBookkeeping,
@@ -14,9 +13,25 @@ from modular_simulation.connection.connection_layer import (
     TransportAndMixingUpdate,
     run_macro_coupling_step,
 )
-from modular_simulation.connection.hydraulic_compile import solve_compiled_hydraulic_graph
+from modular_simulation.connection.hydraulic_compile import (
+    apply_valve_commands_to_compiled_graph,
+    solve_compiled_hydraulic_graph,
+)
 from modular_simulation.connection.hydraulic_solver import HydraulicSolveResult
-from modular_simulation.connection.network import ConnectionNetwork
+from modular_simulation.connection.network import (
+    ConnectionNetwork,
+    QueuedReconfigurationTransaction,
+)
+from modular_simulation.connection.error_catalog import (
+    IDEMPOTENCY_CONFLICT_CODE,
+    REVISION_MISMATCH_CODE,
+    VALIDATION_FAILURE_CODE,
+    DiagnosticValueError,
+    DiagnosticRuntimeError,
+    coerce_diagnostic_payload,
+    diagnostic_value_error,
+    revision_details,
+)
 from modular_simulation.connection.state import PortCondition
 
 CONNECTED_PLANT_PHASE_ORDER: tuple[str, ...] = (
@@ -34,6 +49,70 @@ HOT_INSTALL_STATE_MACHINE: tuple[str, ...] = (
     "Applied",
     "Skipped",
     "RolledBack",
+)
+
+SENSOR_ONLY_MUTATION_OPERATIONS: frozenset[str] = frozenset(
+    {
+        "create_sensor",
+        "bind_sensor",
+        "unbind_sensor",
+        "remove_sensor",
+    }
+)
+
+CONTROLLER_ONLY_MUTATION_OPERATIONS: frozenset[str] = frozenset(
+    {
+        "create_controller",
+        "bind_controller_input",
+        "bind_controller_output",
+        "configure_controller_mode",
+        "activate_controller",
+    }
+)
+
+SENSOR_MUTATION_FORBIDDEN_FIELDS: frozenset[str] = frozenset(
+    {
+        "source",
+        "target",
+        "edge_id",
+        "boundary_id",
+        "junction_id",
+        "inlet_ports",
+        "outlet_ports",
+        "radius_m",
+        "length_m",
+        "equation_name",
+        "resistance_parameter_name",
+        "mode",
+        "manual_value",
+        "open_fraction",
+        "minimum_open_fraction",
+        "maximum_open_fraction",
+        "initial_open_fraction",
+        "valve_id",
+    }
+)
+
+CONTROLLER_MUTATION_FORBIDDEN_FIELDS: frozenset[str] = frozenset(
+    {
+        "source",
+        "target",
+        "edge_id",
+        "boundary_id",
+        "junction_id",
+        "inlet_ports",
+        "outlet_ports",
+        "radius_m",
+        "length_m",
+        "equation_name",
+        "resistance_parameter_name",
+        "open_fraction",
+        "minimum_open_fraction",
+        "maximum_open_fraction",
+        "initial_open_fraction",
+        "line_id",
+        "valve_id",
+    }
 )
 
 
@@ -54,6 +133,48 @@ class ConnectionRuntimeStepResult:
     graph_revision: str | None
     bookkeeping: MacroStepBookkeeping
     barrier_reconfiguration: BarrierReconfigurationReport
+
+
+@dataclass(frozen=True)
+class _ParsedReconfigurationRequest:
+    request_id: str
+    idempotency_key: str | None
+    expected_revision: str | None
+    metadata: Mapping[str, object]
+    payload_fingerprint: str
+    mutations: tuple[Mapping[str, object], ...]
+
+
+@dataclass(frozen=True)
+class _BatchLifecycleContext:
+    baseline_graph_revision: str | None
+    parsed_requests: tuple[_ParsedReconfigurationRequest, ...]
+
+
+@dataclass(frozen=True)
+class _HydraulicTopologyGuardSnapshot:
+    process_specs: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]
+    boundary_specs: tuple[tuple[str, str, str], ...]
+    edge_specs: tuple[tuple[str, str, str, str, str], ...]
+    line_hydraulic_configs: tuple[
+        tuple[
+            str,
+            str,
+            str,
+            str,
+            float | None,
+            float | None,
+            float | None,
+            str | None,
+            float | None,
+            float | None,
+            float | None,
+        ],
+        ...,
+    ]
+    pending_valve_commands: tuple[tuple[str, float], ...]
+    compiled_graph_revision: str | None
+    compiled_hydraulic_graph_revision: str | None
 
 
 class RuntimeHydraulicSolveStep(Protocol):
@@ -86,6 +207,44 @@ class RuntimeBoundaryPropagationStep(Protocol):
     ) -> Mapping[str, PortCondition]: ...
 
 
+class RuntimeSensorMutationDispatcher(Protocol):
+    def __call__(
+        self,
+        *,
+        operation: str,
+        mutation: Mapping[str, object],
+        request_metadata: Mapping[str, object],
+    ) -> None: ...
+
+
+class RuntimeControllerMutationDispatcher(Protocol):
+    def __call__(
+        self,
+        *,
+        operation: str,
+        mutation: Mapping[str, object],
+        request_metadata: Mapping[str, object],
+    ) -> None: ...
+
+
+class _DestructiveEditPlanLike(Protocol):
+    edge_ids_to_detach: tuple[str, ...]
+
+
+class _InvariantValidatorLike(Protocol):
+    def plan_destructive_edit(
+        self,
+        *,
+        network: ConnectionNetwork,
+        mutation: Mapping[str, object],
+        request_metadata: Mapping[str, object],
+    ) -> _DestructiveEditPlanLike | None: ...
+
+
+class _InvariantValidatorFactory(Protocol):
+    def __call__(self) -> _InvariantValidatorLike: ...
+
+
 class ConnectionRuntimeOrchestrator:
     """Runtime coupling orchestrator with deterministic barrier-commit semantics.
 
@@ -109,6 +268,8 @@ class ConnectionRuntimeOrchestrator:
         hydraulic_solve_step: RuntimeHydraulicSolveStep | None = None,
         transport_and_mixing_step: RuntimeTransportAndMixingStep | None = None,
         boundary_propagation_step: RuntimeBoundaryPropagationStep | None = None,
+        sensor_mutation_dispatcher: RuntimeSensorMutationDispatcher | None = None,
+        controller_mutation_dispatcher: RuntimeControllerMutationDispatcher | None = None,
         picard_gate_config: PicardIterationGateConfig | None = None,
     ) -> None:
         self._macro_step_hook: Callable[[ConnectionNetwork, int, float], None] | None = (
@@ -129,12 +290,24 @@ class ConnectionRuntimeOrchestrator:
             if boundary_propagation_step is not None
             else self._default_boundary_propagation_step
         )
+        self._sensor_mutation_dispatcher: RuntimeSensorMutationDispatcher | None = (
+            sensor_mutation_dispatcher
+        )
+        self._controller_mutation_dispatcher: RuntimeControllerMutationDispatcher | None = (
+            controller_mutation_dispatcher
+        )
         self._picard_gate_config: PicardIterationGateConfig | None = picard_gate_config
         self._simulation_time_s: float = 0.0
         self._macro_step_index: int = 0
         self._macro_step_active: bool = False
         self._committed_idempotency_keys: set[str] = set()
         self._committed_idempotency_payloads: dict[str, str] = {}
+        validator_module = import_module("modular_simulation.connection.invariant_validator")
+        validator_factory = cast(
+            _InvariantValidatorFactory,
+            getattr(validator_module, "ConnectionMutationInvariantValidator"),
+        )
+        self._invariant_validator: _InvariantValidatorLike = validator_factory()
 
     @property
     def simulation_time_s(self) -> float:
@@ -186,31 +359,43 @@ class ConnectionRuntimeOrchestrator:
                     self._macro_step_index + 1,
                     self._simulation_time_s + macro_step_time_s,
                 )
+
+            def _hydraulic_solve(*, macro_step_time_s: float) -> HydraulicSolveResult:
+                return self._hydraulic_solve_step(
+                    network=network,
+                    macro_step_time_s=macro_step_time_s,
+                )
+
+            def _transport_update(
+                *,
+                hydraulic_result: HydraulicSolveResult,
+                macro_step_time_s: float,
+            ) -> TransportAndMixingUpdate:
+                return self._transport_and_mixing_step(
+                    network=network,
+                    hydraulic_result=hydraulic_result,
+                    macro_step_time_s=macro_step_time_s,
+                )
+
+            def _boundary_propagation(
+                *,
+                hydraulic_result: HydraulicSolveResult,
+                transport_and_mixing_update: TransportAndMixingUpdate,
+                macro_step_time_s: float,
+            ) -> Mapping[str, PortCondition]:
+                return self._boundary_propagation_step(
+                    network=network,
+                    hydraulic_result=hydraulic_result,
+                    transport_and_mixing_update=transport_and_mixing_update,
+                    macro_step_time_s=macro_step_time_s,
+                )
+
             macro_step_result = run_macro_coupling_step(
                 macro_step_time_s=macro_step_time_s,
                 macro_step_index=self._macro_step_index + 1,
-                hydraulic_solve_step=lambda *, macro_step_time_s: self._hydraulic_solve_step(
-                    network=network,
-                    macro_step_time_s=macro_step_time_s,
-                ),
-                transport_update_step=(
-                    lambda *, hydraulic_result, macro_step_time_s: self._transport_and_mixing_step(
-                        network=network,
-                        hydraulic_result=hydraulic_result,
-                        macro_step_time_s=macro_step_time_s,
-                    )
-                ),
-                boundary_propagation_step=(
-                    lambda *,
-                    hydraulic_result,
-                    transport_and_mixing_update,
-                    macro_step_time_s: self._boundary_propagation_step(
-                        network=network,
-                        hydraulic_result=hydraulic_result,
-                        transport_and_mixing_update=transport_and_mixing_update,
-                        macro_step_time_s=macro_step_time_s,
-                    )
-                ),
+                hydraulic_solve_step=_hydraulic_solve,
+                transport_update_step=_transport_update,
+                boundary_propagation_step=_boundary_propagation,
                 picard_gate_config=self._picard_gate_config,
             )
             self._macro_step_index += 1
@@ -332,53 +517,16 @@ class ConnectionRuntimeOrchestrator:
         applied_request_ids: list[str] = []
         skipped_request_ids: list[str] = []
         try:
-            for request in queued_requests:
-                idempotency_key = request.idempotency_key
-                payload_fingerprint = self._mutation_payload_fingerprint(request.mutations)
-                if (
-                    idempotency_key is not None
-                    and idempotency_key in self._committed_idempotency_keys
-                ):
-                    committed_fingerprint = self._committed_idempotency_payloads.get(
-                        idempotency_key
-                    )
-                    if committed_fingerprint is None:
-                        raise ValueError(
-                            f"request '{request.request_id}' reuses idempotency_key "
-                            + f"'{idempotency_key}' but committed payload is unavailable"
-                        )
-                    if committed_fingerprint != payload_fingerprint:
-                        raise ValueError(
-                            f"request '{request.request_id}' reuses idempotency_key "
-                            + f"'{idempotency_key}' with different payload"
-                        )
-                    skipped_request_ids.append(request.request_id)
-                    continue
-
-                for mutation_index, mutation in enumerate(request.mutations, start=1):
-                    try:
-                        self._apply_mutation(network=network, mutation=mutation)
-                    except Exception as error:
-                        raise ValueError(
-                            f"request '{request.request_id}' mutation {mutation_index} failed: {error}"
-                        ) from error
-
-                if idempotency_key is not None:
-                    self._committed_idempotency_keys.add(idempotency_key)
-                    self._committed_idempotency_payloads[idempotency_key] = payload_fingerprint
-                applied_request_ids.append(request.request_id)
-
-            if applied_request_ids:
-                try:
-                    compiled = network.compile()
-                except Exception as error:
-                    raise ValueError(
-                        f"queued reconfiguration compile validation failed: {error}"
-                    ) from error
-                graph_revision = compiled.graph_revision
-            else:
-                compiled = network.compiled
-                graph_revision = None if compiled is None else compiled.graph_revision
+            lifecycle_context = self._parse_lifecycle_stage(
+                network=network, queued_requests=queued_requests
+            )
+            self._semantic_validate_lifecycle_stage(lifecycle_context.parsed_requests)
+            graph_revision = self._invariant_validate_and_stage_lifecycle(
+                network=network,
+                lifecycle_context=lifecycle_context,
+                applied_request_ids=applied_request_ids,
+                skipped_request_ids=skipped_request_ids,
+            )
 
             return BarrierReconfigurationReport(
                 queue_size_before=len(queued_requests),
@@ -393,41 +541,326 @@ class ConnectionRuntimeOrchestrator:
             self._macro_step_index = runtime_snapshot[1]
             self._committed_idempotency_keys = runtime_snapshot[2]
             self._committed_idempotency_payloads = runtime_snapshot[3]
-            raise RuntimeError(f"reconfiguration transaction rollback: {error}") from error
+            rollback_message = f"reconfiguration transaction rollback: {error}"
+            raise DiagnosticRuntimeError(
+                coerce_diagnostic_payload(
+                    error=error,
+                    default_code=VALIDATION_FAILURE_CODE,
+                    message=rollback_message,
+                )
+            ) from error
 
-    def _mutation_payload_fingerprint(self, mutations: Sequence[Mapping[str, object]]) -> str:
+    def _parse_lifecycle_stage(
+        self,
+        *,
+        network: ConnectionNetwork,
+        queued_requests: Sequence[QueuedReconfigurationTransaction],
+    ) -> _BatchLifecycleContext:
+        baseline_graph_revision = None
+        compiled = network.compiled
+        if compiled is not None:
+            baseline_graph_revision = str(compiled.graph_revision)
+
+        parsed_requests: list[_ParsedReconfigurationRequest] = []
+        for request in queued_requests:
+            metadata = dict(request.metadata)
+            mutations = tuple(dict(mutation) for mutation in request.mutations)
+            parsed_requests.append(
+                _ParsedReconfigurationRequest(
+                    request_id=request.request_id,
+                    idempotency_key=request.idempotency_key,
+                    expected_revision=request.expected_revision,
+                    metadata=metadata,
+                    payload_fingerprint=self._request_payload_fingerprint(
+                        metadata=metadata,
+                        mutations=mutations,
+                    ),
+                    mutations=mutations,
+                )
+            )
+
+        return _BatchLifecycleContext(
+            baseline_graph_revision=baseline_graph_revision,
+            parsed_requests=tuple(parsed_requests),
+        )
+
+    def _semantic_validate_lifecycle_stage(
+        self, parsed_requests: Sequence[_ParsedReconfigurationRequest]
+    ) -> None:
+        for request in parsed_requests:
+            for mutation in request.mutations:
+                operation_value = mutation.get("operation")
+                if not isinstance(operation_value, str) or not operation_value.strip():
+                    raise diagnostic_value_error(
+                        code=VALIDATION_FAILURE_CODE,
+                        message=(
+                            f"request '{request.request_id}' has invalid mutation payload: "
+                            + "field 'operation' must be non-empty string"
+                        ),
+                        path="mutations[].operation",
+                        hint="set each mutation operation to a non-empty string",
+                    )
+
+    def _invariant_validate_and_stage_lifecycle(
+        self,
+        *,
+        network: ConnectionNetwork,
+        lifecycle_context: _BatchLifecycleContext,
+        applied_request_ids: list[str],
+        skipped_request_ids: list[str],
+    ) -> str | None:
+        has_compile_impact = False
+        for request in lifecycle_context.parsed_requests:
+            self._validate_expected_revision_invariant(
+                request=request,
+                baseline_graph_revision=lifecycle_context.baseline_graph_revision,
+            )
+            should_skip = self._validate_idempotency_invariant(
+                request=request,
+                skipped_request_ids=skipped_request_ids,
+            )
+            if should_skip:
+                continue
+
+            has_compile_impact = (
+                self._stage_mutations_for_request(
+                    network=network,
+                    request=request,
+                )
+                or has_compile_impact
+            )
+
+            if request.idempotency_key is not None:
+                self._committed_idempotency_keys.add(request.idempotency_key)
+                self._committed_idempotency_payloads[request.idempotency_key] = (
+                    request.payload_fingerprint
+                )
+            applied_request_ids.append(request.request_id)
+
+        return self._compile_preview_lifecycle_stage(
+            network=network, has_applied=has_compile_impact
+        )
+
+    def _validate_expected_revision_invariant(
+        self,
+        *,
+        request: _ParsedReconfigurationRequest,
+        baseline_graph_revision: str | None,
+    ) -> None:
+        if request.expected_revision is None:
+            return
+        if request.expected_revision == baseline_graph_revision:
+            return
+
+        actual_revision = baseline_graph_revision
+        if actual_revision is None:
+            actual_revision = "<none>"
+        raise diagnostic_value_error(
+            code=REVISION_MISMATCH_CODE,
+            message=(
+                f"request '{request.request_id}' expected_revision '{request.expected_revision}' "
+                + f"does not match active graph revision '{actual_revision}'"
+            ),
+            path="expected_revision",
+            hint="retry with the current graph revision or omit expected_revision",
+            revision=revision_details(
+                expected=request.expected_revision,
+                actual=baseline_graph_revision,
+            ),
+        )
+
+    def _validate_idempotency_invariant(
+        self,
+        *,
+        request: _ParsedReconfigurationRequest,
+        skipped_request_ids: list[str],
+    ) -> bool:
+        idempotency_key = request.idempotency_key
+        if idempotency_key is None or idempotency_key not in self._committed_idempotency_keys:
+            return False
+
+        committed_fingerprint = self._committed_idempotency_payloads.get(idempotency_key)
+        if committed_fingerprint is None:
+            raise diagnostic_value_error(
+                code=IDEMPOTENCY_CONFLICT_CODE,
+                message=(
+                    f"request '{request.request_id}' reuses idempotency_key "
+                    + f"'{idempotency_key}' but committed payload is unavailable"
+                ),
+                path="idempotency_key",
+                hint="use a new idempotency_key for changed payloads",
+            )
+        if committed_fingerprint != request.payload_fingerprint:
+            raise diagnostic_value_error(
+                code=IDEMPOTENCY_CONFLICT_CODE,
+                message=(
+                    f"request '{request.request_id}' reuses idempotency_key "
+                    + f"'{idempotency_key}' with different payload"
+                ),
+                path="idempotency_key",
+                hint="reuse idempotency_key only with identical metadata and mutations",
+            )
+        skipped_request_ids.append(request.request_id)
+        return True
+
+    def _stage_mutations_for_request(
+        self,
+        *,
+        network: ConnectionNetwork,
+        request: _ParsedReconfigurationRequest,
+    ) -> bool:
+        requires_compile = False
+        for mutation_index, mutation in enumerate(request.mutations, start=1):
+            try:
+                operation = str(mutation.get("operation", "")).strip()
+                requires_compile = self._mutation_requires_compile(operation) or requires_compile
+                self._apply_mutation(
+                    network=network,
+                    mutation=mutation,
+                    request_metadata=request.metadata,
+                )
+            except Exception as error:
+                raise DiagnosticValueError(
+                    coerce_diagnostic_payload(
+                        error=error,
+                        default_code=VALIDATION_FAILURE_CODE,
+                        message=f"request '{request.request_id}' mutation {mutation_index} failed: {error}",
+                        path=f"mutations[{mutation_index}]",
+                    )
+                ) from error
+        return requires_compile
+
+    def _mutation_requires_compile(self, operation: str) -> bool:
+        if operation == "set_valve_open_fraction":
+            return False
+        if operation in SENSOR_ONLY_MUTATION_OPERATIONS:
+            return False
+        if operation in CONTROLLER_ONLY_MUTATION_OPERATIONS:
+            return False
+        return True
+
+    def _compile_preview_lifecycle_stage(
+        self, *, network: ConnectionNetwork, has_applied: bool
+    ) -> str | None:
+        if not has_applied:
+            compiled = network.compiled
+            return None if compiled is None else compiled.graph_revision
+
+        try:
+            compiled = network.compile()
+        except Exception as error:
+            raise DiagnosticValueError(
+                coerce_diagnostic_payload(
+                    error=error,
+                    default_code=VALIDATION_FAILURE_CODE,
+                    message=f"queued reconfiguration compile validation failed: {error}",
+                    path="compile",
+                )
+            ) from error
+        return compiled.graph_revision
+
+    def _request_payload_fingerprint(
+        self,
+        *,
+        metadata: Mapping[str, object],
+        mutations: Sequence[Mapping[str, object]],
+    ) -> str:
         return json.dumps(
-            [dict(mutation) for mutation in mutations],
+            {
+                "metadata": dict(metadata),
+                "mutations": [dict(mutation) for mutation in mutations],
+            },
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=True,
         )
 
     def _apply_mutation(
-        self, *, network: ConnectionNetwork, mutation: Mapping[str, object]
+        self,
+        *,
+        network: ConnectionNetwork,
+        mutation: Mapping[str, object],
+        request_metadata: Mapping[str, object],
     ) -> None:
         operation_value = mutation.get("operation")
         if not isinstance(operation_value, str) or not operation_value.strip():
-            raise ValueError("invalid mutation payload: field 'operation' must be non-empty string")
+            raise diagnostic_value_error(
+                code=VALIDATION_FAILURE_CODE,
+                message="invalid mutation payload: field 'operation' must be non-empty string",
+                path="operation",
+                hint="set operation to a non-empty string",
+            )
         operation = operation_value.strip()
 
-        if operation == "add_connection":
+        if operation in SENSOR_ONLY_MUTATION_OPERATIONS:
+            self._assert_sensor_mutation_zero_resistance_guard(
+                operation=operation, mutation=mutation
+            )
+            if self._sensor_mutation_dispatcher is None:
+                raise ValueError(
+                    "sensor runtime mutation dispatcher is not configured for sensor operations"
+                )
+            topology_snapshot = self._capture_hydraulic_topology_guard_snapshot(network)
+            self._sensor_mutation_dispatcher(
+                operation=operation,
+                mutation=mutation,
+                request_metadata=request_metadata,
+            )
+            if self._capture_hydraulic_topology_guard_snapshot(network) != topology_snapshot:
+                raise ValueError(
+                    f"sensor operation '{operation}' must not mutate hydraulic graph parameters or topology"
+                )
+            return
+
+        if operation in CONTROLLER_ONLY_MUTATION_OPERATIONS:
+            self._assert_controller_mutation_zero_resistance_guard(
+                operation=operation,
+                mutation=mutation,
+            )
+            if self._controller_mutation_dispatcher is None:
+                raise ValueError(
+                    "controller runtime mutation dispatcher is not configured for controller operations"
+                )
+            topology_snapshot = self._capture_hydraulic_topology_guard_snapshot(network)
+            self._controller_mutation_dispatcher(
+                operation=operation,
+                mutation=mutation,
+                request_metadata=request_metadata,
+            )
+            if self._capture_hydraulic_topology_guard_snapshot(network) != topology_snapshot:
+                raise ValueError(
+                    f"controller operation '{operation}' must not mutate hydraulic graph parameters or topology"
+                )
+            return
+
+        destructive_plan = self._invariant_validator.plan_destructive_edit(
+            network=network,
+            mutation=mutation,
+            request_metadata=request_metadata,
+        )
+        if destructive_plan is not None:
+            for dependent_edge_id in destructive_plan.edge_ids_to_detach:
+                _ = network.remove_connection(edge_id=dependent_edge_id)
+
+        if operation in {"add_connection", "connect_line"}:
             source = self._require_non_empty_string(mutation, "source", operation)
             target = self._require_non_empty_string(mutation, "target", operation)
-            edge_id_value = mutation.get("edge_id")
+            edge_id_value = mutation.get("edge_id", mutation.get("line_id"))
             if edge_id_value is None:
                 _ = network.connect(source, target)
                 return
             if not isinstance(edge_id_value, str) or not edge_id_value.strip():
                 raise ValueError(
-                    "operation 'add_connection' optional field 'edge_id' must be non-empty string"
+                    "operation '{}' optional field 'edge_id' or 'line_id' must be non-empty string".format(
+                        operation
+                    )
                 )
             _ = network.connect(source, target, edge_id=edge_id_value.strip())
             return
 
-        if operation == "remove_connection":
+        if operation in {"remove_connection", "remove_edge", "disconnect_line", "remove_line"}:
             _ = network.remove_connection(
-                edge_id=mutation.get("edge_id"),
+                edge_id=mutation.get("edge_id", mutation.get("line_id")),
                 source=mutation.get("source"),
                 target=mutation.get("target"),
             )
@@ -460,34 +893,238 @@ class ConnectionRuntimeOrchestrator:
             network.add_boundary_sink(boundary_id, port_name=port_name.strip())
             return
 
-        if operation == "remove_boundary":
-            network.remove_boundary(boundary_id=mutation.get("boundary_id"))
+        if operation in {"remove_boundary", "remove_junction"}:
+            removal_boundary_id = mutation.get("boundary_id", mutation.get("junction_id"))
+            network.remove_boundary(boundary_id=removal_boundary_id)
             return
 
-        if operation == "add_process_port":
+        if operation in {"add_process_port", "add_inlet", "add_outlet"}:
+            direction: object = mutation.get("direction")
+            if operation == "add_inlet":
+                direction = "inlet"
+            elif operation == "add_outlet":
+                direction = "outlet"
             network.add_process_port(
                 process_id=mutation.get("process_id"),
-                direction=mutation.get("direction"),
+                direction=direction,
                 port_name=mutation.get("port_name"),
             )
             return
 
-        if operation == "remove_process_port":
+        if operation in {"remove_process_port", "remove_port", "remove_inlet", "remove_outlet"}:
+            direction = mutation.get("direction")
+            if operation == "remove_inlet":
+                direction = "inlet"
+            elif operation == "remove_outlet":
+                direction = "outlet"
             network.remove_process_port(
                 process_id=mutation.get("process_id"),
-                direction=mutation.get("direction"),
+                direction=direction,
                 port_name=mutation.get("port_name"),
             )
             return
 
-        if operation == "add_process":
+        if operation in {"remove_process", "remove_unit", "remove_junction_process"}:
+            network.remove_process(process_id=mutation.get("process_id"))
+            return
+
+        if operation == "set_valve_open_fraction":
+            line_id = self._require_non_empty_string(mutation, "line_id", operation)
+            open_fraction = self._require_finite_float(mutation, "open_fraction", operation)
+            network.stage_valve_open_fraction_command(
+                line_id=line_id,
+                open_fraction=open_fraction,
+            )
+            return
+
+        if operation == "configure_line_geometry":
+            line_id = self._require_non_empty_string(mutation, "line_id", operation)
+            radius_m = self._require_finite_float(mutation, "radius_m", operation)
+            length_m = self._require_finite_float(mutation, "length_m", operation)
+            network.configure_line_geometry(
+                line_id=line_id,
+                radius_m=radius_m,
+                length_m=length_m,
+                equation_name=mutation.get("equation_name"),
+                resistance_parameter_name=mutation.get("resistance_parameter_name"),
+            )
+            return
+
+        if operation == "configure_line_resistance":
+            line_id = self._require_non_empty_string(mutation, "line_id", operation)
+            mode = self._require_non_empty_string(mutation, "mode", operation)
+            network.configure_line_resistance(
+                line_id=line_id,
+                mode=mode,
+                manual_value=mutation.get("manual_value"),
+            )
+            return
+
+        if operation == "attach_line_valve":
+            line_id = self._require_non_empty_string(mutation, "line_id", operation)
+            valve_id = self._require_non_empty_string(mutation, "valve_id", operation)
+            network.attach_line_valve(
+                line_id=line_id,
+                valve_id=valve_id,
+                minimum_open_fraction=self._optional_finite_float(
+                    mutation=mutation,
+                    field_name="minimum_open_fraction",
+                    operation=operation,
+                    default=0.0,
+                ),
+                maximum_open_fraction=self._optional_finite_float(
+                    mutation=mutation,
+                    field_name="maximum_open_fraction",
+                    operation=operation,
+                    default=1.0,
+                ),
+                initial_open_fraction=self._optional_finite_float(
+                    mutation=mutation,
+                    field_name="initial_open_fraction",
+                    operation=operation,
+                    default=1.0,
+                ),
+                equation_name=mutation.get("equation_name"),
+                resistance_parameter_name=mutation.get("resistance_parameter_name"),
+            )
+            return
+
+        if operation in {"add_process", "add_unit", "add_junction"}:
             process_id = self._require_non_empty_string(mutation, "process_id", operation)
             inlet_ports = self._require_string_sequence(mutation, "inlet_ports", operation)
             outlet_ports = self._require_string_sequence(mutation, "outlet_ports", operation)
             network.add_process(process_id, inlet_ports=inlet_ports, outlet_ports=outlet_ports)
             return
 
-        raise ValueError(f"unsupported reconfiguration operation '{operation}'")
+        raise diagnostic_value_error(
+            code=VALIDATION_FAILURE_CODE,
+            message=f"unsupported reconfiguration operation '{operation}'",
+            path="operation",
+            hint="use a supported reconfiguration operation name",
+        )
+
+    def _assert_sensor_mutation_zero_resistance_guard(
+        self,
+        *,
+        operation: str,
+        mutation: Mapping[str, object],
+    ) -> None:
+        forbidden_fields = [
+            field_name
+            for field_name in SENSOR_MUTATION_FORBIDDEN_FIELDS
+            if field_name in mutation and mutation.get(field_name) is not None
+        ]
+        if forbidden_fields:
+            raise ValueError(
+                "operation '{}' must not include hydraulic/topology fields {}; ".format(
+                    operation,
+                    sorted(forbidden_fields),
+                )
+                + "sensor operations are zero-resistance instrumentation updates"
+            )
+
+    def _capture_hydraulic_topology_guard_snapshot(
+        self,
+        network: ConnectionNetwork,
+    ) -> _HydraulicTopologyGuardSnapshot:
+        process_specs = tuple(
+            (
+                process_id,
+                process_spec.inlet_ports,
+                process_spec.outlet_ports,
+            )
+            for process_id, process_spec in sorted(network._process_specs.items())
+        )
+        boundary_specs = tuple(
+            (
+                boundary_id,
+                boundary_spec.direction,
+                boundary_spec.port_name,
+            )
+            for boundary_id, boundary_spec in sorted(network._boundary_specs.items())
+        )
+        edge_specs = tuple(
+            (
+                edge.edge_id,
+                edge.source.node_id,
+                edge.source.port_name,
+                edge.target.node_id,
+                edge.target.port_name,
+            )
+            for edge in network._edges
+        )
+
+        line_hydraulic_configs: list[
+            tuple[
+                str,
+                str,
+                str,
+                str,
+                float | None,
+                float | None,
+                float | None,
+                str | None,
+                float | None,
+                float | None,
+                float | None,
+            ]
+        ] = []
+        for line_id, config in sorted(network._line_hydraulic_configs.items()):
+            valve = config.valve
+            line_hydraulic_configs.append(
+                (
+                    line_id,
+                    config.equation_name,
+                    config.resistance_parameter_name,
+                    config.resistance.mode,
+                    config.resistance.radius_m,
+                    config.resistance.length_m,
+                    config.resistance.manual_value,
+                    None if valve is None else valve.valve_id,
+                    None if valve is None else valve.minimum_open_fraction,
+                    None if valve is None else valve.maximum_open_fraction,
+                    None if valve is None else valve.initial_open_fraction,
+                )
+            )
+
+        pending_valve_commands = tuple(sorted(network._pending_valve_open_fractions.items()))
+        compiled = network.compiled
+        compiled_graph_revision = None if compiled is None else str(compiled.graph_revision)
+        compiled_hydraulic_graph_revision = (
+            None
+            if compiled is None or compiled.hydraulic is None
+            else str(compiled.hydraulic.graph_revision)
+        )
+
+        return _HydraulicTopologyGuardSnapshot(
+            process_specs=process_specs,
+            boundary_specs=boundary_specs,
+            edge_specs=edge_specs,
+            line_hydraulic_configs=tuple(line_hydraulic_configs),
+            pending_valve_commands=pending_valve_commands,
+            compiled_graph_revision=compiled_graph_revision,
+            compiled_hydraulic_graph_revision=compiled_hydraulic_graph_revision,
+        )
+
+    def _assert_controller_mutation_zero_resistance_guard(
+        self,
+        *,
+        operation: str,
+        mutation: Mapping[str, object],
+    ) -> None:
+        forbidden_fields = [
+            field_name
+            for field_name in CONTROLLER_MUTATION_FORBIDDEN_FIELDS
+            if field_name in mutation and mutation.get(field_name) is not None
+        ]
+        if forbidden_fields:
+            raise ValueError(
+                "operation '{}' must not include hydraulic/topology fields {}; ".format(
+                    operation,
+                    sorted(forbidden_fields),
+                )
+                + "controller operations are zero-resistance instrumentation updates"
+            )
 
     def _require_non_empty_string(
         self,
@@ -520,6 +1157,46 @@ class ConnectionRuntimeOrchestrator:
             normalized.append(item.strip())
         return tuple(normalized)
 
+    def _require_finite_float(
+        self,
+        mutation: Mapping[str, object],
+        field_name: str,
+        operation: str,
+    ) -> float:
+        value = mutation.get(field_name)
+        if isinstance(value, bool) or not isinstance(value, (float, int)):
+            raise ValueError(
+                f"operation '{operation}' requires finite numeric field '{field_name}'"
+            )
+        scalar = float(value)
+        if not isfinite(scalar):
+            raise ValueError(
+                f"operation '{operation}' requires finite numeric field '{field_name}'"
+            )
+        return scalar
+
+    def _optional_finite_float(
+        self,
+        *,
+        mutation: Mapping[str, object],
+        field_name: str,
+        operation: str,
+        default: float,
+    ) -> float:
+        value = mutation.get(field_name)
+        if value is None:
+            return default
+        if isinstance(value, bool) or not isinstance(value, (float, int)):
+            raise ValueError(
+                f"operation '{operation}' optional field '{field_name}' must be finite numeric"
+            )
+        scalar = float(value)
+        if not isfinite(scalar):
+            raise ValueError(
+                f"operation '{operation}' optional field '{field_name}' must be finite numeric"
+            )
+        return scalar
+
     def _default_hydraulic_solve_step(
         self,
         *,
@@ -532,7 +1209,17 @@ class ConnectionRuntimeOrchestrator:
             raise RuntimeError(
                 "runtime macro-step is unavailable: compiled hydraulic graph is required"
             )
-        return solve_compiled_hydraulic_graph(compiled.hydraulic)
+
+        pending_valve_commands = network.consume_pending_valve_open_fraction_commands()
+        hydraulic_graph = compiled.hydraulic
+        if pending_valve_commands:
+            hydraulic_graph = apply_valve_commands_to_compiled_graph(
+                compiled=hydraulic_graph,
+                valve_commands=pending_valve_commands,
+            )
+            network.replace_compiled_hydraulic(hydraulic=hydraulic_graph)
+
+        return solve_compiled_hydraulic_graph(hydraulic_graph)
 
     def _default_transport_and_mixing_step(
         self,
@@ -563,6 +1250,8 @@ __all__ = [
     "ConnectionRuntimeOrchestrator",
     "ConnectionRuntimeStepResult",
     "RuntimeBoundaryPropagationStep",
+    "RuntimeControllerMutationDispatcher",
     "RuntimeHydraulicSolveStep",
+    "RuntimeSensorMutationDispatcher",
     "RuntimeTransportAndMixingStep",
 ]

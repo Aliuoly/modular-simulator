@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false
-
 from types import MappingProxyType
 
 import pytest
 
+from modular_simulation.connection.domain_contracts import ResistanceConfig
 from modular_simulation.connection.hydraulic_compile import (
     GraphCompileDiagnostic,
     GraphCompileError,
     HydraulicCompileLifecycle,
     compile_hydraulic_graph,
+    resolve_line_resistance,
 )
 from modular_simulation.connection.hydraulic_solver import (
     HydraulicSystemDefinition,
@@ -63,7 +63,7 @@ def test_compile_missing_pressure_reference_has_deterministic_diagnostics() -> N
     runs: list[tuple[GraphCompileDiagnostic, ...]] = []
     for _ in range(2):
         with pytest.raises(GraphCompileError) as error:
-            compile_hydraulic_graph(system=system, graph_revision="rev-bad")
+            _ = compile_hydraulic_graph(system=system, graph_revision="rev-bad")
         runs.append(error.value.diagnostics)
 
     assert runs[0] == runs[1]
@@ -84,7 +84,7 @@ def test_compile_disconnected_invalid_topology_reports_component_stably() -> Non
     )
 
     with pytest.raises(GraphCompileError) as error:
-        compile_hydraulic_graph(system=system, graph_revision="rev-disconnected")
+        _ = compile_hydraulic_graph(system=system, graph_revision="rev-disconnected")
 
     diagnostic = error.value.diagnostics[0]
     assert diagnostic.code == "missing_pressure_reference"
@@ -102,11 +102,38 @@ def test_compile_invalid_cardinality_reports_assertion_friendly_payload() -> Non
     )
 
     with pytest.raises(GraphCompileError) as error:
-        compile_hydraulic_graph(system=system, graph_revision="rev-cardinality")
+        _ = compile_hydraulic_graph(system=system, graph_revision="rev-cardinality")
 
     diagnostic = error.value.diagnostics[0]
     assert diagnostic.code == "invalid_cardinality"
     assert diagnostic.details == (("residual_count", "2"), ("unknown_count", "1"))
+
+
+def test_compile_rejects_non_physical_line_geometry_with_deterministic_diagnostics() -> None:
+    invalid_resistance = ResistanceConfig.model_construct(
+        mode="derived",
+        radius_m=0.0,
+        length_m=3.0,
+        manual_value=None,
+    )
+
+    runs: list[tuple[GraphCompileDiagnostic, ...]] = []
+    for _ in range(2):
+        with pytest.raises(GraphCompileError) as error:
+            _ = resolve_line_resistance(
+                line_id="line_non_physical",
+                resistance=invalid_resistance,
+            )
+        runs.append(error.value.diagnostics)
+
+    assert runs[0] == runs[1]
+    assert runs[0] == (
+        GraphCompileDiagnostic(
+            code="invalid_line_geometry",
+            message="line resistance radius must be a positive finite value",
+            details=(("line_id", "line_non_physical"), ("radius_m", "0.0")),
+        ),
+    )
 
 
 def test_candidate_compile_does_not_mutate_active_runtime_state() -> None:
@@ -131,7 +158,9 @@ def test_candidate_compile_does_not_mutate_active_runtime_state() -> None:
         ),
     )
     with pytest.raises(GraphCompileError):
-        lifecycle.compile_candidate(system=invalid_candidate, graph_revision="candidate-invalid")
+        _ = lifecycle.compile_candidate(
+            system=invalid_candidate, graph_revision="candidate-invalid"
+        )
 
     assert lifecycle.active_graph_revision == "active-rev"
     assert lifecycle.active_compiled == active_compiled

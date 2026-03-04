@@ -9,8 +9,6 @@ from modular_simulation.connection.connection_layer import TransportAndMixingUpd
 from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
 from modular_simulation.connection.network import ConnectionNetwork
 from modular_simulation.connection.subsystem_descriptor import SubsystemRuntimeDescriptor
-from modular_simulation.validation.exceptions import MeasurableConfigurationError
-
 
 from modular_simulation.connection.hydraulic_solver import HydraulicSolveResult
 
@@ -123,7 +121,6 @@ def test_cross_subsystem_inputs_resolve_and_compute():
     )
 
     _ = orchestrator.step(macro_step_time_s=1.0)
-
     assert orchestrator.plant_calculation_outputs["plant/avg_temperature"] == pytest.approx(310.0)
 
 
@@ -158,7 +155,6 @@ def test_plant_output_collision_with_published_raises():
         runtime_orchestrator=runtime,
     )
 
-    # This should fail: output tag collides with a published subsystem measurement
     with pytest.raises(ValueError, match="collides with a published subsystem measurement"):
         orchestrator.add_calculation(
             calculation_id="plant_collision_on_output",

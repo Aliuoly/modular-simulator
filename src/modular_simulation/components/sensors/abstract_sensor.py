@@ -1,6 +1,8 @@
 from __future__ import annotations
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, override
 import numpy as np
+from astropy.units import Unit
 from pydantic import ConfigDict, Field, PrivateAttr
 from modular_simulation.validation.exceptions import (
     SensorConfigurationError,
@@ -15,6 +17,16 @@ from modular_simulation.components.calculations.point_metadata import PointMetad
 
 if TYPE_CHECKING:
     from modular_simulation.framework.system import System
+
+
+@dataclass(frozen=True)
+class SensorRuntimeBindingState:
+    measurement_tag: str
+    alias_tag: str
+    point_raw_tag: str
+    point_data: DataValue
+    point_history: tuple[DataValue, ...]
+    measurement_getter: Any
 
 
 class AbstractSensor(AbstractComponent):
@@ -59,11 +71,12 @@ class AbstractSensor(AbstractComponent):
             self.alias_tag = self.measurement_tag
 
         self._generator = np.random.default_rng(self.random_seed)
+        resolved_unit = Unit(self.unit)
 
         # Initialize Point
         self._point = Point(
             tag=self.alias_tag,
-            unit=self.unit,
+            unit=resolved_unit,
             type="measured",
             description=self.description,
             _raw_tag=self.measurement_tag,
@@ -76,28 +89,10 @@ class AbstractSensor(AbstractComponent):
         """Bind the sensor to the system's point registry."""
         exceptions: list[Exception] = []
         try:
-            # Check if the measurement tag corresponds to a process state first
-            # This avoids circular dependencies if the sensor alias matches the state name
-            if self.measurement_tag in system.process_model.state_metadata_dict:
-                from astropy.units import Unit
-
-                metadata = system.process_model.state_metadata_dict[self.measurement_tag]
-                source_unit = Unit(metadata.unit)
-                target_unit = Unit(self.unit)
-                converter = source_unit.get_converter(target_unit)
-
-                def getter() -> DataValue:
-                    # Read directly from process model
-                    val = getattr(system.process_model, self.measurement_tag)
-                    # We assume process model state is always "ok" if it exists,
-                    # or at least we treat it as the raw truth.
-                    return DataValue(value=converter(val), time=system.time, ok=True)
-
-                self._measurement_getter = getter
-            else:
-                self._measurement_getter = system.point_registry.make_converted_data_getter(
-                    tag=self.measurement_tag, target_unit=self.unit
-                )
+            self._measurement_getter = self._resolve_measurement_getter_for_tag(
+                system=system,
+                measurement_tag=self.measurement_tag,
+            )
         except KeyError as e:
             exceptions.append(SensorConfigurationError(str(e)))
         except AttributeError as e:
@@ -124,6 +119,91 @@ class AbstractSensor(AbstractComponent):
                 exceptions.append(e)
 
         return exceptions
+
+    def _resolve_measurement_getter_for_tag(self, *, system: System, measurement_tag: str) -> Any:
+        normalized_measurement_tag = measurement_tag.strip()
+        if not normalized_measurement_tag:
+            raise SensorConfigurationError("measurement_tag must be a non-empty string")
+
+        if normalized_measurement_tag in system.process_model.state_metadata_dict:
+            metadata = system.process_model.state_metadata_dict[normalized_measurement_tag]
+            source_unit = metadata.unit
+            target_unit = Unit(self.unit)
+            converter = source_unit.get_converter(target_unit)
+
+            def getter() -> DataValue:
+                val = getattr(system.process_model, normalized_measurement_tag)
+                return DataValue(value=converter(val), time=system.time, ok=True)
+
+            return getter
+
+        return system.point_registry.make_converted_data_getter(
+            normalized_measurement_tag,
+            Unit(self.unit),
+        )
+
+    def capture_runtime_binding_state(self) -> SensorRuntimeBindingState:
+        point_data = self._point.data
+        point_history = tuple(
+            DataValue(time=item.time, value=item.value, ok=item.ok) for item in self._point.history
+        )
+        return SensorRuntimeBindingState(
+            measurement_tag=self.measurement_tag,
+            alias_tag=self.alias_tag,
+            point_raw_tag=self._point.raw_tag,
+            point_data=DataValue(time=point_data.time, value=point_data.value, ok=point_data.ok),
+            point_history=point_history,
+            measurement_getter=self._measurement_getter,
+        )
+
+    def restore_runtime_binding_state(self, state: SensorRuntimeBindingState) -> None:
+        self.measurement_tag = state.measurement_tag
+        self.alias_tag = state.alias_tag
+        self._measurement_getter = state.measurement_getter
+        self._point._raw_tag = state.point_raw_tag
+        self._point._data = DataValue(
+            time=state.point_data.time,
+            value=state.point_data.value,
+            ok=state.point_data.ok,
+        )
+        self._point._history = [
+            DataValue(time=item.time, value=item.value, ok=item.ok) for item in state.point_history
+        ]
+
+    def bind_runtime_signal(self, *, system: System, signal_key: str) -> None:
+        normalized_signal_key = signal_key.strip()
+        if not normalized_signal_key:
+            raise SensorConfigurationError("signal_key must be a non-empty string")
+
+        runtime_state = self.capture_runtime_binding_state()
+        try:
+            measurement_getter = self._resolve_measurement_getter_for_tag(
+                system=system,
+                measurement_tag=normalized_signal_key,
+            )
+            self.measurement_tag = normalized_signal_key
+            self._measurement_getter = measurement_getter
+            self._point._raw_tag = normalized_signal_key
+            update_result = self._update(t=system.time)
+            if update_result.exceptions:
+                raise update_result.exceptions[0]
+            if np.isnan(self.point.data.value):
+                raise SensorConfigurationError(
+                    f"'{self.name}' sensor resulted in nan during bind operation."
+                )
+        except Exception:
+            self.restore_runtime_binding_state(runtime_state)
+            raise
+
+    def unbind_runtime_signal(self, *, system: System) -> None:
+        self.measurement_tag = ""
+
+        def getter() -> DataValue:
+            return DataValue(value=np.nan, time=system.time, ok=False)
+
+        self._measurement_getter = getter
+        self._point._raw_tag = ""
+        self._point.data = getter()
 
     @override
     def _should_update(self, t: Seconds) -> bool:
@@ -177,13 +257,11 @@ class AbstractSensor(AbstractComponent):
     def point_metadata_dict(self) -> dict[str, PointMetadata]:
         return {
             self.measurement_tag: PointMetadata(
-                tag=self.measurement_tag,
                 unit=self.unit,
                 type=TagType.INPUT,
                 description=self.description,
             ),
             self.alias_tag: PointMetadata(
-                tag=self.alias_tag,
                 unit=self.unit,
                 type=TagType.OUTPUT,
                 description=self.description,

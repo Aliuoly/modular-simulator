@@ -1,18 +1,14 @@
 ## Design of the `Sensors`
 
-The `AbstractSensor` class is a base class for all sensors. A sensor is a component that measures a state of a `System` instance. 
+`AbstractSensor` is the base class for sensor components. A sensor reads a process or registry tag, publishes a measured point, and can apply sampling, delay, noise, and fault behavior.
 
-By design, a sensor 
- - is tightly coupled to a `System` instance. The sensor must be initialized with a `System` instance before use. 
+By design, a sensor is coupled to a `System` at install time.
 
+It extends `AbstractComponent` and follows the component lifecycle:
+1. `install(system)`: commissions the sensor and resolves its measurement getter.
+2. `update(t)`: performs measurement updates through `_update`.
+3. `should_update(t)`: controls whether an update runs at a given time.
+4. `save()`: serializes configuration and runtime state.
+5. `load(payload)`: restores a sensor from serialized payload.
 
-
-
-
-It extends the `AbstractComponent` class and implements the following methods required by `AbstractComponent`:
-1. `initialize`: Initialize the sensor by binding it to a `System` instance.
-2. `update`: Updates the sensor's signal. 
-3. `to_dict`: Convert the sensor to a dictionary that specifies both its configuration and runtime state. 
-4. `from_dict`: Load a sensor from a dictionary that specifies both its configuration and runtime state. 
-
-
+Runtime rewiring is supported through `bind_runtime_signal(...)` and `unbind_runtime_signal(...)`, with rollback-safe state restoration on bind failures.

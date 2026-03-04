@@ -139,9 +139,9 @@ def build_index_maps(
         unknown_names.update(equation.unknown_name_map.values())
         residual_names.update(equation.residual_name_map.values())
 
-    for equation in system.linear_residual_equations:
-        unknown_names.update(equation.coefficients.keys())
-        residual_names.add(equation.residual_name)
+    for linear_equation in system.linear_residual_equations:
+        unknown_names.update(linear_equation.coefficients.keys())
+        residual_names.add(linear_equation.residual_name)
 
     unknown_order = _validate_declared_order(
         declared=system.unknown_order,
@@ -164,7 +164,7 @@ def assemble_unknown_vector(
     unknown_values: Mapping[str, float],
 ) -> NDArray[np.float64]:
     unknown_index_map, _ = build_index_maps(system)
-    vector = np.zeros(len(unknown_index_map), dtype=float)
+    vector: NDArray[np.float64] = np.zeros(len(unknown_index_map), dtype=float)
     for name, idx in unknown_index_map.items():
         if name in unknown_values:
             vector[idx] = float(unknown_values[name])
@@ -193,7 +193,7 @@ def assemble_residual_vector(
         )
 
     unknown_values = _unknown_vector_to_mapping(unknown_vector, unknown_index_map)
-    residual_vector = np.zeros(len(residual_index_map), dtype=float)
+    residual_vector: NDArray[np.float64] = np.zeros(len(residual_index_map), dtype=float)
 
     for equation in system.equations:
         local_unknowns = {
@@ -208,11 +208,11 @@ def assemble_residual_vector(
         for local_name, global_name in equation.residual_name_map.items():
             residual_vector[residual_index_map[global_name]] += float(element_residuals[local_name])
 
-    for equation in system.linear_residual_equations:
-        value = float(equation.constant)
-        for unknown_name, coefficient in equation.coefficients.items():
+    for linear_equation in system.linear_residual_equations:
+        value = float(linear_equation.constant)
+        for unknown_name, coefficient in linear_equation.coefficients.items():
             value += float(coefficient) * unknown_values[unknown_name]
-        residual_vector[residual_index_map[equation.residual_name]] += value
+        residual_vector[residual_index_map[linear_equation.residual_name]] += value
 
     return residual_vector, unknown_index_map, residual_index_map
 
@@ -250,9 +250,9 @@ def assemble_sparse_jacobian_triplet(
             cols.append(unknown_index_map[global_unknown])
             data.append(float(derivative))
 
-    for equation in system.linear_residual_equations:
-        row = residual_index_map[equation.residual_name]
-        for unknown_name, coefficient in equation.coefficients.items():
+    for linear_equation in system.linear_residual_equations:
+        row = residual_index_map[linear_equation.residual_name]
+        for unknown_name, coefficient in linear_equation.coefficients.items():
             rows.append(row)
             cols.append(unknown_index_map[unknown_name])
             data.append(float(coefficient))
@@ -267,7 +267,7 @@ def assemble_sparse_jacobian_triplet(
 
 
 def triplet_to_dense(jacobian: SparseJacobianTriplet) -> NDArray[np.float64]:
-    dense = np.zeros(jacobian.shape, dtype=float)
+    dense: NDArray[np.float64] = np.zeros(jacobian.shape, dtype=float)
     for row, col, value in zip(jacobian.rows, jacobian.cols, jacobian.data, strict=True):
         dense[row, col] += value
     return dense
@@ -306,10 +306,10 @@ def _connected_components(
             for residual in global_residuals:
                 _connect(f"u:{unknown}", f"r:{residual}")
 
-    for equation in system.linear_residual_equations:
-        residual_node = f"r:{equation.residual_name}"
+    for linear_equation in system.linear_residual_equations:
+        residual_node = f"r:{linear_equation.residual_name}"
         _add_node(residual_node)
-        for unknown in sorted(set(equation.coefficients.keys())):
+        for unknown in sorted(set(linear_equation.coefficients.keys())):
             _connect(f"u:{unknown}", residual_node)
 
     visited: set[str] = set()

@@ -1,18 +1,30 @@
 from __future__ import annotations
+import hashlib
+import json
+from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, version as package_version
+from importlib import import_module
 from pydantic import BaseModel, Field, PrivateAttr, ConfigDict
 from typing import Any, Callable, override, TYPE_CHECKING, cast
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from functools import cached_property
+import numpy as np
 from modular_simulation.components.control_system.control_element import ControlElement
+from modular_simulation.components.control_system.mode_manager import ControlElementModeManager
 from modular_simulation.utils.typing import Seconds, StateValue, TimeQuantity
 from modular_simulation.components.point import PointRegistry, Point, DataValue
 
 from modular_simulation.utils.wrappers import second
 from modular_simulation.measurables.process_model import ProcessModel
-from modular_simulation.components.sensors.abstract_sensor import AbstractSensor
+from modular_simulation.components.sensors.abstract_sensor import (
+    AbstractSensor,
+    SensorRuntimeBindingState,
+)
 from modular_simulation.components.calculations.abstract_calculation import AbstractCalculation
+from modular_simulation.components.abstract_component import ComponentDataDict
 from modular_simulation.components.control_system.controller_mode import ControllerMode
 from modular_simulation.components.control_system.abstract_controller import AbstractController
+from modular_simulation.connection.domain_contracts import SensorBinding
 from modular_simulation.validation.exceptions import (
     SensorConfigurationError,
     ControllerConfigurationError,
@@ -24,6 +36,66 @@ if TYPE_CHECKING:
     from modular_simulation.components.control_system.trajectory import Trajectory
 
 logger = logging.getLogger(__name__)
+
+
+CHECKPOINT_SCHEMA_MARKER = "modular_simulation.system.checkpoint"
+CHECKPOINT_SCHEMA_VERSION = 1
+CHECKPOINT_PACKAGE_NAME = "modular-simulation"
+CHECKPOINT_VERSION_MISMATCH_ERROR_CODE = "CHECKPOINT_VERSION_MISMATCH"
+CHECKPOINT_INTEGRITY_MISMATCH_ERROR_CODE = "CHECKPOINT_INTEGRITY_MISMATCH"
+
+
+@dataclass(frozen=True)
+class RuntimeSensorBinding:
+    sensor_id: str
+    signal_key: str
+    process_id: str | None
+    port_id: str | None
+    line_id: str | None
+    metadata: Mapping[str, object]
+
+
+@dataclass(frozen=True)
+class _SensorMutationSnapshot:
+    sensors: tuple[AbstractSensor, ...]
+    point_registry_points: dict[str, Point]
+    measured_points_cache: dict[str, Point] | None
+    calculated_points_cache: dict[str, Point] | None
+    setpoint_points_cache: dict[str, Point] | None
+    sensor_bindings_by_id: dict[str, RuntimeSensorBinding]
+    sensor_state_by_id: dict[str, SensorRuntimeBindingState]
+
+
+@dataclass(frozen=True)
+class RuntimeControllerBinding:
+    controller_id: str
+    signal_key: str
+    actuator_tag: str
+    mode: str
+    metadata: Mapping[str, object]
+
+
+@dataclass(frozen=True)
+class _RuntimeControllerDefinition:
+    controller_id: str
+    controller_type: str
+    controller_module: str
+    controller_config: dict[str, object]
+    signal_key: str | None
+    actuator_tag: str | None
+    mode: str
+    metadata: Mapping[str, object]
+    active: bool
+
+
+@dataclass(frozen=True)
+class _ControllerMutationSnapshot:
+    controller_definitions: dict[str, _RuntimeControllerDefinition]
+    controller_bindings: dict[str, RuntimeControllerBinding]
+    point_registry_points: dict[str, Point]
+    measured_points_cache: dict[str, Point] | None
+    calculated_points_cache: dict[str, Point] | None
+    setpoint_points_cache: dict[str, Point] | None
 
 
 class System(BaseModel):
@@ -60,6 +132,13 @@ class System(BaseModel):
 
     _point_registry: PointRegistry = PrivateAttr(default_factory=PointRegistry)
     _history_updaters: list[Callable[[Seconds], None]] = PrivateAttr(default_factory=list)
+    _sensor_bindings_by_id: dict[str, RuntimeSensorBinding] = PrivateAttr(default_factory=dict)
+    _runtime_controller_definitions: dict[str, _RuntimeControllerDefinition] = PrivateAttr(
+        default_factory=dict
+    )
+    _controller_bindings_by_id: dict[str, RuntimeControllerBinding] = PrivateAttr(
+        default_factory=dict
+    )
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     @override
@@ -380,6 +459,802 @@ class System(BaseModel):
         return controller.mode
 
     @property
+    def sensor_bindings(self) -> dict[str, RuntimeSensorBinding]:
+        return dict(self._sensor_bindings_by_id)
+
+    @property
+    def controller_bindings(self) -> dict[str, RuntimeControllerBinding]:
+        return dict(self._controller_bindings_by_id)
+
+    @property
+    def tag_store(self) -> PointRegistry:
+        """Public access to the point registry (tag -> Point).
+
+        This alias matches tests that expect `system.tag_store` to be a Mapping
+        of tag names (including sensor alias tags) to Point objects.
+        """
+        return self._point_registry
+
+    def apply_sensor_runtime_mutation(
+        self,
+        *,
+        operation: str,
+        mutation: Mapping[str, object],
+        request_metadata: Mapping[str, object],
+    ) -> None:
+        del request_metadata
+        snapshot = self._capture_sensor_mutation_snapshot()
+        try:
+            if operation == "create_sensor":
+                self._apply_create_sensor_mutation(mutation)
+                return
+            if operation == "bind_sensor":
+                self._apply_bind_sensor_mutation(mutation)
+                return
+            if operation == "unbind_sensor":
+                self._apply_unbind_sensor_mutation(mutation)
+                return
+            if operation == "remove_sensor":
+                self._apply_remove_sensor_mutation(mutation)
+                return
+            raise ValueError(f"unsupported sensor runtime operation '{operation}'")
+        except Exception:
+            self._restore_sensor_mutation_snapshot(snapshot)
+            raise
+
+    def create_sensor(
+        self,
+        *,
+        sensor_id: str,
+        signal_key: str,
+        process_id: str | None = None,
+        port_id: str | None = None,
+        line_id: str | None = None,
+        sensor_type: str = "SampledDelayedSensor",
+        sensor_module: str = "modular_simulation.components.sensors.sampled_delayed_sensor",
+        sensor_config: Mapping[str, object] | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> AbstractSensor:
+        mutation: dict[str, object] = {
+            "sensor_id": sensor_id,
+            "signal_key": signal_key,
+            "sensor_type": sensor_type,
+            "sensor_module": sensor_module,
+        }
+        if process_id is not None:
+            mutation["process_id"] = process_id
+        if port_id is not None:
+            mutation["port_id"] = port_id
+        if line_id is not None:
+            mutation["line_id"] = line_id
+        if sensor_config is not None:
+            mutation["sensor_config"] = dict(sensor_config)
+        if metadata is not None:
+            mutation["metadata"] = dict(metadata)
+        self.apply_sensor_runtime_mutation(
+            operation="create_sensor",
+            mutation=mutation,
+            request_metadata={},
+        )
+        return self._find_sensor_by_id(sensor_id)
+
+    def bind_sensor(
+        self,
+        *,
+        sensor_id: str,
+        signal_key: str,
+        process_id: str | None = None,
+        port_id: str | None = None,
+        line_id: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> RuntimeSensorBinding:
+        mutation: dict[str, object] = {
+            "sensor_id": sensor_id,
+            "signal_key": signal_key,
+        }
+        if process_id is not None:
+            mutation["process_id"] = process_id
+        if port_id is not None:
+            mutation["port_id"] = port_id
+        if line_id is not None:
+            mutation["line_id"] = line_id
+        if metadata is not None:
+            mutation["metadata"] = dict(metadata)
+        self.apply_sensor_runtime_mutation(
+            operation="bind_sensor",
+            mutation=mutation,
+            request_metadata={},
+        )
+        return self._sensor_bindings_by_id[sensor_id]
+
+    def unbind_sensor(self, *, sensor_id: str) -> None:
+        self.apply_sensor_runtime_mutation(
+            operation="unbind_sensor",
+            mutation={"sensor_id": sensor_id},
+            request_metadata={},
+        )
+
+    def remove_sensor(self, *, sensor_id: str) -> None:
+        self.apply_sensor_runtime_mutation(
+            operation="remove_sensor",
+            mutation={"sensor_id": sensor_id},
+            request_metadata={},
+        )
+
+    def create_controller(
+        self,
+        *,
+        controller_id: str,
+        controller_type: str,
+        controller_module: str,
+        controller_config: Mapping[str, object] | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        mutation: dict[str, object] = {
+            "controller_id": controller_id,
+            "controller_type": controller_type,
+            "controller_module": controller_module,
+        }
+        if controller_config is not None:
+            mutation["controller_config"] = dict(controller_config)
+        if metadata is not None:
+            mutation["metadata"] = dict(metadata)
+        self.apply_controller_runtime_mutation(
+            operation="create_controller",
+            mutation=mutation,
+            request_metadata={},
+        )
+
+    def bind_controller_input(self, *, controller_id: str, signal_key: str) -> None:
+        self.apply_controller_runtime_mutation(
+            operation="bind_controller_input",
+            mutation={"controller_id": controller_id, "signal_key": signal_key},
+            request_metadata={},
+        )
+
+    def bind_controller_output(self, *, controller_id: str, actuator_tag: str) -> None:
+        self.apply_controller_runtime_mutation(
+            operation="bind_controller_output",
+            mutation={"controller_id": controller_id, "actuator_tag": actuator_tag},
+            request_metadata={},
+        )
+
+    def configure_controller_mode(self, *, controller_id: str, mode: str) -> None:
+        self.apply_controller_runtime_mutation(
+            operation="configure_controller_mode",
+            mutation={"controller_id": controller_id, "mode": mode},
+            request_metadata={},
+        )
+
+    def activate_controller(self, *, controller_id: str) -> None:
+        self.apply_controller_runtime_mutation(
+            operation="activate_controller",
+            mutation={"controller_id": controller_id},
+            request_metadata={},
+        )
+
+    def apply_controller_runtime_mutation(
+        self,
+        *,
+        operation: str,
+        mutation: Mapping[str, object],
+        request_metadata: Mapping[str, object],
+    ) -> None:
+        del request_metadata
+        snapshot = self._capture_controller_mutation_snapshot()
+        try:
+            if operation == "create_controller":
+                self._apply_create_controller_mutation(mutation)
+                return
+            if operation == "bind_controller_input":
+                self._apply_bind_controller_input_mutation(mutation)
+                return
+            if operation == "bind_controller_output":
+                self._apply_bind_controller_output_mutation(mutation)
+                return
+            if operation == "configure_controller_mode":
+                self._apply_configure_controller_mode_mutation(mutation)
+                return
+            if operation == "activate_controller":
+                self._apply_activate_controller_mutation(mutation)
+                return
+            raise ValueError(f"unsupported controller runtime operation '{operation}'")
+        except Exception:
+            self._restore_controller_mutation_snapshot(snapshot)
+            raise
+
+    def _apply_create_controller_mutation(self, mutation: Mapping[str, object]) -> None:
+        controller_id = self._require_non_empty_string(
+            mutation, "controller_id", "create_controller"
+        )
+        if controller_id in self._runtime_controller_definitions:
+            raise ValueError(f"controller '{controller_id}' is already defined")
+
+        controller_type = self._require_non_empty_string(
+            mutation, "controller_type", "create_controller"
+        )
+        controller_module = self._require_non_empty_string(
+            mutation,
+            "controller_module",
+            "create_controller",
+        )
+        controller_config = self._mapping_from_mutation(
+            mutation=mutation,
+            field_name="controller_config",
+            operation="create_controller",
+            required=False,
+        )
+        metadata = self._mapping_from_mutation(
+            mutation=mutation,
+            field_name="metadata",
+            operation="create_controller",
+            required=False,
+        )
+        self._runtime_controller_definitions[controller_id] = _RuntimeControllerDefinition(
+            controller_id=controller_id,
+            controller_type=controller_type,
+            controller_module=controller_module,
+            controller_config=controller_config,
+            signal_key=None,
+            actuator_tag=None,
+            mode="auto",
+            metadata=metadata,
+            active=False,
+        )
+
+    def _apply_bind_controller_input_mutation(self, mutation: Mapping[str, object]) -> None:
+        controller_id = self._require_non_empty_string(
+            mutation,
+            "controller_id",
+            "bind_controller_input",
+        )
+        signal_key = self._require_non_empty_string(mutation, "signal_key", "bind_controller_input")
+        definition = self._require_controller_definition(controller_id)
+        self._ensure_controller_not_active(definition, operation="bind_controller_input")
+
+        self._runtime_controller_definitions[controller_id] = _RuntimeControllerDefinition(
+            controller_id=definition.controller_id,
+            controller_type=definition.controller_type,
+            controller_module=definition.controller_module,
+            controller_config=dict(definition.controller_config),
+            signal_key=signal_key,
+            actuator_tag=definition.actuator_tag,
+            mode=definition.mode,
+            metadata=dict(definition.metadata),
+            active=False,
+        )
+
+    def _apply_bind_controller_output_mutation(self, mutation: Mapping[str, object]) -> None:
+        controller_id = self._require_non_empty_string(
+            mutation,
+            "controller_id",
+            "bind_controller_output",
+        )
+        actuator_tag = self._require_non_empty_string(
+            mutation,
+            "actuator_tag",
+            "bind_controller_output",
+        )
+        definition = self._require_controller_definition(controller_id)
+        self._ensure_controller_not_active(definition, operation="bind_controller_output")
+
+        self._runtime_controller_definitions[controller_id] = _RuntimeControllerDefinition(
+            controller_id=definition.controller_id,
+            controller_type=definition.controller_type,
+            controller_module=definition.controller_module,
+            controller_config=dict(definition.controller_config),
+            signal_key=definition.signal_key,
+            actuator_tag=actuator_tag,
+            mode=definition.mode,
+            metadata=dict(definition.metadata),
+            active=False,
+        )
+
+    def _apply_configure_controller_mode_mutation(self, mutation: Mapping[str, object]) -> None:
+        controller_id = self._require_non_empty_string(
+            mutation,
+            "controller_id",
+            "configure_controller_mode",
+        )
+        mode = self._require_non_empty_string(mutation, "mode", "configure_controller_mode")
+        normalized_mode = mode.lower()
+        if normalized_mode not in {"auto", "manual"}:
+            raise ValueError(
+                "operation 'configure_controller_mode' field 'mode' must be one of ['auto', 'manual']"
+            )
+
+        definition = self._require_controller_definition(controller_id)
+        self._ensure_controller_not_active(definition, operation="configure_controller_mode")
+        self._runtime_controller_definitions[controller_id] = _RuntimeControllerDefinition(
+            controller_id=definition.controller_id,
+            controller_type=definition.controller_type,
+            controller_module=definition.controller_module,
+            controller_config=dict(definition.controller_config),
+            signal_key=definition.signal_key,
+            actuator_tag=definition.actuator_tag,
+            mode=normalized_mode,
+            metadata=dict(definition.metadata),
+            active=False,
+        )
+
+    def _apply_activate_controller_mutation(self, mutation: Mapping[str, object]) -> None:
+        controller_id = self._require_non_empty_string(
+            mutation, "controller_id", "activate_controller"
+        )
+        definition = self._require_controller_definition(controller_id)
+        self._ensure_controller_not_active(definition, operation="activate_controller")
+
+        signal_key = definition.signal_key
+        actuator_tag = definition.actuator_tag
+        if signal_key is None:
+            raise ControllerConfigurationError(
+                f"controller '{controller_id}' is missing an input signal binding"
+            )
+        if actuator_tag is None:
+            raise ControllerConfigurationError(
+                f"controller '{controller_id}' is missing an actuator binding"
+            )
+
+        signal_point = self.point_registry.get(signal_key)
+        if signal_point is None or signal_point.type not in {"measured", "calculated"}:
+            raise ControllerConfigurationError(
+                f"controller '{controller_id}' input signal '{signal_key}' is unresolved; "
+                + "expected a measured or calculated point"
+            )
+
+        control_element = self._find_control_element_by_mv_tag(actuator_tag)
+        if control_element is None:
+            raise ControllerConfigurationError(
+                f"controller '{controller_id}' references unknown actuator '{actuator_tag}'"
+            )
+        if control_element.controller is not None:
+            raise ControllerConfigurationError(
+                f"actuator '{actuator_tag}' is already bound to controller '{control_element.controller.cv_tag}'"
+            )
+
+        controller = self._instantiate_runtime_controller(
+            definition=definition, signal_key=signal_key
+        )
+        control_mode = ControllerMode.AUTO if definition.mode == "auto" else ControllerMode.MANUAL
+        self._attach_controller_to_control_element(
+            controller_id=controller_id,
+            control_element=control_element,
+            controller=controller,
+            control_mode=control_mode,
+        )
+
+        self._runtime_controller_definitions[controller_id] = _RuntimeControllerDefinition(
+            controller_id=definition.controller_id,
+            controller_type=definition.controller_type,
+            controller_module=definition.controller_module,
+            controller_config=dict(definition.controller_config),
+            signal_key=definition.signal_key,
+            actuator_tag=definition.actuator_tag,
+            mode=definition.mode,
+            metadata=dict(definition.metadata),
+            active=True,
+        )
+        self._controller_bindings_by_id[controller_id] = RuntimeControllerBinding(
+            controller_id=controller_id,
+            signal_key=signal_key,
+            actuator_tag=actuator_tag,
+            mode=definition.mode,
+            metadata=dict(definition.metadata),
+        )
+
+    def _instantiate_runtime_controller(
+        self,
+        *,
+        definition: _RuntimeControllerDefinition,
+        signal_key: str,
+    ) -> AbstractController:
+        module = import_module(definition.controller_module)
+        controller_class_object = getattr(module, definition.controller_type, None)
+        if not isinstance(controller_class_object, type) or not issubclass(
+            controller_class_object,
+            AbstractController,
+        ):
+            raise ControllerConfigurationError(
+                "create_controller requires a controller class "
+                + f"'{definition.controller_type}' in module '{definition.controller_module}'"
+            )
+
+        controller_class = cast(type[AbstractController], controller_class_object)
+        payload: dict[str, object] = dict(definition.controller_config)
+        payload["cv_tag"] = signal_key
+        try:
+            controller_factory = cast(Any, controller_class)
+            return cast(AbstractController, controller_factory.model_validate(payload))
+        except Exception as error:
+            raise ControllerConfigurationError(
+                f"controller '{definition.controller_id}' configuration is invalid: {error}"
+            ) from error
+
+    def _attach_controller_to_control_element(
+        self,
+        *,
+        controller_id: str,
+        control_element: ControlElement,
+        controller: AbstractController,
+        control_mode: ControllerMode,
+    ) -> None:
+        registry_snapshot = self._capture_point_registry_snapshot()
+        previous_controller = control_element.controller
+        previous_mode = control_element.mode
+        previous_mode_manager = control_element._mode_manager
+        try:
+            installation_errors = controller.install(self)
+            if installation_errors:
+                raise ControllerConfigurationError(
+                    f"controller '{controller_id}' installation failed: {installation_errors[0]}"
+                )
+
+            mv_getter = control_element._mv_point.make_converted_data_getter()
+            is_wired = controller.wire_to_element(
+                system=self,
+                mv_getter=mv_getter,
+                mv_range=control_element.mv_range,
+                mv_tag=control_element.mv_tag,
+                mv_unit=control_element._mv_point.unit,
+            )
+            if not is_wired:
+                raise ControllerConfigurationError(
+                    f"controller '{controller_id}' failed to wire to actuator '{control_element.mv_tag}'"
+                )
+
+            cv_value = self.point_registry[controller.cv_tag].data.value
+            mv_value = control_element._mv_point.data.value
+            if bool(np.isscalar(cv_value)) != bool(np.isscalar(mv_value)):
+                raise ControllerConfigurationError(
+                    f"controller '{controller_id}' input/output dimensionality is incompatible with actuator '{control_element.mv_tag}'"
+                )
+
+            control_element.controller = controller
+            control_element._mode_manager = ControlElementModeManager(
+                mode=control_mode,
+                manual_mv_source=control_element.mv_trajectory,
+                auto_mv_source=controller,
+                mv_getter=control_element._mv_point.make_converted_data_getter(),
+                mv_tag=control_element.mv_tag,
+            )
+            control_element.mode = control_mode
+            _ = control_element.change_control_mode(control_mode)
+            self.point_registry.add(control_element.controller_sp_point_dict)
+            self._invalidate_controller_cache()
+        except Exception:
+            control_element.controller = previous_controller
+            control_element.mode = previous_mode
+            control_element._mode_manager = previous_mode_manager
+            self._restore_point_registry_snapshot(registry_snapshot)
+            self._invalidate_controller_cache()
+            raise
+
+    def _find_control_element_by_mv_tag(self, mv_tag: str) -> ControlElement | None:
+        for control_element in self.control_elements:
+            if control_element.mv_tag == mv_tag:
+                return control_element
+        return None
+
+    def _require_controller_definition(self, controller_id: str) -> _RuntimeControllerDefinition:
+        definition = self._runtime_controller_definitions.get(controller_id)
+        if definition is None:
+            raise ValueError(f"unknown controller '{controller_id}'")
+        return definition
+
+    def _ensure_controller_not_active(
+        self,
+        definition: _RuntimeControllerDefinition,
+        *,
+        operation: str,
+    ) -> None:
+        if definition.active:
+            raise ValueError(
+                f"operation '{operation}' cannot modify active controller '{definition.controller_id}'"
+            )
+
+    def _capture_controller_mutation_snapshot(self) -> _ControllerMutationSnapshot:
+        return _ControllerMutationSnapshot(
+            controller_definitions=dict(self._runtime_controller_definitions),
+            controller_bindings=dict(self._controller_bindings_by_id),
+            point_registry_points=dict(self._point_registry._points),
+            measured_points_cache=(
+                None
+                if self._point_registry._measured_points is None
+                else dict(self._point_registry._measured_points)
+            ),
+            calculated_points_cache=(
+                None
+                if self._point_registry._calculated_points is None
+                else dict(self._point_registry._calculated_points)
+            ),
+            setpoint_points_cache=(
+                None
+                if self._point_registry._setpoint_points is None
+                else dict(self._point_registry._setpoint_points)
+            ),
+        )
+
+    def _restore_controller_mutation_snapshot(
+        self,
+        snapshot: _ControllerMutationSnapshot,
+    ) -> None:
+        self._runtime_controller_definitions = dict(snapshot.controller_definitions)
+        self._controller_bindings_by_id = dict(snapshot.controller_bindings)
+        self._point_registry._points = dict(snapshot.point_registry_points)
+        self._point_registry._measured_points = (
+            None if snapshot.measured_points_cache is None else dict(snapshot.measured_points_cache)
+        )
+        self._point_registry._calculated_points = (
+            None
+            if snapshot.calculated_points_cache is None
+            else dict(snapshot.calculated_points_cache)
+        )
+        self._point_registry._setpoint_points = (
+            None if snapshot.setpoint_points_cache is None else dict(snapshot.setpoint_points_cache)
+        )
+        self._invalidate_controller_cache()
+
+    def _capture_point_registry_snapshot(
+        self,
+    ) -> tuple[
+        dict[str, Point],
+        dict[str, Point] | None,
+        dict[str, Point] | None,
+        dict[str, Point] | None,
+    ]:
+        point_registry = self._point_registry
+        return (
+            dict(point_registry._points),
+            None
+            if point_registry._measured_points is None
+            else dict(point_registry._measured_points),
+            None
+            if point_registry._calculated_points is None
+            else dict(point_registry._calculated_points),
+            None
+            if point_registry._setpoint_points is None
+            else dict(point_registry._setpoint_points),
+        )
+
+    def _restore_point_registry_snapshot(
+        self,
+        snapshot: tuple[
+            dict[str, Point],
+            dict[str, Point] | None,
+            dict[str, Point] | None,
+            dict[str, Point] | None,
+        ],
+    ) -> None:
+        point_registry = self._point_registry
+        point_registry._points = dict(snapshot[0])
+        point_registry._measured_points = None if snapshot[1] is None else dict(snapshot[1])
+        point_registry._calculated_points = None if snapshot[2] is None else dict(snapshot[2])
+        point_registry._setpoint_points = None if snapshot[3] is None else dict(snapshot[3])
+
+    def _invalidate_controller_cache(self) -> None:
+        for cache_field in (
+            "controller_dictionary",
+            "cv_tag_list",
+            "control_element_mv_dictionary",
+            "mv_tag_list",
+        ):
+            if cache_field in self.__dict__:
+                object.__delattr__(self, cache_field)
+
+    def _apply_create_sensor_mutation(self, mutation: Mapping[str, object]) -> None:
+        sensor_id = self._require_non_empty_string(mutation, "sensor_id", "create_sensor")
+        if any(sensor.name == sensor_id for sensor in self.sensors):
+            raise ValueError(f"sensor '{sensor_id}' is already installed")
+
+        binding = self._binding_from_mutation(
+            mutation=mutation,
+            operation="create_sensor",
+            sensor_id=sensor_id,
+        )
+        sensor_type = self._require_non_empty_string(mutation, "sensor_type", "create_sensor")
+        sensor_module = self._require_non_empty_string(mutation, "sensor_module", "create_sensor")
+        sensor_config = self._mapping_from_mutation(
+            mutation=mutation,
+            field_name="sensor_config",
+            operation="create_sensor",
+            required=False,
+        )
+
+        sensor_payload = cast(dict[str, Any], dict(sensor_config))
+        sensor_payload["name"] = sensor_id
+        sensor_payload["measurement_tag"] = binding.signal_key
+        sensor_payload.setdefault("alias_tag", sensor_id)
+
+        module = import_module(sensor_module)
+        sensor_class_object = getattr(module, sensor_type, None)
+        if not isinstance(sensor_class_object, type) or not issubclass(
+            sensor_class_object, AbstractSensor
+        ):
+            raise ValueError(
+                f"create_sensor requires a sensor class '{sensor_type}' in module '{sensor_module}'"
+            )
+
+        sensor_class = cast(type[AbstractSensor], sensor_class_object)
+        sensor = sensor_class(**sensor_payload)
+        error, successful = self.add_component(sensor)
+        if not successful:
+            if error is not None:
+                raise error
+            raise RuntimeError("sensor installation failed without explicit error")
+
+        self.sensors = (*self.sensors, sensor)
+        self._sensor_bindings_by_id[sensor_id] = binding
+
+    def _apply_bind_sensor_mutation(self, mutation: Mapping[str, object]) -> None:
+        sensor_id = self._require_non_empty_string(mutation, "sensor_id", "bind_sensor")
+        binding = self._binding_from_mutation(
+            mutation=mutation,
+            operation="bind_sensor",
+            sensor_id=sensor_id,
+        )
+        sensor = self._find_sensor_by_id(sensor_id)
+        sensor.bind_runtime_signal(system=self, signal_key=binding.signal_key)
+        self._sensor_bindings_by_id[sensor_id] = binding
+
+    def _apply_unbind_sensor_mutation(self, mutation: Mapping[str, object]) -> None:
+        sensor_id = self._require_non_empty_string(mutation, "sensor_id", "unbind_sensor")
+        sensor = self._find_sensor_by_id(sensor_id)
+        sensor.unbind_runtime_signal(system=self)
+        self._sensor_bindings_by_id.pop(sensor_id, None)
+
+    def _apply_remove_sensor_mutation(self, mutation: Mapping[str, object]) -> None:
+        sensor_id = self._require_non_empty_string(mutation, "sensor_id", "remove_sensor")
+        sensor = self._find_sensor_by_id(sensor_id)
+        self.sensors = tuple(item for item in self.sensors if item.name != sensor_id)
+        self._sensor_bindings_by_id.pop(sensor_id, None)
+        self._remove_sensor_point_from_registry(sensor.point.tag)
+
+    def _capture_sensor_mutation_snapshot(self) -> _SensorMutationSnapshot:
+        point_registry = self._point_registry
+        sensor_state_by_id = {
+            sensor.name: sensor.capture_runtime_binding_state() for sensor in self.sensors
+        }
+        return _SensorMutationSnapshot(
+            sensors=tuple(self.sensors),
+            point_registry_points=dict(point_registry._points),
+            measured_points_cache=(
+                None
+                if point_registry._measured_points is None
+                else dict(point_registry._measured_points)
+            ),
+            calculated_points_cache=(
+                None
+                if point_registry._calculated_points is None
+                else dict(point_registry._calculated_points)
+            ),
+            setpoint_points_cache=(
+                None
+                if point_registry._setpoint_points is None
+                else dict(point_registry._setpoint_points)
+            ),
+            sensor_bindings_by_id=dict(self._sensor_bindings_by_id),
+            sensor_state_by_id=sensor_state_by_id,
+        )
+
+    def _restore_sensor_mutation_snapshot(self, snapshot: _SensorMutationSnapshot) -> None:
+        point_registry = self._point_registry
+        self.sensors = snapshot.sensors
+        point_registry._points = dict(snapshot.point_registry_points)
+        point_registry._measured_points = (
+            None if snapshot.measured_points_cache is None else dict(snapshot.measured_points_cache)
+        )
+        point_registry._calculated_points = (
+            None
+            if snapshot.calculated_points_cache is None
+            else dict(snapshot.calculated_points_cache)
+        )
+        point_registry._setpoint_points = (
+            None if snapshot.setpoint_points_cache is None else dict(snapshot.setpoint_points_cache)
+        )
+        self._sensor_bindings_by_id = dict(snapshot.sensor_bindings_by_id)
+        for sensor in self.sensors:
+            binding_state = snapshot.sensor_state_by_id.get(sensor.name)
+            if binding_state is None:
+                continue
+            sensor.restore_runtime_binding_state(binding_state)
+
+    def _remove_sensor_point_from_registry(self, point_tag: str) -> None:
+        point_registry = self._point_registry
+        _ = point_registry._points.pop(point_tag, None)
+        if point_registry._measured_points is not None:
+            _ = point_registry._measured_points.pop(point_tag, None)
+        if point_registry._calculated_points is not None:
+            _ = point_registry._calculated_points.pop(point_tag, None)
+        if point_registry._setpoint_points is not None:
+            _ = point_registry._setpoint_points.pop(point_tag, None)
+
+    def _binding_from_mutation(
+        self,
+        *,
+        mutation: Mapping[str, object],
+        operation: str,
+        sensor_id: str,
+    ) -> RuntimeSensorBinding:
+        signal_key = self._require_non_empty_string(mutation, "signal_key", operation)
+        process_id = self._optional_non_empty_string(mutation, "process_id", operation)
+        port_id = self._optional_non_empty_string(mutation, "port_id", operation)
+        line_id = self._optional_non_empty_string(mutation, "line_id", operation)
+        metadata_mapping = self._mapping_from_mutation(
+            mutation=mutation,
+            field_name="metadata",
+            operation=operation,
+            required=False,
+        )
+
+        validated = SensorBinding(
+            sensor_id=sensor_id,
+            signal_key=signal_key,
+            process_id=process_id,
+            port_id=port_id,
+            line_id=line_id,
+            metadata=metadata_mapping,
+        )
+        return RuntimeSensorBinding(
+            sensor_id=validated.sensor_id,
+            signal_key=validated.signal_key,
+            process_id=validated.process_id,
+            port_id=validated.port_id,
+            line_id=validated.line_id,
+            metadata=dict(validated.metadata),
+        )
+
+    def _mapping_from_mutation(
+        self,
+        *,
+        mutation: Mapping[str, object],
+        field_name: str,
+        operation: str,
+        required: bool,
+    ) -> dict[str, object]:
+        value = mutation.get(field_name)
+        if value is None:
+            if required:
+                raise ValueError(f"operation '{operation}' requires mapping field '{field_name}'")
+            return {}
+        if not isinstance(value, Mapping):
+            raise ValueError(f"operation '{operation}' field '{field_name}' must be a mapping")
+        return {str(key): item for key, item in value.items()}
+
+    def _find_sensor_by_id(self, sensor_id: str) -> AbstractSensor:
+        for sensor in self.sensors:
+            if sensor.name == sensor_id:
+                return sensor
+        raise ValueError(f"unknown sensor '{sensor_id}'")
+
+    def _require_non_empty_string(
+        self,
+        mutation: Mapping[str, object],
+        field_name: str,
+        operation: str,
+    ) -> str:
+        value = mutation.get(field_name)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(
+                f"operation '{operation}' requires non-empty string field '{field_name}'"
+            )
+        return value.strip()
+
+    def _optional_non_empty_string(
+        self,
+        mutation: Mapping[str, object],
+        field_name: str,
+        operation: str,
+    ) -> str | None:
+        value = mutation.get(field_name)
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(
+                f"operation '{operation}' optional field '{field_name}' must be non-empty string"
+            )
+        return value.strip()
+
+    @property
     def point_registry(self) -> PointRegistry:
         return self._point_registry
 
@@ -420,7 +1295,7 @@ class System(BaseModel):
     def save(self) -> dict[str, Any]:
         """Persist minimal configuration and component snapshots for reconstruction."""
 
-        return {
+        snapshot: dict[str, object] = {
             "system": {
                 "dt": self.dt,
                 "solver_options": self.solver_options,
@@ -433,23 +1308,210 @@ class System(BaseModel):
             "control_elements": [ce.save() for ce in self.control_elements],
         }
 
+        envelope_without_checksum: dict[str, object] = {
+            "schema_marker": CHECKPOINT_SCHEMA_MARKER,
+            "schema_version": CHECKPOINT_SCHEMA_VERSION,
+            "package_metadata": checkpoint_runtime_package_metadata(),
+            "snapshot": snapshot,
+        }
+        envelope: dict[str, object] = dict(envelope_without_checksum)
+        envelope["integrity_checksum"] = checkpoint_payload_checksum(envelope_without_checksum)
+        return cast(dict[str, Any], envelope)
+
     @classmethod
     def load(cls, payload: dict[str, Any]) -> "System":
         """Recreate a system and its components from serialized snapshots."""
 
-        system_config = payload["system"]
-        process_model = ProcessModel.load(payload["process_model"])
-        sensors = [AbstractSensor.load(s) for s in payload.get("sensors", [])]
-        calculations = [AbstractCalculation.load(c) for c in payload.get("calculations", [])]
-        control_elements = [ControlElement.load(ce) for ce in payload.get("control_elements", [])]
+        _require_exact_keys(
+            "checkpoint payload",
+            payload,
+            (
+                "schema_marker",
+                "schema_version",
+                "package_metadata",
+                "snapshot",
+                "integrity_checksum",
+            ),
+        )
+        schema_marker = payload["schema_marker"]
+        if schema_marker != CHECKPOINT_SCHEMA_MARKER:
+            raise ValueError(
+                "invalid system checkpoint payload: field 'schema_marker' does not match expected marker"
+            )
+
+        schema_version = payload["schema_version"]
+        if schema_version != CHECKPOINT_SCHEMA_VERSION:
+            raise ValueError(
+                "invalid system checkpoint payload: field 'schema_version' does not match expected version"
+            )
+
+        package_metadata = _require_mapping(payload["package_metadata"], "package_metadata")
+        _require_exact_keys(
+            "package_metadata",
+            package_metadata,
+            ("package_name", "package_version"),
+        )
+        package_name = _require_non_empty_string(
+            package_metadata["package_name"],
+            "package_metadata.package_name",
+        )
+        package_version_value = _require_non_empty_string(
+            package_metadata["package_version"],
+            "package_metadata.package_version",
+        )
+        runtime_package_metadata = checkpoint_runtime_package_metadata()
+        if (
+            package_name != runtime_package_metadata["package_name"]
+            or package_version_value != runtime_package_metadata["package_version"]
+        ):
+            raise ValueError(
+                f"[{CHECKPOINT_VERSION_MISMATCH_ERROR_CODE}] incompatible system checkpoint: "
+                + "checkpoint package metadata does not match runtime package metadata"
+            )
+
+        provided_checksum = _require_non_empty_string(
+            payload["integrity_checksum"],
+            "integrity_checksum",
+        )
+        checksum_payload = dict(payload)
+        _ = checksum_payload.pop("integrity_checksum", None)
+        expected_checksum = checkpoint_payload_checksum(checksum_payload)
+        if provided_checksum != expected_checksum:
+            raise ValueError(
+                f"[{CHECKPOINT_INTEGRITY_MISMATCH_ERROR_CODE}] invalid system checkpoint payload: "
+                + "field 'integrity_checksum' does not match payload checksum"
+            )
+
+        snapshot = _require_mapping(payload["snapshot"], "snapshot")
+        _require_exact_keys(
+            "snapshot",
+            snapshot,
+            ("system", "process_model", "sensors", "calculations", "control_elements"),
+        )
+
+        system_config = _require_mapping(snapshot["system"], "snapshot.system")
+        process_model = ProcessModel.load(cast(dict[str, Any], snapshot["process_model"]))
+        sensors: list[AbstractSensor] = []
+        for sensor_payload in _require_sequence(snapshot["sensors"], "snapshot.sensors"):
+            loaded_sensor = AbstractSensor.load(cast(ComponentDataDict, sensor_payload))
+            if not isinstance(loaded_sensor, AbstractSensor):
+                raise TypeError("loaded sensor payload did not resolve to AbstractSensor")
+            sensors.append(loaded_sensor)
+
+        calculations: list[AbstractCalculation] = []
+        for calculation_payload in _require_sequence(
+            snapshot["calculations"],
+            "snapshot.calculations",
+        ):
+            loaded_calculation = AbstractCalculation.load(
+                cast(ComponentDataDict, calculation_payload)
+            )
+            if not isinstance(loaded_calculation, AbstractCalculation):
+                raise TypeError("loaded calculation payload did not resolve to AbstractCalculation")
+            calculations.append(loaded_calculation)
+
+        control_elements: list[ControlElement] = []
+        for control_element_payload in _require_sequence(
+            snapshot["control_elements"],
+            "snapshot.control_elements",
+        ):
+            loaded_control_element = ControlElement.load(
+                cast(ComponentDataDict, control_element_payload)
+            )
+            if not isinstance(loaded_control_element, ControlElement):
+                raise TypeError("loaded control payload did not resolve to ControlElement")
+            control_elements.append(loaded_control_element)
+
+        solver_options_value = cast(
+            dict[str, Any],
+            system_config.get("solver_options", {"method": "LSODA"}),
+        )
+        record_history_value = cast(bool, system_config.get("record_history", False))
+        show_progress_value = cast(bool, system_config.get("show_progress", True))
 
         return cls(
-            dt=system_config["dt"],
+            dt=cast(Seconds, system_config["dt"]),
             process_model=process_model,
             sensors=sensors,
             calculations=calculations,
             control_elements=control_elements,
-            solver_options=system_config.get("solver_options", {"method": "LSODA"}),
-            record_history=system_config.get("record_history", False),
-            show_progress=system_config.get("show_progress", True),
+            solver_options=solver_options_value,
+            record_history=record_history_value,
+            show_progress=show_progress_value,
         )
+
+
+def checkpoint_runtime_package_metadata() -> dict[str, str]:
+    return {
+        "package_name": CHECKPOINT_PACKAGE_NAME,
+        "package_version": _resolve_runtime_package_version(),
+    }
+
+
+def checkpoint_payload_checksum(payload: Mapping[str, object]) -> str:
+    canonical_payload = _normalize_payload_for_checksum(payload)
+    serialized = json.dumps(
+        canonical_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _resolve_runtime_package_version() -> str:
+    try:
+        return package_version(CHECKPOINT_PACKAGE_NAME)
+    except PackageNotFoundError:
+        return "0.0.0+unknown"
+
+
+def _normalize_payload_for_checksum(value: object) -> object:
+    if isinstance(value, Mapping):
+        typed_mapping = cast(Mapping[object, object], value)
+        normalized: dict[str, object] = {}
+        for raw_key, raw_value in sorted(
+            typed_mapping.items(),
+            key=lambda entry: str(entry[0]),
+        ):
+            normalized[str(raw_key)] = _normalize_payload_for_checksum(raw_value)
+        return normalized
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_normalize_payload_for_checksum(item) for item in value]
+    return value
+
+
+def _require_exact_keys(
+    context: str,
+    payload: Mapping[str, object],
+    expected_keys: tuple[str, ...],
+) -> None:
+    if set(payload.keys()) != set(expected_keys):
+        raise ValueError(
+            f"invalid system checkpoint payload: field '{context}' keys must be exactly {expected_keys!r}"
+        )
+
+
+def _require_mapping(value: object, field_name: str) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            f"invalid system checkpoint payload: field '{field_name}' must be a mapping"
+        )
+    typed_mapping = cast(Mapping[object, object], value)
+    return {str(key): field_value for key, field_value in typed_mapping.items()}
+
+
+def _require_sequence(value: object, field_name: str) -> Sequence[object]:
+    if isinstance(value, str) or not isinstance(value, Sequence):
+        raise ValueError(
+            f"invalid system checkpoint payload: field '{field_name}' must be a sequence"
+        )
+    return value
+
+
+def _require_non_empty_string(value: object, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"invalid system checkpoint payload: field '{field_name}' must be a non-empty string"
+        )
+    return value.strip()

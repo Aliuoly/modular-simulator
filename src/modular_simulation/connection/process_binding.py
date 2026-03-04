@@ -146,6 +146,7 @@ class ProcessBinding:
             raise BindingError(
                 f"Invalid outlet binding role for '{port}': {raw_role!r}. Expected one of: ['inlet', 'outlet']"
             )
+        role: OutletRole = "inlet" if raw_role == "inlet" else "outlet"
 
         raw_composition = binding["composition"]
         if not isinstance(raw_composition, Sequence) or isinstance(raw_composition, (str, bytes)):
@@ -171,7 +172,7 @@ class ProcessBinding:
             raise BindingError(f"Invalid outlet binding flow for '{port}': expected numeric value.")
 
         return OutletBinding(
-            role=raw_role,
+            role=role,
             flow=float(raw_flow),
             composition=composition,
         )

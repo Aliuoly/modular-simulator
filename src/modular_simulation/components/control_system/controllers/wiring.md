@@ -1,7 +1,7 @@
 ```mermaid
 classDiagram
     direction TB
-    class ControlledView {
+    class PointRegistryView {
         controlled_state_1
         controlled_state_2
         ...
@@ -15,7 +15,9 @@ classDiagram
         mv_trajectory
         controller
         mode
-        +initialize(ControlledView, TagStore)
+        +install(System)
+        +update(t)
+        +change_control_mode(mode)
     }
     class Controller {
         <<ControllerBase>>
@@ -24,7 +26,10 @@ classDiagram
         sp_trajectory
         cascade_controller
         mode
-        +initialize(System)
+        +install(System)
+        +wire_to_element(system, mv_getter, mv_range, mv_tag, mv_unit)
+        +update(t)
+        +change_control_mode(mode)
     }
     class CascadeController{
         <<ControllerBase>>

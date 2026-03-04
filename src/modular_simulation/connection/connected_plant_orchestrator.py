@@ -268,7 +268,10 @@ class ConnectedPlantOrchestrator:
                 if deferred_until_next_barrier:
                     post_step_queue = self._network.queued_reconfigurations
                     self._network.replace_queued_reconfigurations(
-                        (*deferred_until_next_barrier, *post_step_queue)
+                        self._merge_fifo_queue(
+                            post_step_queue=post_step_queue,
+                            deferred_until_next_barrier=deferred_until_next_barrier,
+                        )
                     )
         finally:
             self._macro_step_active = False
@@ -530,6 +533,22 @@ class ConnectedPlantOrchestrator:
                 continue
             deferred.append(queued)
         return tuple(current_barrier), tuple(deferred)
+
+    def _merge_fifo_queue(
+        self,
+        *,
+        post_step_queue: Sequence[QueuedReconfigurationTransaction],
+        deferred_until_next_barrier: Sequence[QueuedReconfigurationTransaction],
+    ) -> tuple[QueuedReconfigurationTransaction, ...]:
+        merged = (*post_step_queue, *deferred_until_next_barrier)
+        return tuple(sorted(merged, key=self._queue_request_fifo_key))
+
+    def _queue_request_fifo_key(self, queued: QueuedReconfigurationTransaction) -> tuple[int, str]:
+        request_id = queued.request_id
+        prefix, _, counter_text = request_id.partition("_")
+        if prefix == "rq" and counter_text.isdigit():
+            return int(counter_text), request_id
+        return (2**31 - 1, request_id)
 
 
 __all__ = [

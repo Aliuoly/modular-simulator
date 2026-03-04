@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-# pyright: reportMissingImports=false, reportUnknownVariableType=false
-
 from .hydraulic_compile import (
     CompiledHydraulicGraph,
     HydraulicCompileLifecycle,
@@ -20,6 +18,10 @@ from .connected_plant_orchestrator import (
     ConnectedPlantStepResult,
 )
 from .network import CompiledConnectionNetwork, ConnectionNetwork
+from .reconfiguration_api import (
+    DynamicConnectionLineReconfigurationApi,
+    DynamicUnitPortReconfigurationApi,
+)
 from .process_binding import (
     BindingError,
     OutletBinding,
@@ -33,6 +35,8 @@ __all__ = [
     "CompiledConnectionNetwork",
     "CompiledHydraulicGraph",
     "ConnectionNetwork",
+    "DynamicConnectionLineReconfigurationApi",
+    "DynamicUnitPortReconfigurationApi",
     "ConnectedPlantInitializationResult",
     "ConnectedPlantOrchestrator",
     "ConnectedPlantPhaseHooks",
