@@ -161,7 +161,7 @@ Base class: `src/modular_simulation/components/abstract_component.py`.
 - Follow existing ordering and wiring semantics before attempting refactors.
 - For bug fixes: prefer surgical edits in the smallest relevant module.
 - Add/update tests around `System.step()` interactions when behavior changes cross components.
-- Use `AGENTS.md` commands for verification (`pytest`, `ruff`, `basedpyright`).
+- Use UV-first verification commands (`uv run python -m pytest`, `uv run python -m ruff check`, `uv run --with mypy python -m mypy`).
 
 ## Current-Repo Notes (2026-02)
 
@@ -205,5 +205,10 @@ Guardrail expectation:
 
 ### Example command for migrated path
 
-- Run `.venv/bin/python examples/connection_layer/two_tank_reaction_comparison.py --no-show`.
+- Run `uv run python examples/connection_layer/two_tank_reaction_comparison.py --no-show`.
 - Expect printed trajectory rows and parity metrics (`max_abs_error_a`, `max_abs_error_b`, `rmse_b`, `b_lag_steps`, monotonic flags).
+
+### Pytest `-k` expression rule
+
+- `pytest -k` requires a valid boolean expression.
+- Use forms like `-k "save and load and continue"`, not plain spaced text like `-k "save load continue"`.
