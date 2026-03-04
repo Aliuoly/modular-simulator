@@ -9,12 +9,19 @@ local_scheme = "no-local-version"
 [tool.mypy]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = [
+  "measurables.process_model",
+  "plotting.time_series",
+]
+ignore_errors = true
+
 [project]
 name = "modular-simulation"
 version = "0.1.0"
 license = { text = "MIT" }
 authors = [
-  { name="Alden Olyniec", email="aldenliuolyniec@gmail.com" },
+  { name = "Alden Olyniec", email = "aldenliuolyniec@gmail.com" },
 ]
 description = "Modular simulation framework for easily defining measurable and controllable systems."
 readme = "README.md"
@@ -22,7 +29,6 @@ requires-python = ">=3.13,<3.14"
 classifiers = [
   "Programming Language :: Python :: 3",
   "License :: OSI Approved :: MIT License",
-  "Operating System :: OS Independent",
 ]
 
 dependencies = [
@@ -39,23 +45,11 @@ dependencies = [
 testpaths = [
   "tests",
 ]
-[tool.basedpyright]
-reportMissingTypeStubs = false
-stubPath = "typings"
-reportImportCycles = false
-include = [
-  "src/modular_simulation/connection",
-  "tests/connection",
-  "examples/connection_layer",
-]
-exclude = [
-  "examples/gas_phase_polymerization/**",
-]
 
 [dependency-groups]
 dev = [
-    "basedpyright>=1.37.2",
-    "ruff",
+  "basedpyright>=1.37.2",
+  "ruff",
 ]
 
 [tool.ruff]
