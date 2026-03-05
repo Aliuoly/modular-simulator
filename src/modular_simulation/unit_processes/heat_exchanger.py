@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import exp, isfinite, log
-from typing import Annotated, Literal, cast, override
+from typing import Annotated, ClassVar, Literal, cast, override
 
 import numpy as np
 from numpy.typing import NDArray
@@ -16,7 +16,9 @@ from modular_simulation.thermodynamics.algebraic_process_model import (
     AlgebraicProcessModel,
     UnitProcessPorts,
 )
+from modular_simulation.thermodynamics.hydraulic_adapters import pipe_hydraulic_element_for_outlet
 from modular_simulation.thermodynamics.property_package import PropertyPackage
+from modular_simulation.thermodynamics.stream import PortAttributeMap, StreamData
 from modular_simulation.utils.typing import ArrayIndex, Seconds
 
 _FLOW_EPSILON = 1.0e-12
@@ -267,6 +269,35 @@ def _solve_exchanger(
 
 
 class HeatExchanger(AlgebraicProcessModel):
+    _INLET_MAP: ClassVar[dict[str, PortAttributeMap]] = {
+        "hot_inlet": PortAttributeMap(
+            flow="hot_inlet_flow",
+            temperature="hot_inlet_temperature",
+            pressure="hot_inlet_pressure",
+            composition="hot_inlet_composition",
+        ),
+        "cold_inlet": PortAttributeMap(
+            flow="cold_inlet_flow",
+            temperature="cold_inlet_temperature",
+            pressure="cold_inlet_pressure",
+            composition="cold_inlet_composition",
+        ),
+    }
+    _OUTLET_MAP: ClassVar[dict[str, PortAttributeMap]] = {
+        "hot_outlet": PortAttributeMap(
+            flow="hot_outlet_flow",
+            temperature="hot_outlet_temperature",
+            pressure="hot_outlet_pressure",
+            composition="hot_outlet_composition",
+        ),
+        "cold_outlet": PortAttributeMap(
+            flow="cold_outlet_flow",
+            temperature="cold_outlet_temperature",
+            pressure="cold_outlet_pressure",
+            composition="cold_outlet_composition",
+        ),
+    }
+
     flow_arrangement: Annotated[
         float | Literal["counter", "co", "cross"],
         M(type=T.CONSTANT, unit="", description="arrangement selector: 0=counter, 1=co, 2=cross"),
@@ -486,6 +517,45 @@ class HeatExchanger(AlgebraicProcessModel):
 
     def set_property_package(self, package: PropertyPackage | None) -> None:
         self._property_package = package
+
+    def apply_inlet(self, port_name: str, stream: StreamData) -> None:
+        if port_name not in self.ports.inlets:
+            valid_ports = ", ".join(self.ports.inlets)
+            raise ValueError(
+                f"Invalid inlet port '{port_name}' for {type(self).__name__}. Valid inlet ports: {valid_ports}."
+            )
+
+        port_map = self._INLET_MAP[port_name]
+        setattr(self, port_map.flow, float(stream.molar_flow_rate))
+        setattr(self, port_map.temperature, float(stream.temperature))
+        setattr(self, port_map.pressure, float(stream.pressure))
+        setattr(self, port_map.composition, np.asarray(stream.mole_fractions, dtype=np.float64))
+
+    def get_outlet_stream(self, port_name: str) -> StreamData:
+        if port_name not in self.ports.outlets:
+            valid_ports = ", ".join(self.ports.outlets)
+            raise ValueError(
+                f"Invalid outlet port '{port_name}' for {type(self).__name__}. Valid outlet ports: {valid_ports}."
+            )
+
+        port_map = self._OUTLET_MAP[port_name]
+        composition = tuple(
+            float(value)
+            for value in np.asarray(getattr(self, port_map.composition), dtype=np.float64)
+        )
+        return StreamData(
+            temperature=float(getattr(self, port_map.temperature)),
+            pressure=float(getattr(self, port_map.pressure)),
+            mole_fractions=composition,
+            molar_flow_rate=float(getattr(self, port_map.flow)),
+        )
+
+    def to_hydraulic_element(self, port_name: str):
+        return pipe_hydraulic_element_for_outlet(
+            unit_name=type(self).__name__,
+            port_name=port_name,
+            allowed_outlet_ports=self.ports.outlets,
+        )
 
     @staticmethod
     @override

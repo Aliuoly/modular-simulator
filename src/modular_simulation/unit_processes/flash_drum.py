@@ -3,7 +3,7 @@ from __future__ import annotations
 # pyright: reportMissingTypeStubs=false
 
 from math import isfinite
-from typing import Annotated, Literal, cast, override
+from typing import Annotated, ClassVar, Literal, cast, override
 
 import numpy as np
 from numpy.typing import NDArray
@@ -15,7 +15,9 @@ from modular_simulation.thermodynamics.algebraic_process_model import (
     AlgebraicProcessModel,
     UnitProcessPorts,
 )
+from modular_simulation.thermodynamics.hydraulic_adapters import pipe_hydraulic_element_for_outlet
 from modular_simulation.thermodynamics.property_package import PropertyPackage
+from modular_simulation.thermodynamics.stream import PortAttributeMap, StreamData
 from modular_simulation.utils.typing import ArrayIndex, Seconds
 
 _FLOW_EPSILON = 1.0e-12
@@ -87,6 +89,29 @@ def _normalize_composition(
 
 
 class FlashDrum(AlgebraicProcessModel):
+    _INLET_MAP: ClassVar[dict[str, PortAttributeMap]] = {
+        "inlet": PortAttributeMap(
+            flow="inlet_flow",
+            temperature="inlet_temperature",
+            pressure="inlet_pressure",
+            composition="inlet_composition",
+        )
+    }
+    _OUTLET_MAP: ClassVar[dict[str, PortAttributeMap]] = {
+        "vapor_outlet": PortAttributeMap(
+            flow="vapor_flow",
+            temperature="outlet_temperature",
+            pressure="outlet_pressure",
+            composition="vapor_composition",
+        ),
+        "liquid_outlet": PortAttributeMap(
+            flow="liquid_flow",
+            temperature="outlet_temperature",
+            pressure="outlet_pressure",
+            composition="liquid_composition",
+        ),
+    }
+
     thermal_mode: Annotated[
         float | Literal["adiabatic", "isothermal"],
         M(type=T.CONSTANT, unit="", description="thermal mode selector: 0=adiabatic, 1=isothermal"),
@@ -209,6 +234,53 @@ class FlashDrum(AlgebraicProcessModel):
 
     def set_property_package(self, package: PropertyPackage | None) -> None:
         self._property_package = package
+
+    @property
+    def outlet_pressure(self) -> float:
+        return float(self.flash_pressure)
+
+    @outlet_pressure.setter
+    def outlet_pressure(self, value: float) -> None:
+        self.flash_pressure = float(value)
+
+    def apply_inlet(self, port_name: str, stream: StreamData) -> None:
+        if port_name not in self.ports.inlets:
+            valid_ports = ", ".join(self.ports.inlets)
+            raise ValueError(
+                f"Invalid inlet port '{port_name}' for {type(self).__name__}. Valid inlet ports: {valid_ports}."
+            )
+
+        port_map = self._INLET_MAP[port_name]
+        setattr(self, port_map.flow, float(stream.molar_flow_rate))
+        setattr(self, port_map.temperature, float(stream.temperature))
+        setattr(self, port_map.pressure, float(stream.pressure))
+        setattr(self, port_map.composition, np.asarray(stream.mole_fractions, dtype=np.float64))
+
+    def get_outlet_stream(self, port_name: str) -> StreamData:
+        if port_name not in self.ports.outlets:
+            valid_ports = ", ".join(self.ports.outlets)
+            raise ValueError(
+                f"Invalid outlet port '{port_name}' for {type(self).__name__}. Valid outlet ports: {valid_ports}."
+            )
+
+        port_map = self._OUTLET_MAP[port_name]
+        composition = tuple(
+            float(value)
+            for value in np.asarray(getattr(self, port_map.composition), dtype=np.float64)
+        )
+        return StreamData(
+            temperature=float(getattr(self, port_map.temperature)),
+            pressure=float(getattr(self, port_map.pressure)),
+            mole_fractions=composition,
+            molar_flow_rate=float(getattr(self, port_map.flow)),
+        )
+
+    def to_hydraulic_element(self, port_name: str):
+        return pipe_hydraulic_element_for_outlet(
+            unit_name=type(self).__name__,
+            port_name=port_name,
+            allowed_outlet_ports=self.ports.outlets,
+        )
 
     @staticmethod
     @override

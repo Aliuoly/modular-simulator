@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from math import isfinite
-from typing import Annotated, cast, override
+from typing import Annotated, ClassVar, cast, override
 
 import numpy as np
 from numpy.typing import NDArray
@@ -16,6 +16,8 @@ from modular_simulation.thermodynamics.algebraic_process_model import (
     DUAL_OUTLET,
     UnitProcessPorts,
 )
+from modular_simulation.thermodynamics.hydraulic_adapters import pipe_hydraulic_element_for_outlet
+from modular_simulation.thermodynamics.stream import PortAttributeMap, StreamData
 from modular_simulation.utils.typing import ArrayIndex
 
 _FLOW_EPSILON = 1.0e-12
@@ -131,6 +133,29 @@ def _coerce_split_fractions(
 
 
 class ComponentSeparator(AlgebraicProcessModel):
+    _INLET_MAP: ClassVar[dict[str, PortAttributeMap]] = {
+        "inlet": PortAttributeMap(
+            flow="inlet_flow",
+            temperature="inlet_temperature",
+            pressure="inlet_pressure",
+            composition="inlet_composition",
+        )
+    }
+    _OUTLET_MAP: ClassVar[dict[str, PortAttributeMap]] = {
+        "outlet_1": PortAttributeMap(
+            flow="outlet_1_flow",
+            temperature="outlet_1_temperature",
+            pressure="outlet_1_pressure",
+            composition="outlet_1_composition",
+        ),
+        "outlet_2": PortAttributeMap(
+            flow="outlet_2_flow",
+            temperature="outlet_2_temperature",
+            pressure="outlet_2_pressure",
+            composition="outlet_2_composition",
+        ),
+    }
+
     n_species: Annotated[int, M(type=T.CONSTANT, unit="", description="number of species")] = 2
     split_fractions: Annotated[
         NDArray[np.float64],
@@ -264,6 +289,45 @@ class ComponentSeparator(AlgebraicProcessModel):
     @property
     def ports(self) -> UnitProcessPorts:
         return DUAL_OUTLET
+
+    def apply_inlet(self, port_name: str, stream: StreamData) -> None:
+        if port_name not in self.ports.inlets:
+            valid_ports = ", ".join(self.ports.inlets)
+            raise ValueError(
+                f"Invalid inlet port '{port_name}' for {type(self).__name__}. Valid inlet ports: {valid_ports}."
+            )
+
+        port_map = self._INLET_MAP[port_name]
+        setattr(self, port_map.flow, float(stream.molar_flow_rate))
+        setattr(self, port_map.temperature, float(stream.temperature))
+        setattr(self, port_map.pressure, float(stream.pressure))
+        setattr(self, port_map.composition, np.asarray(stream.mole_fractions, dtype=np.float64))
+
+    def get_outlet_stream(self, port_name: str) -> StreamData:
+        if port_name not in self.ports.outlets:
+            valid_ports = ", ".join(self.ports.outlets)
+            raise ValueError(
+                f"Invalid outlet port '{port_name}' for {type(self).__name__}. Valid outlet ports: {valid_ports}."
+            )
+
+        port_map = self._OUTLET_MAP[port_name]
+        composition = tuple(
+            float(value)
+            for value in np.asarray(getattr(self, port_map.composition), dtype=np.float64)
+        )
+        return StreamData(
+            temperature=float(getattr(self, port_map.temperature)),
+            pressure=float(getattr(self, port_map.pressure)),
+            mole_fractions=composition,
+            molar_flow_rate=float(getattr(self, port_map.flow)),
+        )
+
+    def to_hydraulic_element(self, port_name: str):
+        return pipe_hydraulic_element_for_outlet(
+            unit_name=type(self).__name__,
+            port_name=port_name,
+            allowed_outlet_ports=self.ports.outlets,
+        )
 
     @staticmethod
     @override

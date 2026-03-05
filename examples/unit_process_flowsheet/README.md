@@ -1,16 +1,17 @@
 # Unit-Process Flowsheet Demo
 
-This example runs a deterministic multi-unit train:
+This example shows the simplified `Flowsheet` builder API with one feed, chained units, explicit multi-outlet wiring, and system-level sensor/controller installation.
 
-`Feed -> Heater -> CSTR -> FlashDrum -> ShortcutDistillation`
+`feed -> heater -> flash -> {vapor_trim, liquid_trim}`
 
-The demo uses the same runtime conventions as the unit-process tests:
+Core flow setup in the demo:
 
-- each unit is attached via `attach_system(SimpleNamespace(solver_options={}))`
-- thermo-enabled units get `set_property_package(...)`
-- the train is wired through `ConnectionNetwork`
-- macro-step execution goes through `ConnectedPlantOrchestrator`
-- boundary propagation uses thermo auto-coupling (`ThermoBoundaryPropagationStep`)
+- build a flowsheet via `add_unit(...)`, `add_feed_from_values(...)`, `chain(...)`, and `connect(...)`
+- use explicit ports for multi-outlet routing:
+  - `connect("flash.vapor_outlet", "vapor_trim")`
+  - `connect("flash.liquid_outlet", "liquid_trim")`
+- install a sensor and PID controller on `flowsheet.get_system("heater")`
+- run with `compile()` and `run()` and query outputs with `FlowsheetResults.get_unit(...)` and `get_stream(...)`
 
 ## Run
 
@@ -20,15 +21,15 @@ uv run python examples/unit_process_flowsheet/flowsheet_demo.py
 
 The script prints key KPIs, including:
 
-- heater and reactor outlet temperature
-- flash vapor fraction and phase split behavior
-- shortcut-distillation product purities and mass-balance residual
+- final simulation time
+- vapor and liquid branch flow rates from the flash split
+- ethanol mole fraction in each flash outlet stream
 
 You can also import and run programmatically:
 
 ```python
 from examples.unit_process_flowsheet.flowsheet_demo import run_flowsheet_demo
 
-kpis = run_flowsheet_demo(print_results=False)
-print(kpis["distillate_composition"])
+summary = run_flowsheet_demo(print_results=False)
+print(summary["vapor_flow_mol_s"])
 ```

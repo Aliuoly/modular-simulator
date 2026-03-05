@@ -15,6 +15,11 @@ from modular_simulation.connection.hydraulic_compile import (
     compile_valve_hydraulic_state,
     resolve_line_resistance,
 )
+from modular_simulation.connection.asymmetric_adapter import (
+    AsymmetricPortAdapter,
+    ConvergingPortAdapter,
+    build_process_binding,
+)
 from modular_simulation.connection.domain_contracts import (
     ResistanceConfig,
     ValveConfig,
@@ -42,7 +47,7 @@ from modular_simulation.connection.topology import (
 class CompiledConnectionNetwork:
     graph_revision: str
     topology: TopologyGraph
-    process_bindings: Mapping[str, ProcessBinding]
+    process_bindings: Mapping[str, ProcessBinding | AsymmetricPortAdapter | ConvergingPortAdapter]
     hydraulic: CompiledHydraulicGraph | None
 
 
@@ -289,10 +294,11 @@ class ConnectionNetwork:
             edges=tuple(self._edges),
         )
 
-        bindings: dict[str, ProcessBinding] = {
-            spec.process_id: ProcessBinding(
-                inlet_ports=list(spec.inlet_ports),
-                outlet_ports=list(spec.outlet_ports),
+        bindings: dict[str, ProcessBinding | AsymmetricPortAdapter | ConvergingPortAdapter] = {
+            spec.process_id: build_process_binding(
+                process_id=spec.process_id,
+                inlet_ports=spec.inlet_ports,
+                outlet_ports=spec.outlet_ports,
             )
             for spec in sorted(self._process_specs.values(), key=lambda item: item.process_id)
         }

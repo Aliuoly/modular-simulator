@@ -18,12 +18,14 @@ from modular_simulation.connection.junction import (
 )
 from modular_simulation.connection.process_binding import BindingError
 from modular_simulation.connection.state import MaterialState, PortCondition
+from modular_simulation.thermodynamics.stream import StreamData
 from modular_simulation.thermodynamics.species import SpeciesProjection
 
 if TYPE_CHECKING:
     from modular_simulation.connection.network import ConnectionNetwork
     from modular_simulation.thermodynamics.property_package import PropertyPackage
     from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
+    from modular_simulation.thermodynamics.stream import StreamPortIO
 
 
 ManualOverrideHook = Callable[[Mapping[str, PortCondition]], Mapping[str, PortCondition]]
@@ -37,6 +39,8 @@ class ThermoBoundaryPropagationConfig:
     default_pressure_pa: float = 101325.0
     default_temperature_k: float = 298.15
     default_phase_hint: str | None = "liquid"
+    stream_port_io_by_node_id: Mapping[str, StreamPortIO] | None = None
+    feed_streams_by_boundary_id: Mapping[str, StreamData] | None = None
     manual_port_conditions: Mapping[str, PortCondition] | None = None
     manual_override_hook: ManualOverrideHook | None = None
 
@@ -107,17 +111,44 @@ class ThermoBoundaryPropagationStep:
         transport_results = transport_and_mixing_update.transport_results
         incoming_conditions_by_target: dict[str, list[PortCondition]] = {}
         target_bindings: dict[str, tuple[object, str]] = {}
+        target_stream_port_ios: dict[str, StreamPortIO] = {}
 
         for edge in sorted(compiled.topology.edges, key=lambda item: item.edge_id):
             source_binding = compiled.process_bindings.get(edge.source.node_id)
             target_binding = compiled.process_bindings.get(edge.target.node_id)
+
+            source_projection = self._lookup_projection(edge.source.node_id)
+            target_projection = self._lookup_projection(edge.target.node_id)
+            stream_condition = self._build_stream_port_condition(
+                edge_id=edge.edge_id,
+                source_node_id=edge.source.node_id,
+                target_node_id=edge.target.node_id,
+                source_port_name=edge.source.port_name,
+                hydraulic_result=hydraulic_result,
+                macro_step_time_s=macro_step_time_s,
+                source_binding=source_binding,
+                source_projection=source_projection,
+                target_projection=target_projection,
+                global_species_ids=species_ids,
+            )
+            if stream_condition is not None:
+                target_key = f"{edge.target.node_id}.{edge.target.port_name}"
+                incoming_conditions_by_target.setdefault(target_key, []).append(stream_condition)
+                if target_binding is not None:
+                    target_bindings[target_key] = (target_binding, edge.target.port_name)
+                target_stream_port_io = self._resolve_stream_port_io(
+                    node_id=edge.target.node_id,
+                    binding=target_binding,
+                )
+                if target_stream_port_io is not None:
+                    target_stream_port_ios[target_key] = target_stream_port_io
+                continue
+
             if source_binding is None or target_binding is None:
                 continue
 
             outlet_payload = self._safe_get_outlet_payload(source_binding, edge.source.port_name)
             transport_result = transport_results.get(edge.edge_id)
-            source_projection = self._lookup_projection(edge.source.node_id)
-            target_projection = self._lookup_projection(edge.target.node_id)
             state = self._build_material_state(
                 edge_id=edge.edge_id,
                 source_node_id=edge.source.node_id,
@@ -178,13 +209,112 @@ class ThermoBoundaryPropagationStep:
             target_binding, target_port_name = target_bindings[target_key]
             set_inlet = getattr(target_binding, "set_inlet", None)
             if not callable(set_inlet):
-                continue
-            try:
-                set_inlet(target_port_name, mixed_result.total_incoming_flow_rate)
-            except BindingError:
+                pass
+            else:
+                try:
+                    set_inlet(target_port_name, mixed_result.total_incoming_flow_rate)
+                except BindingError:
+                    pass
+
+            target_stream_port_io = target_stream_port_ios.get(target_key)
+            if target_stream_port_io is None:
                 continue
 
+            target_stream_port_io.apply_inlet(
+                target_port_name,
+                StreamData.from_port_condition(conditions[target_key]),
+            )
+
         return conditions
+
+    def _build_stream_port_condition(
+        self,
+        *,
+        edge_id: str,
+        source_node_id: str,
+        target_node_id: str,
+        source_port_name: str,
+        hydraulic_result: HydraulicSolveResult,
+        macro_step_time_s: float,
+        source_binding: object | None,
+        source_projection: SpeciesProjection | None,
+        target_projection: SpeciesProjection | None,
+        global_species_ids: tuple[str, ...],
+    ) -> PortCondition | None:
+        stream = self._resolve_stream_for_edge(
+            source_node_id=source_node_id,
+            source_port_name=source_port_name,
+            source_binding=source_binding,
+        )
+        if stream is None:
+            return None
+
+        state = stream.to_material_state()
+        if self._config.auto_propagate_species:
+            state = self._project_state_for_target(
+                edge_id=edge_id,
+                source_node_id=source_node_id,
+                target_node_id=target_node_id,
+                state=state,
+                source_projection=source_projection,
+                target_projection=target_projection,
+                global_species_ids=global_species_ids,
+            )
+
+        flow_rate = self._resolve_hydraulic_flow(edge_id=edge_id, hydraulic_result=hydraulic_result)
+        if flow_rate is None:
+            flow_rate = float(stream.molar_flow_rate)
+
+        return PortCondition(
+            state=state,
+            species_ids=state.species_ids,
+            through_molar_flow_rate=flow_rate,
+            macro_step_time_s=macro_step_time_s,
+        )
+
+    def _resolve_stream_for_edge(
+        self,
+        *,
+        source_node_id: str,
+        source_port_name: str,
+        source_binding: object | None,
+    ) -> StreamData | None:
+        feed_streams = self._config.feed_streams_by_boundary_id
+        if feed_streams is not None:
+            boundary_stream = feed_streams.get(source_node_id)
+            if boundary_stream is not None:
+                return boundary_stream
+
+        source_stream_port_io = self._resolve_stream_port_io(
+            node_id=source_node_id,
+            binding=source_binding,
+        )
+        if source_stream_port_io is None:
+            return None
+        return source_stream_port_io.get_outlet_stream(source_port_name)
+
+    def _resolve_stream_port_io(
+        self,
+        *,
+        node_id: str,
+        binding: object | None,
+    ) -> StreamPortIO | None:
+        configured_bindings = self._config.stream_port_io_by_node_id
+        if configured_bindings is not None:
+            configured_binding = configured_bindings.get(node_id)
+            if self._is_stream_port_io(configured_binding):
+                return cast("StreamPortIO", configured_binding)
+
+        if self._is_stream_port_io(binding):
+            return cast("StreamPortIO", binding)
+        return None
+
+    def _is_stream_port_io(self, candidate: object | None) -> bool:
+        if candidate is None:
+            return False
+        return callable(getattr(candidate, "apply_inlet", None)) and callable(
+            getattr(candidate, "get_outlet_stream", None)
+        )
 
     def _mix_target_port_conditions(
         self,

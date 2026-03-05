@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportAny=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportImplicitStringConcatenation=false
+# pyright: reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportImplicitStringConcatenation=false
 
 from math import exp, isfinite, log, sqrt
-from typing import Annotated, cast, override
+from typing import Annotated, ClassVar, cast, override
 
 import numpy as np
 from numpy.typing import NDArray
@@ -15,7 +15,9 @@ from modular_simulation.thermodynamics.algebraic_process_model import (
     AlgebraicProcessModel,
     UnitProcessPorts,
 )
+from modular_simulation.thermodynamics.hydraulic_adapters import pipe_hydraulic_element_for_outlet
 from modular_simulation.thermodynamics.property_package import FlashResult, PropertyPackage
+from modular_simulation.thermodynamics.stream import PortAttributeMap, StreamData
 from modular_simulation.utils.typing import ArrayIndex, Seconds
 
 _FLOW_EPSILON = 1.0e-12
@@ -172,6 +174,29 @@ def _gilliland_n_actual(n_min: float, r_min: float, r_actual: float) -> float:
 
 
 class ShortcutDistillation(AlgebraicProcessModel):
+    _INLET_MAP: ClassVar[dict[str, PortAttributeMap]] = {
+        "inlet": PortAttributeMap(
+            flow="inlet_flow",
+            temperature="inlet_temperature",
+            pressure="inlet_pressure",
+            composition="inlet_composition",
+        )
+    }
+    _OUTLET_MAP: ClassVar[dict[str, PortAttributeMap]] = {
+        "distillate": PortAttributeMap(
+            flow="distillate_flow",
+            temperature="condenser_temperature",
+            pressure="condenser_pressure",
+            composition="distillate_composition",
+        ),
+        "bottoms": PortAttributeMap(
+            flow="bottoms_flow",
+            temperature="reboiler_temperature",
+            pressure="reboiler_pressure",
+            composition="bottoms_composition",
+        ),
+    }
+
     n_species: Annotated[int, M(type=T.CONSTANT, unit="", description="number of species")] = 2
     light_key_index: Annotated[
         int,
@@ -279,6 +304,10 @@ class ShortcutDistillation(AlgebraicProcessModel):
     ] = 0.0
 
     _property_package: PropertyPackage | None = PrivateAttr(default=None)
+    _condenser_temperature: float = PrivateAttr(default=298.15)
+    _condenser_pressure: float = PrivateAttr(default=101325.0)
+    _reboiler_temperature: float = PrivateAttr(default=298.15)
+    _reboiler_pressure: float = PrivateAttr(default=101325.0)
 
     @override
     def model_post_init(self, context: object) -> None:
@@ -335,6 +364,10 @@ class ShortcutDistillation(AlgebraicProcessModel):
         _validate_composition(
             np.asarray(self.inlet_composition, dtype=np.float64), name="inlet_composition"
         )
+        self._condenser_temperature = float(self.inlet_temperature)
+        self._condenser_pressure = float(self.inlet_pressure)
+        self._reboiler_temperature = float(self.inlet_temperature)
+        self._reboiler_pressure = float(self.inlet_pressure)
 
     @property
     def ports(self) -> UnitProcessPorts:
@@ -342,6 +375,81 @@ class ShortcutDistillation(AlgebraicProcessModel):
 
     def set_property_package(self, package: PropertyPackage | None) -> None:
         self._property_package = package
+
+    @property
+    def condenser_temperature(self) -> float:
+        return float(self._condenser_temperature)
+
+    @condenser_temperature.setter
+    def condenser_temperature(self, value: float) -> None:
+        self._condenser_temperature = float(value)
+
+    @property
+    def condenser_pressure(self) -> float:
+        return float(self._condenser_pressure)
+
+    @condenser_pressure.setter
+    def condenser_pressure(self, value: float) -> None:
+        self._condenser_pressure = float(value)
+
+    @property
+    def reboiler_temperature(self) -> float:
+        return float(self._reboiler_temperature)
+
+    @reboiler_temperature.setter
+    def reboiler_temperature(self, value: float) -> None:
+        self._reboiler_temperature = float(value)
+
+    @property
+    def reboiler_pressure(self) -> float:
+        return float(self._reboiler_pressure)
+
+    @reboiler_pressure.setter
+    def reboiler_pressure(self, value: float) -> None:
+        self._reboiler_pressure = float(value)
+
+    def apply_inlet(self, port_name: str, stream: StreamData) -> None:
+        if port_name not in self.ports.inlets:
+            valid_ports = ", ".join(self.ports.inlets)
+            raise ValueError(
+                f"Invalid inlet port '{port_name}' for {type(self).__name__}. Valid inlet ports: {valid_ports}."
+            )
+
+        port_map = self._INLET_MAP[port_name]
+        setattr(self, port_map.flow, float(stream.molar_flow_rate))
+        setattr(self, port_map.temperature, float(stream.temperature))
+        setattr(self, port_map.pressure, float(stream.pressure))
+        setattr(self, port_map.composition, np.asarray(stream.mole_fractions, dtype=np.float64))
+        self.condenser_temperature = float(stream.temperature)
+        self.condenser_pressure = float(stream.pressure)
+        self.reboiler_temperature = float(stream.temperature)
+        self.reboiler_pressure = float(stream.pressure)
+
+    def get_outlet_stream(self, port_name: str) -> StreamData:
+        if port_name not in self.ports.outlets:
+            valid_ports = ", ".join(self.ports.outlets)
+            raise ValueError(
+                f"Invalid outlet port '{port_name}' for {type(self).__name__}. Valid outlet ports: {valid_ports}."
+            )
+
+        port_map = self._OUTLET_MAP[port_name]
+        composition = tuple(
+            float(value)
+            for value in np.asarray(getattr(self, port_map.composition), dtype=np.float64)
+        )
+        return StreamData(
+            temperature=float(getattr(self, port_map.temperature)),
+            pressure=float(getattr(self, port_map.pressure)),
+            mole_fractions=composition,
+            molar_flow_rate=float(getattr(self, port_map.flow)),
+        )
+
+    def to_hydraulic_element(self, port_name: str):
+        return pipe_hydraulic_element_for_outlet(
+            unit_name=type(self).__name__,
+            port_name=port_name,
+            allowed_outlet_ports=self.ports.outlets,
+        )
 
     @staticmethod
     @override
@@ -421,6 +529,11 @@ class ShortcutDistillation(AlgebraicProcessModel):
     @override
     def step(self, dt: Seconds) -> None:
         super().step(dt)
+
+        self.condenser_temperature = float(self.inlet_temperature)
+        self.condenser_pressure = float(self.inlet_pressure)
+        self.reboiler_temperature = float(self.inlet_temperature)
+        self.reboiler_pressure = float(self.inlet_pressure)
 
         package = self._property_package
         if package is None:

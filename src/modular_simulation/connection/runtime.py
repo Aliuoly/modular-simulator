@@ -35,6 +35,7 @@ from modular_simulation.connection.error_catalog import (
 from modular_simulation.connection.state import PortCondition
 
 if TYPE_CHECKING:
+    from modular_simulation.thermodynamics.stream import StreamData, StreamPortIO
     from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 
 CONNECTED_PLANT_PHASE_ORDER: tuple[str, ...] = (
@@ -291,6 +292,8 @@ class ConnectionRuntimeOrchestrator:
         )
         self._runtime_context: SimulationRuntimeContext | None = runtime_context
         self._use_context_boundary_propagation: bool = boundary_propagation_step is None
+        self._stream_port_io_by_node_id: dict[str, StreamPortIO] = {}
+        self._feed_streams_by_boundary_id: dict[str, StreamData] = {}
         self._boundary_propagation_step: RuntimeBoundaryPropagationStep = (
             boundary_propagation_step
             if boundary_propagation_step is not None
@@ -340,16 +343,65 @@ class ConnectionRuntimeOrchestrator:
         self._runtime_context = runtime_context
         self._refresh_boundary_propagation_step_from_context()
 
+    def bind_stream_port_io(self, *, node_id: str, stream_port_io: StreamPortIO) -> None:
+        normalized_node_id = node_id.strip()
+        if not normalized_node_id:
+            raise ValueError("node_id must be a non-empty string")
+        self._stream_port_io_by_node_id[normalized_node_id] = stream_port_io
+        self._refresh_boundary_propagation_step_from_context()
+
+    def bind_stream_port_ios(self, *, bindings: Mapping[str, StreamPortIO]) -> None:
+        normalized_bindings: dict[str, StreamPortIO] = {}
+        for node_id, stream_port_io in bindings.items():
+            normalized_node_id = node_id.strip()
+            if not normalized_node_id:
+                raise ValueError("stream port I/O bindings require non-empty node ids")
+            normalized_bindings[normalized_node_id] = stream_port_io
+        self._stream_port_io_by_node_id = normalized_bindings
+        self._refresh_boundary_propagation_step_from_context()
+
+    def clear_stream_port_io_bindings(self) -> None:
+        self._stream_port_io_by_node_id = {}
+        self._refresh_boundary_propagation_step_from_context()
+
+    def set_feed_stream(self, *, boundary_id: str, stream: StreamData) -> None:
+        normalized_boundary_id = boundary_id.strip()
+        if not normalized_boundary_id:
+            raise ValueError("boundary_id must be a non-empty string")
+        self._feed_streams_by_boundary_id[normalized_boundary_id] = stream
+        self._refresh_boundary_propagation_step_from_context()
+
+    def set_feed_streams(self, *, feed_streams: Mapping[str, StreamData]) -> None:
+        normalized_feeds: dict[str, StreamData] = {}
+        for boundary_id, stream in feed_streams.items():
+            normalized_boundary_id = boundary_id.strip()
+            if not normalized_boundary_id:
+                raise ValueError("feed stream mappings require non-empty boundary ids")
+            normalized_feeds[normalized_boundary_id] = stream
+        self._feed_streams_by_boundary_id = normalized_feeds
+        self._refresh_boundary_propagation_step_from_context()
+
+    def clear_feed_streams(self) -> None:
+        self._feed_streams_by_boundary_id = {}
+        self._refresh_boundary_propagation_step_from_context()
+
     def _refresh_boundary_propagation_step_from_context(self) -> None:
         if not self._use_context_boundary_propagation:
             return
         if self._runtime_context is None:
             self._boundary_propagation_step = self._default_boundary_propagation_step
             return
-        from modular_simulation.connection.thermo_coupling import ThermoBoundaryPropagationStep
+        from modular_simulation.connection.thermo_coupling import (
+            ThermoBoundaryPropagationConfig,
+            ThermoBoundaryPropagationStep,
+        )
 
         self._boundary_propagation_step = ThermoBoundaryPropagationStep(
-            runtime_context=self._runtime_context
+            runtime_context=self._runtime_context,
+            config=ThermoBoundaryPropagationConfig(
+                stream_port_io_by_node_id=dict(self._stream_port_io_by_node_id),
+                feed_streams_by_boundary_id=dict(self._feed_streams_by_boundary_id),
+            ),
         )
 
     def set_runtime_state(

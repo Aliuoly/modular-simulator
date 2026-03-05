@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportAny=false, reportExplicitAny=false
+# pyright: reportMissingTypeStubs=false
 
-from typing import Annotated, Any, override
+from typing import Annotated, Any, ClassVar, override
 
 import numpy as np
 from numpy.typing import NDArray
@@ -12,6 +12,13 @@ from modular_simulation.measurables.process_model import StateType as T
 from modular_simulation.thermodynamics.algebraic_process_model import (
     AlgebraicProcessModel,
     UnitProcessPorts,
+)
+from modular_simulation.thermodynamics.hydraulic_adapters import pipe_hydraulic_element_for_outlet
+from modular_simulation.thermodynamics.stream import (
+    PortAttributeMap,
+    StreamData,
+    default_inlet_map,
+    default_outlet_map,
 )
 from modular_simulation.utils.typing import ArrayIndex
 
@@ -60,6 +67,8 @@ def _validate_split_ratios(split_ratios: NDArray[np.float64]) -> NDArray[np.floa
 
 
 class Splitter(AlgebraicProcessModel):
+    _INLET_MAP: ClassVar[dict[str, PortAttributeMap]] = {"inlet": default_inlet_map("inlet")}
+
     n_outlets: Annotated[int, M(type=T.CONSTANT, unit="", description="number of outlet ports")] = 2
     n_species: Annotated[int, M(type=T.CONSTANT, unit="", description="number of species")] = 2
 
@@ -167,6 +176,72 @@ class Splitter(AlgebraicProcessModel):
         return UnitProcessPorts(
             inlets=("inlet",),
             outlets=tuple(f"outlet_{index + 1}" for index in range(self.n_outlets)),
+        )
+
+    @staticmethod
+    def _dynamic_outlet_map(port_name: str) -> PortAttributeMap:
+        return default_outlet_map(port_name)
+
+    def _resolve_outlet_index(self, port_name: str) -> int:
+        valid_ports = self.ports.outlets
+        if port_name not in valid_ports:
+            allowed_ports = ", ".join(valid_ports)
+            raise ValueError(
+                f"Invalid outlet port '{port_name}' for {type(self).__name__}. "
+                + f"Provided port: {port_name}. Allowed outlet ports: {allowed_ports}."
+            )
+        return int(port_name.removeprefix("outlet_")) - 1
+
+    def apply_inlet(self, port_name: str, stream: StreamData) -> None:
+        valid_ports = self.ports.inlets
+        if port_name not in valid_ports:
+            allowed_ports = ", ".join(valid_ports)
+            raise ValueError(
+                f"Invalid inlet port '{port_name}' for {type(self).__name__}. "
+                + f"Provided port: {port_name}. Allowed inlet ports: {allowed_ports}."
+            )
+
+        port_map = self._INLET_MAP[port_name]
+        composition = np.asarray(stream.mole_fractions, dtype=np.float64).reshape(-1)
+        if composition.size != self.n_species:
+            raise ValueError(
+                f"{port_map.composition} length mismatch: expected {self.n_species}, "
+                + f"got {composition.size}."
+            )
+        _validate_composition(composition, name=port_map.composition)
+
+        setattr(self, port_map.flow, float(stream.molar_flow_rate))
+        setattr(self, port_map.temperature, float(stream.temperature))
+        setattr(self, port_map.pressure, float(stream.pressure))
+        setattr(self, port_map.composition, composition)
+
+    def get_outlet_stream(self, port_name: str) -> StreamData:
+        port_map = self._dynamic_outlet_map(port_name)
+        outlet_index = self._resolve_outlet_index(port_name)
+
+        expected_size = self.n_outlets * self.n_species
+        if np.asarray(self.outlet_compositions, dtype=np.float64).size != expected_size:
+            raise ValueError(
+                f"{port_map.composition} storage length mismatch: expected {expected_size}, "
+                + f"got {np.asarray(self.outlet_compositions, dtype=np.float64).size}."
+            )
+
+        outlet_compositions = np.asarray(self.outlet_compositions, dtype=np.float64).reshape(
+            self.n_outlets, self.n_species
+        )
+        composition = tuple(float(value) for value in outlet_compositions[outlet_index])
+        return StreamData(
+            temperature=float(self.outlet_temperatures[outlet_index]),
+            pressure=float(self.outlet_pressures[outlet_index]),
+            mole_fractions=composition,
+            molar_flow_rate=float(self.outlet_flows[outlet_index]),
+        )
+
+    def to_hydraulic_element(self, port_name: str):
+        return pipe_hydraulic_element_for_outlet(
+            unit_name=type(self).__name__,
+            port_name=port_name,
+            allowed_outlet_ports=self.ports.outlets,
         )
 
     @staticmethod

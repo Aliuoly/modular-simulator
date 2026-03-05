@@ -3,7 +3,7 @@ from __future__ import annotations
 # pyright: reportMissingTypeStubs=false
 
 from math import isfinite
-from typing import Annotated, cast, override
+from typing import Annotated, ClassVar, cast, override
 
 import numpy as np
 from numpy.typing import NDArray
@@ -21,7 +21,9 @@ from modular_simulation.thermodynamics.algebraic_process_model import (
     SINGLE_IO,
     UnitProcessPorts,
 )
+from modular_simulation.thermodynamics.hydraulic_adapters import validate_outlet_port
 from modular_simulation.thermodynamics.property_package import PropertyPackage
+from modular_simulation.thermodynamics.stream import PortAttributeMap, StreamData
 from modular_simulation.utils.typing import ArrayIndex, Seconds
 
 _COMPOSITION_TOL = 1.0e-8
@@ -53,6 +55,23 @@ def _validate_composition(composition: NDArray[np.float64], *, name: str) -> Non
 
 
 class Valve(AlgebraicProcessModel):
+    _INLET_MAP: ClassVar[dict[str, PortAttributeMap]] = {
+        "inlet": PortAttributeMap(
+            flow="inlet_flow",
+            temperature="inlet_temperature",
+            pressure="inlet_pressure",
+            composition="inlet_composition",
+        )
+    }
+    _OUTLET_MAP: ClassVar[dict[str, PortAttributeMap]] = {
+        "outlet": PortAttributeMap(
+            flow="outlet_flow",
+            temperature="outlet_temperature",
+            pressure="outlet_pressure",
+            composition="outlet_composition",
+        )
+    }
+
     n_species: Annotated[int, M(type=T.CONSTANT, unit="", description="number of species")] = 2
     Cv: Annotated[
         float,
@@ -171,6 +190,110 @@ class Valve(AlgebraicProcessModel):
 
     def set_property_package(self, package: PropertyPackage | None) -> None:
         self._property_package = package
+
+    def _molar_density(
+        self, *, temperature: float, pressure: float, composition: tuple[float, ...]
+    ) -> float:
+        package = self._property_package
+        if package is None:
+            raise ValueError(
+                "Valve requires a property package with density and molecular_weight to convert between mol/s and m^3/s."
+            )
+
+        density_kg_m3: float | None = None
+        try:
+            flash = package.flash_tp(T=temperature, P=pressure, z=composition)
+            density_kg_m3 = flash.liquid_density
+            if density_kg_m3 is None:
+                density_kg_m3 = flash.vapor_density
+            if density_kg_m3 is None:
+                phase = "liquid" if flash.phase == "two-phase" else flash.phase
+                density_kg_m3 = package.density(
+                    T=temperature, P=pressure, z=composition, phase=phase
+                )
+        except Exception as exc:
+            raise ValueError(
+                "Valve could not determine density from property package for flow conversion."
+            ) from exc
+
+        if not isfinite(float(density_kg_m3)) or float(density_kg_m3) <= 0.0:
+            raise ValueError(
+                "Valve requires a positive density from property package to convert between mol/s and m^3/s."
+            )
+
+        try:
+            molecular_weight_kg_per_mol = float(package.molecular_weight(composition)) / 1000.0
+        except Exception as exc:
+            raise ValueError(
+                "Valve could not determine molecular_weight from property package for flow conversion."
+            ) from exc
+
+        if not isfinite(molecular_weight_kg_per_mol) or molecular_weight_kg_per_mol <= 0.0:
+            raise ValueError(
+                "Valve requires a positive molecular_weight from property package to convert between mol/s and m^3/s."
+            )
+
+        molar_density = float(density_kg_m3) / molecular_weight_kg_per_mol
+        if not isfinite(molar_density) or molar_density <= 0.0:
+            raise ValueError("Valve computed a non-positive molar density for flow conversion.")
+        return molar_density
+
+    def apply_inlet(self, port_name: str, stream: StreamData) -> None:
+        if port_name not in self.ports.inlets:
+            valid_ports = ", ".join(self.ports.inlets)
+            raise ValueError(
+                f"Invalid inlet port '{port_name}' for {type(self).__name__}. Valid inlet ports: {valid_ports}."
+            )
+
+        composition = tuple(float(value) for value in stream.mole_fractions)
+        molar_density = self._molar_density(
+            temperature=float(stream.temperature),
+            pressure=float(stream.pressure),
+            composition=composition,
+        )
+        volumetric_flow = float(stream.molar_flow_rate) / molar_density
+
+        port_map = self._INLET_MAP[port_name]
+        setattr(self, port_map.flow, volumetric_flow)
+        setattr(self, port_map.temperature, float(stream.temperature))
+        setattr(self, port_map.pressure, float(stream.pressure))
+        setattr(self, port_map.composition, np.asarray(composition, dtype=np.float64))
+
+    def get_outlet_stream(self, port_name: str) -> StreamData:
+        if port_name not in self.ports.outlets:
+            valid_ports = ", ".join(self.ports.outlets)
+            raise ValueError(
+                f"Invalid outlet port '{port_name}' for {type(self).__name__}. Valid outlet ports: {valid_ports}."
+            )
+
+        port_map = self._OUTLET_MAP[port_name]
+        composition = tuple(
+            float(value)
+            for value in np.asarray(getattr(self, port_map.composition), dtype=np.float64)
+        )
+        temperature = float(getattr(self, port_map.temperature))
+        pressure = float(getattr(self, port_map.pressure))
+        volumetric_flow = float(getattr(self, port_map.flow))
+        molar_density = self._molar_density(
+            temperature=temperature,
+            pressure=pressure,
+            composition=composition,
+        )
+
+        return StreamData(
+            temperature=temperature,
+            pressure=pressure,
+            mole_fractions=composition,
+            molar_flow_rate=volumetric_flow * molar_density,
+        )
+
+    def to_hydraulic_element(self, port_name: str):
+        validate_outlet_port(
+            unit_name=type(self).__name__,
+            port_name=port_name,
+            allowed_outlet_ports=self.ports.outlets,
+        )
+        return ValveHydraulicElement()
 
     @staticmethod
     @override
