@@ -18,7 +18,7 @@ def _attach(model: ComponentSeparator) -> None:
 def test_component_separator_species_split_and_balance() -> None:
     separator = ComponentSeparator(
         n_species=2,
-        split_fractions=np.array([0.9, 0.1], dtype=np.float64),
+        configured_split_fraction_targets=np.array([0.9, 0.1], dtype=np.float64),
         inlet_flow=10.0,
         inlet_temperature=330.0,
         inlet_pressure=200000.0,
@@ -63,7 +63,7 @@ def test_component_separator_species_split_and_balance() -> None:
 def test_component_separator_supports_species_named_split_mapping() -> None:
     separator = ComponentSeparator(
         n_species=2,
-        split_fractions={"water": 0.9, "ethanol": 0.1},
+        configured_split_fraction_targets={"water": 0.9, "ethanol": 0.1},
         species_order=("water", "ethanol"),
         inlet_flow=10.0,
         inlet_temperature=325.0,
@@ -71,13 +71,29 @@ def test_component_separator_supports_species_named_split_mapping() -> None:
         inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
     )
 
-    assert np.asarray(separator.split_fractions, dtype=np.float64) == pytest.approx(
-        np.array([0.9, 0.1], dtype=np.float64)
-    )
+    assert np.asarray(
+        separator.configured_split_fraction_targets, dtype=np.float64
+    ) == pytest.approx(np.array([0.9, 0.1], dtype=np.float64))
+
+
+def test_component_separator_accepts_legacy_split_fractions_with_warning() -> None:
+    with pytest.warns(
+        DeprecationWarning,
+        match=r"split_fractions is deprecated; use configured_split_fraction_targets",
+    ):
+        separator = ComponentSeparator(
+            n_species=2,
+            split_fractions={"water": 0.8, "ethanol": 0.2},
+            species_order=("water", "ethanol"),
+        )
+
+    assert np.asarray(
+        separator.configured_split_fraction_targets, dtype=np.float64
+    ) == pytest.approx(np.array([0.8, 0.2], dtype=np.float64))
 
 
 @pytest.mark.parametrize(
-    ("split_fractions", "zero_is_outlet_1", "expected_nonzero_comp"),
+    ("configured_split_fraction_targets", "zero_is_outlet_1", "expected_nonzero_comp"),
     [
         (
             np.array([0.0, 0.0], dtype=np.float64),
@@ -92,13 +108,13 @@ def test_component_separator_supports_species_named_split_mapping() -> None:
     ],
 )
 def test_component_separator_zero_flow_outlet_composition_is_stable(
-    split_fractions: NDArray[np.float64],
+    configured_split_fraction_targets: NDArray[np.float64],
     zero_is_outlet_1: bool,
     expected_nonzero_comp: NDArray[np.float64],
 ) -> None:
     separator = ComponentSeparator(
         n_species=2,
-        split_fractions=split_fractions,
+        configured_split_fraction_targets=configured_split_fraction_targets,
         inlet_flow=5.0,
         inlet_temperature=300.0,
         inlet_pressure=101325.0,
@@ -126,10 +142,13 @@ def test_component_separator_zero_flow_outlet_composition_is_stable(
 
 @pytest.mark.parametrize("invalid_fraction", [-0.1, 1.1])
 def test_component_separator_invalid_split_fraction_raises(invalid_fraction: float) -> None:
-    with pytest.raises(ValueError, match=r"split_fractions must stay within \[0, 1\]"):
+    with pytest.raises(
+        ValueError,
+        match=r"configured_split_fraction_targets must stay within \[0, 1\]",
+    ):
         _ = ComponentSeparator(
             n_species=2,
-            split_fractions=np.array([invalid_fraction, 0.5], dtype=np.float64),
+            configured_split_fraction_targets=np.array([invalid_fraction, 0.5], dtype=np.float64),
             inlet_flow=3.0,
             inlet_temperature=310.0,
             inlet_pressure=101325.0,

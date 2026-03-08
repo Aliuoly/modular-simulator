@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportAny=false, reportExplicitAny=false, reportUnknownMemberType=false
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false
 
 from math import exp
 from types import SimpleNamespace
@@ -116,11 +116,10 @@ def test_pfr_higher_conversion_than_cstr() -> None:
         temperature=320.0,
         volume=reactor_volume,
         inlet_flow=inlet_flow,
+        outlet_flow=inlet_flow,
         inlet_temperature=320.0,
         inlet_pressure=101325.0,
         inlet_composition=np.array([1.0, 0.0], dtype=np.float64),
-        reactor_volume=reactor_volume,
-        level_control_gain=3.0,
     )
     _attach(cstr)
     _run_to_steady_state(cstr)

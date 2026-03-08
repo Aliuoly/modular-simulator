@@ -124,9 +124,9 @@ class PFR(ProcessModel):
         float,
         M(type=T.CONSTANT, unit="m^2", description="total jacket heat transfer area"),
     ] = 0.0
-    jacket_temperature: Annotated[
+    imposed_jacket_temperature: Annotated[
         float,
-        M(type=T.CONSTANT, unit="K", description="jacket temperature"),
+        M(type=T.CONSTANT, unit="K", description="externally imposed jacket temperature boundary"),
     ] = 298.15
     reaction_heat_coeffs: Annotated[
         NDArray[np.float64],
@@ -527,7 +527,7 @@ class PFR(ProcessModel):
             0.0, float(k[k_map["jacket_area"]])
         )
         ua_cell = ua_total / float(n_cells)
-        jacket_temperature = float(k[k_map["jacket_temperature"]])
+        jacket_temperature = float(k[k_map["imposed_jacket_temperature"]])
 
         model_instance_id = int(round(float(k[k_map["model_instance_id"]])))
         kinetics = _KINETICS_REGISTRY.get(model_instance_id)

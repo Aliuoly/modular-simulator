@@ -299,7 +299,7 @@ def test_reactor_volumetric_units_raise_clear_error_without_property_package(
 def test_component_separator_dual_outlets_return_distinct_streams() -> None:
     separator = ComponentSeparator(
         n_species=2,
-        split_fractions=np.array([0.8, 0.2], dtype=np.float64),
+        configured_split_fraction_targets=np.array([0.8, 0.2], dtype=np.float64),
         inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
     )
     inlet = StreamData(
@@ -553,7 +553,10 @@ def test_volumetric_units_raise_clear_error_without_property_package(unit: Pump 
         Pump(n_species=2),
         Valve(n_species=2),
         ConversionReactor(n_species=2),
-        ComponentSeparator(n_species=2, split_fractions=np.array([0.0, 0.0], dtype=np.float64)),
+        ComponentSeparator(
+            n_species=2,
+            configured_split_fraction_targets=np.array([0.0, 0.0], dtype=np.float64),
+        ),
         FlashDrum(n_species=2),
         ShortcutDistillation(n_species=2),
         HeatExchanger(n_species=2),

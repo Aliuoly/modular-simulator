@@ -14,8 +14,8 @@ def test_simple_build_and_run() -> None:
     context = SimulationRuntimeContext.create(species_names=["water", "ethanol"])
     flowsheet = Flowsheet(context=context, dt=0.1)
 
-    heater = HeaterCooler(n_species=2, mode="duty", duty_setpoint=0.0)
-    cooler = HeaterCooler(n_species=2, mode="duty", duty_setpoint=0.0)
+    heater = HeaterCooler(n_species=2, mode="duty", external_heat_duty=0.0)
+    cooler = HeaterCooler(n_species=2, mode="duty", external_heat_duty=0.0)
     flowsheet.add_unit("heater", heater)
     flowsheet.add_unit("cooler", cooler)
     flowsheet.add_feed_from_values(

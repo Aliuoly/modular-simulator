@@ -1,0 +1,19 @@
+Task 20 evidence: shortcut distillation textbook case
+Date: 2026-03-04
+
+Command:
+uv run python -m pytest tests/unit_process/test_layer4_distillation.py -q
+
+Result:
+2 passed in 0.18s
+
+Textbook-case calculated outputs:
+N_min=8.495855
+R_min=1.946094
+N_actual=15.389415
+R_actual=2.919142
+theta=1.385105
+D=40.375000 mol/s
+B=59.625000 mol/s
+Q_cond=-125322394.954197 W
+Q_reb=125322394.954197 W

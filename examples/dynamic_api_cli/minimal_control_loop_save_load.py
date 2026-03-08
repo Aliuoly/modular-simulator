@@ -302,7 +302,7 @@ def run_demo() -> dict[str, object]:
     apply_result = cast(ConnectionRuntimeStepResult, network.step(macro_step_time_s=0.25))
     _ = request_ids
 
-    _ = system.extend_controller_sp_trajectory("temperature", value=320.0)
+    _ = system.extend_controller_reference_trajectory("temperature", value=320.0)
     system.step(duration=1.0)
     heater_power = float(process_model.heater_power)
     if heater_power <= 0.0:

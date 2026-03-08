@@ -101,12 +101,12 @@ class CSTR(ProcessModel):
         NDArray[np.float64],
         M(type=T.CONTROLLED, unit="", description="inlet mole fractions by species index"),
     ] = np.zeros(0, dtype=np.float64)
+    outlet_flow: Annotated[
+        float,
+        M(type=T.CONTROLLED, unit="L/s", description="outlet volumetric flow rate"),
+    ] = 0.0
 
     n_species: Annotated[int, M(type=T.CONSTANT, unit="", description="number of species")] = 2
-    reactor_volume: Annotated[
-        float,
-        M(type=T.CONSTANT, unit="L", description="reactor volume setpoint"),
-    ] = 1.0
     pressure: Annotated[
         float,
         M(type=T.CONSTANT, unit="Pa", description="reactor pressure"),
@@ -127,10 +127,6 @@ class CSTR(ProcessModel):
         float,
         M(type=T.CONSTANT, unit="K", description="jacket temperature"),
     ] = 298.15
-    level_control_gain: Annotated[
-        float,
-        M(type=T.CONSTANT, unit="1/s", description="outlet flow level-control gain"),
-    ] = 10.0
     reaction_heat_coeffs: Annotated[
         NDArray[np.float64],
         M(
@@ -152,10 +148,6 @@ class CSTR(ProcessModel):
         float,
         M(type=T.ALGEBRAIC, unit="K", description="outlet temperature"),
     ] = 298.15
-    outlet_flow: Annotated[
-        float,
-        M(type=T.ALGEBRAIC, unit="L/s", description="outlet volumetric flow rate"),
-    ] = 0.0
     concentrations: Annotated[
         NDArray[np.float64],
         M(type=T.ALGEBRAIC, unit="mol/L", description="reactor species concentrations"),
@@ -195,14 +187,12 @@ class CSTR(ProcessModel):
 
         if self.n_species <= 0:
             raise ValueError("n_species must be a positive integer.")
-        if not isfinite(self.reactor_volume) or self.reactor_volume <= 0.0:
-            raise ValueError("reactor_volume must be finite and positive.")
         if not isfinite(self.volume) or self.volume <= 0.0:
             raise ValueError("volume must be finite and positive.")
         if not isfinite(self.volumetric_heat_capacity) or self.volumetric_heat_capacity <= 0.0:
             raise ValueError("volumetric_heat_capacity must be finite and positive.")
-        if not isfinite(self.level_control_gain) or self.level_control_gain < 0.0:
-            raise ValueError("level_control_gain must be finite and non-negative.")
+        if not isfinite(self.outlet_flow) or self.outlet_flow < 0.0:
+            raise ValueError("outlet_flow must be finite and non-negative.")
         if not isfinite(self.heat_transfer_coeff) or self.heat_transfer_coeff < 0.0:
             raise ValueError("heat_transfer_coeff must be finite and non-negative.")
         if not isfinite(self.jacket_area) or self.jacket_area < 0.0:
@@ -446,11 +436,6 @@ class CSTR(ProcessModel):
             )
 
         volume = max(_MIN_VOLUME, float(y[y_map["volume"]]))
-        inlet_flow = max(0.0, float(u[u_map["inlet_flow"]]))
-        level_gain = max(0.0, float(k[k_map["level_control_gain"]]))
-        volume_setpoint = max(_MIN_VOLUME, float(k[k_map["reactor_volume"]]))
-        outlet_flow = max(0.0, inlet_flow + level_gain * (volume - volume_setpoint))
-
         concentrations = species_moles / volume
         total_moles = float(np.sum(np.clip(species_moles, 0.0, None)))
         if total_moles <= _MIN_COMPOSITION_SUM:
@@ -461,7 +446,6 @@ class CSTR(ProcessModel):
         result = np.zeros(algebraic_size, dtype=np.float64)
         result[algebraic_map["outlet_composition"]] = outlet_composition
         result[algebraic_map["outlet_temperature"]] = float(y[y_map["temperature"]])
-        result[algebraic_map["outlet_flow"]] = outlet_flow
         result[algebraic_map["concentrations"]] = concentrations
         return result
 
@@ -501,10 +485,7 @@ class CSTR(ProcessModel):
         temperature = float(y[y_map["temperature"]])
         inlet_flow = max(0.0, float(u[u_map["inlet_flow"]]))
         inlet_temperature = float(u[u_map["inlet_temperature"]])
-
-        level_gain = max(0.0, float(k[k_map["level_control_gain"]]))
-        volume_setpoint = max(_MIN_VOLUME, float(k[k_map["reactor_volume"]]))
-        outlet_flow = max(0.0, inlet_flow + level_gain * (volume - volume_setpoint))
+        outlet_flow = max(0.0, float(u[u_map["outlet_flow"]]))
 
         concentrations = species_moles / volume
         model_instance_id = int(round(float(k[k_map["model_instance_id"]])))

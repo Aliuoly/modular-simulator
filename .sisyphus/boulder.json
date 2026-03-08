@@ -1,9 +1,9 @@
 {
-  "active_plan": "/home/alden/projects/ModularSimulator/.sisyphus/plans/three-tank-staged-connected-components.md",
-  "started_at": "2026-02-26T01:31:58.975Z",
+  "active_plan": "/home/alden/projects/ModularSimulator/.sisyphus/plans/control-surface-remediation.md",
+  "started_at": "2026-03-08T16:04:27.792Z",
   "session_ids": [
-    "ses_369171a6affeo4MMny4xb13eQT"
+    "ses_3320d97d6ffeqR9n9gAISXV7A0"
   ],
-  "plan_name": "three-tank-staged-connected-components",
+  "plan_name": "control-surface-remediation",
   "agent": "atlas"
 }

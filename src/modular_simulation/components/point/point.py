@@ -34,7 +34,7 @@ class Point:
 
     tag: str
     unit: UnitBase
-    type: Literal["measured", "calculated", "setpoint", "raw"]
+    type: Literal["measured", "calculated", "reference", "setpoint", "raw"]
     description: str
     _raw_tag: str
 
@@ -44,7 +44,7 @@ class Point:
     def __init__(
         self,
         tag: str,
-        type: Literal["measured", "calculated", "setpoint", "raw"],
+        type: Literal["measured", "calculated", "reference", "setpoint", "raw"],
         unit: UnitBase,
         description: str = "no description provided",
         *,

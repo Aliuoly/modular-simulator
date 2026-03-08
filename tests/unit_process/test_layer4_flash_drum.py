@@ -29,8 +29,8 @@ def test_binary_isothermal_flash(binary_package: PengRobinsonPackage) -> None:
         inlet_temperature=340.0,
         inlet_pressure=101325.0,
         inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
-        flash_pressure=101325.0,
-        flash_temperature_setpoint=350.0,
+        imposed_pressure=101325.0,
+        imposed_temperature=350.0,
     )
     drum.set_property_package(binary_package)
     _attach(drum)
@@ -66,8 +66,8 @@ def test_adiabatic_flash_energy(binary_package: PengRobinsonPackage) -> None:
         inlet_temperature=350.0,
         inlet_pressure=101325.0,
         inlet_composition=np.array(z, dtype=np.float64),
-        flash_pressure=85000.0,
-        flash_temperature_setpoint=330.0,
+        imposed_pressure=85000.0,
+        imposed_temperature=330.0,
     )
     drum.set_property_package(binary_package)
     _attach(drum)
@@ -103,8 +103,8 @@ def test_vf_boundary_compositions_are_valid(temperature: float, expected_vf: flo
         inlet_temperature=350.0,
         inlet_pressure=101325.0,
         inlet_composition=np.array([1.0], dtype=np.float64),
-        flash_pressure=101325.0,
-        flash_temperature_setpoint=temperature,
+        imposed_pressure=101325.0,
+        imposed_temperature=temperature,
     )
     drum.set_property_package(package)
     _attach(drum)

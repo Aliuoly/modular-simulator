@@ -5,11 +5,16 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import cast
 
+from examples.simple_irreversible_system.component_definition import (
+    control_elements,
+    calculations,
+    sensors,
+)
+from examples.simple_irreversible_system.process_definition import IrreversibleProcessModel
 from modular_simulation.framework import System
 from modular_simulation.utils.wrappers import day, second
-from component_definition import control_elements, calculations, sensors
-from process_definition import IrreversibleProcessModel
 
 
 CHECKPOINT_PATH = Path(__file__).with_name("checkpoint_irreversible.json")
@@ -49,15 +54,16 @@ def main() -> None:
 
     logging.info("Reloading system from checkpoint...")
     restored_system = load_checkpoint(CHECKPOINT_PATH)
+    restored_model = cast(IrreversibleProcessModel, restored_system.process_model)
 
     logging.info("Simulation resumed to t = %.2f days", restored_system.time / day(1))
-    logging.info("Current volume V = %.3f L", restored_system.process_model.V)
-    logging.info("Current concentration B = %.4f mol/L", restored_system.process_model.B)
+    logging.info("Current volume V = %.3f L", restored_model.V)
+    logging.info("Current concentration B = %.4f mol/L", restored_model.B)
 
     logging.info("Continuing the simulation after reload...")
-    restored_system.extend_controller_sp_trajectory(cv_tag="B", value=0.2)
+    restored_system.extend_controller_reference_trajectory(cv_tag="B", value=0.2)
     restored_system.step(day(1))
-    restored_system.extend_controller_sp_trajectory(cv_tag="B").ramp(0.3, rate=0.1 / day(1))
+    restored_system.extend_controller_reference_trajectory(cv_tag="B").ramp(0.3, rate=0.1 / day(1))
     restored_system.step(day(1))
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportAny=false, reportExplicitAny=false, reportUnknownMemberType=false
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false
 
 from types import SimpleNamespace
 from typing import Any, cast
@@ -153,3 +153,10 @@ def test_invalid_conversion_bounds_raise(invalid_conversion: float) -> None:
             conversions={"A": invalid_conversion},
             species_order=("A", "B"),
         )
+
+
+def test_pressure_drop_remains_fixed_hydraulic_data() -> None:
+    reactor = ConversionReactor(n_species=2, pressure_drop=750.0)
+
+    assert "pressure_drop" not in reactor.controlled_view.state_list
+    assert "pressure_drop" in reactor.constant_view.state_list

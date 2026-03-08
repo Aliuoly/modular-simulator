@@ -12,8 +12,14 @@ from modular_simulation.framework import System
 from modular_simulation.plotting import plot_triplet_series
 from modular_simulation.utils.wrappers import day, second
 
-from process_definition import EnergyBalanceProcessModel
-from component_definition import sensors, calculations, control_elements
+from examples.simple_irreversible_energy_balance_system.process_definition import (
+    EnergyBalanceProcessModel,
+)
+from examples.simple_irreversible_energy_balance_system.component_definition import (
+    sensors,
+    calculations,
+    control_elements,
+)
 
 
 # --- Assemble the system ----------------------------------------------------
@@ -32,7 +38,7 @@ def plot(system: System) -> None:
 
     plt.figure(figsize=(12, 14))
     pv_kwargs = {"linestyle": "-"}
-    sp_kwargs = {"linestyle": "--", "alpha": 0.5}
+    ref_kwargs = {"linestyle": "--", "alpha": 0.5}
     plot_in_hours = partial(plot_triplet_series, time_converter=lambda t: t / second(day(1)) * 24)
 
     ax = plt.subplot(4, 2, 1)
@@ -51,7 +57,7 @@ def plot(system: System) -> None:
 
     ax = plt.subplot(4, 2, 3)
     plot_in_hours(ax, history["V"], style="step", line_kwargs=pv_kwargs)
-    plot_in_hours(ax, history["V.sp"], style="step", line_kwargs=sp_kwargs)
+    plot_in_hours(ax, history["V.ref"], style="step", line_kwargs=ref_kwargs)
     plt.title("Reactor Volume (V)")
     plt.xlabel("Time [h]")
     plt.ylabel("Volume (L)")
@@ -59,7 +65,7 @@ def plot(system: System) -> None:
 
     ax = plt.subplot(4, 2, 4)
     plot_in_hours(ax, history["B"], style="step", line_kwargs=pv_kwargs)
-    plot_in_hours(ax, history["B.sp"], style="step", line_kwargs=sp_kwargs)
+    plot_in_hours(ax, history["B.ref"], style="step", line_kwargs=ref_kwargs)
     plt.title("Concentration of B")
     plt.xlabel("Time [h]")
     plt.ylabel("mol/L")
@@ -67,7 +73,7 @@ def plot(system: System) -> None:
 
     ax = plt.subplot(4, 2, 5)
     plot_in_hours(ax, history["T"], style="step", line_kwargs=pv_kwargs)
-    plot_in_hours(ax, history["T.sp"], style="step", line_kwargs=sp_kwargs)
+    plot_in_hours(ax, history["T.ref"], style="step", line_kwargs=ref_kwargs)
     plt.title("Reactor Temperature (T)")
     plt.xlabel("Time [h]")
     plt.ylabel("Temperature (K)")
@@ -75,7 +81,7 @@ def plot(system: System) -> None:
 
     ax = plt.subplot(4, 2, 6)
     plot_in_hours(ax, history["T_J"], style="step", line_kwargs=pv_kwargs)
-    plot_in_hours(ax, history["T_J.sp"], style="step", line_kwargs=sp_kwargs)
+    plot_in_hours(ax, history["T_J.ref"], style="step", line_kwargs=ref_kwargs)
     plt.title("Jacket Temperature (T_J)")
     plt.xlabel("Time [h]")
     plt.ylabel("Temperature (K)")
@@ -107,7 +113,7 @@ if __name__ == "__main__":
     mpl.set_loglevel("warning")
 
     system.step(duration=day(1))
-    system.extend_controller_sp_trajectory("B").step(0.1).hold(duration=day(0.5)).step(0.1)
+    system.extend_controller_reference_trajectory("B").step(0.1).hold(duration=day(0.5)).step(0.1)
     system.step(duration=day(2))
     plot(system)
     plt.show()

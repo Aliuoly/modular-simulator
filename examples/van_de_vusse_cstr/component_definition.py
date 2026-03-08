@@ -10,7 +10,7 @@ from modular_simulation.components import (
 )
 from modular_simulation.utils.wrappers import hour
 
-from calculation_definition import HeatDutyCalculation  # pyright: ignore[reportImplicitRelativeImport]
+from examples.van_de_vusse_cstr.calculation_definition import HeatDutyCalculation
 
 SAMPLE_SENSOR = partial(
     SampledDelayedSensor,
@@ -41,6 +41,7 @@ control_elements = [
     ControlElement(
         mv_tag="Tj_in",
         mv_range=(10.0, 110.0),
+        mv_trajectory=Trajectory(y0=77.69),
         controller=PIDController(
             cv_tag="T",
             cv_range=(0.0, 300.0),
@@ -49,7 +50,11 @@ control_elements = [
             cascade_controller=PIDController(
                 cv_tag="Cb",
                 cv_range=(0.0, 2.0),
-                sp_trajectory=Trajectory(y0=0.20).hold(hour(40)).step(0.10).hold(hour(40)).step(-0.2),
+                reference_trajectory=Trajectory(y0=0.20)
+                .hold(hour(40))
+                .step(0.10)
+                .hold(hour(40))
+                .step(-0.2),
                 Kp=20.0,
                 Ti=hour(1.0),
             ),

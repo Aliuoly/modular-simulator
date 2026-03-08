@@ -12,8 +12,12 @@ from modular_simulation.framework import System
 from modular_simulation.plotting import plot_triplet_series
 from modular_simulation.utils.wrappers import hour, second
 
-from process_definition import GasPhaseReactorProcessModel
-from component_definition import sensors, calculations, control_elements
+from examples.gas_phase_polymerization.process_definition import GasPhaseReactorProcessModel
+from examples.gas_phase_polymerization.component_definition import (
+    sensors,
+    calculations,
+    control_elements,
+)
 
 
 def create_system(use_numba: bool = False) -> System:
@@ -43,7 +47,10 @@ def plot(system: System, t_start: float) -> None:
     ax2 = ax.twinx()
     to_hours(ax2, history["pM1"], label="pM1", line_kwargs={"color": "tab:orange"})
     to_hours(
-        ax2, history["pM1.sp"], label="SP pM1", line_kwargs={"color": "tab:red", "linestyle": "--"}
+        ax2,
+        history["pM1.ref"],
+        label="Ref pM1",
+        line_kwargs={"color": "tab:red", "linestyle": "--"},
     )
     ax.set_title("F_m1 vs pM1")
     ax.set_ylabel("F_m1")
@@ -60,7 +67,10 @@ def plot(system: System, t_start: float) -> None:
     ax2 = ax.twinx()
     to_hours(ax2, history["rM2"], label="rM2", line_kwargs={"color": "tab:orange"}, style="step")
     to_hours(
-        ax2, history["rM2.sp"], label="SP rM2", line_kwargs={"color": "tab:red", "linestyle": "--"}
+        ax2,
+        history["rM2.ref"],
+        label="Ref rM2",
+        line_kwargs={"color": "tab:red", "linestyle": "--"},
     )
     ax.set_title("F_m2 vs rM2")
     ax.set_ylabel("F_m2")
@@ -77,7 +87,10 @@ def plot(system: System, t_start: float) -> None:
     ax2 = ax.twinx()
     to_hours(ax2, history["rH2"], label="rH2", line_kwargs={"color": "tab:orange"}, style="step")
     to_hours(
-        ax2, history["rH2.sp"], label="SP rH2", line_kwargs={"color": "tab:red", "linestyle": "--"}
+        ax2,
+        history["rH2.ref"],
+        label="Ref rH2",
+        line_kwargs={"color": "tab:red", "linestyle": "--"},
     )
     ax.set_title("F_h2 vs rH2")
     ax.set_ylabel("F_h2")
@@ -104,8 +117,8 @@ def plot(system: System, t_start: float) -> None:
     )
     to_hours(
         ax,
-        history["filtered_mass_prod_rate.sp"],
-        label="SP Prod Rate",
+        history["filtered_mass_prod_rate.ref"],
+        label="Ref Prod Rate",
         line_kwargs={"color": "tab:green", "linestyle": "--"},
     )
     ax.set_title("Prod Rate vs F_cat")
@@ -120,14 +133,14 @@ def plot(system: System, t_start: float) -> None:
     )
     to_hours(
         ax,
-        history["cumm_MI.sp"],
-        label="SP MI",
+        history["cumm_MI.ref"],
+        label="Ref MI",
         line_kwargs={"color": "tab:red", "linestyle": "--"},
     )
     to_hours(
         ax,
-        history["inst_MI.sp"],
-        label="SP inst",
+        history["inst_MI.ref"],
+        label="Ref inst",
         line_kwargs={"color": "tab:green", "linestyle": "--"},
     )
     to_hours(
@@ -152,14 +165,14 @@ def plot(system: System, t_start: float) -> None:
     )
     to_hours(
         ax,
-        history["cumm_density.sp"],
-        label="SP cumm",
+        history["cumm_density.ref"],
+        label="Ref cumm",
         line_kwargs={"color": "tab:red", "linestyle": "--"},
     )
     to_hours(
         ax,
-        history["inst_density.sp"],
-        label="SP inst",
+        history["inst_density.ref"],
+        label="Ref inst",
         line_kwargs={"color": "tab:green", "linestyle": "--"},
     )
     to_hours(
@@ -180,8 +193,8 @@ def plot(system: System, t_start: float) -> None:
     )
     to_hours(
         ax,
-        history["cat_inventory.sp"],
-        label="SP",
+        history["cat_inventory.ref"],
+        label="Ref",
         line_kwargs={"color": "tab:red", "linestyle": "--"},
     )
     ax.set_title("Catalyst Inventory")
@@ -214,8 +227,8 @@ def plot(system: System, t_start: float) -> None:
     to_hours(ax2, history["bed_level"], label="bed_level", line_kwargs={"color": "tab:orange"})
     to_hours(
         ax2,
-        history["bed_level.sp"],
-        label="bed_level SP",
+        history["bed_level.ref"],
+        label="bed_level Ref",
         line_kwargs={"color": "tab:red", "linestyle": "--"},
     )
     ax.set_title("Bed weight vs Bed level")

@@ -162,7 +162,7 @@
             2.0
           ],
           "ramp_rate": null,
-          "sp_trajectory": {
+          "reference_trajectory": {
             "y0": 0.5,
             "t0": {
               "value": 0.0,
@@ -194,7 +194,7 @@
         "cascade_controller": null,
         "state": {
           "mode": "AUTO",
-          "sp": {
+          "ref": {
             "time": 86370.0,
             "value": 0.5,
             "ok": true

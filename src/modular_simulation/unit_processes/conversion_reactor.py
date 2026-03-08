@@ -269,7 +269,11 @@ class ConversionReactor(AlgebraicProcessModel):
     n_species: Annotated[int, M(type=T.CONSTANT, unit="", description="number of species")] = 2
     pressure_drop: Annotated[
         float,
-        M(type=T.CONSTANT, unit="Pa", description="pressure drop across the reactor"),
+        M(
+            type=T.CONSTANT,
+            unit="Pa",
+            description="fixed hydraulic pressure drop across the reactor",
+        ),
     ] = 0.0
     conversion_fractions: Annotated[
         NDArray[np.float64],

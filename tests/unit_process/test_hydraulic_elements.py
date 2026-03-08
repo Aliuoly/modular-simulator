@@ -64,7 +64,7 @@ def _single_flow_equation(
 
 
 def test_pump_hydraulic() -> None:
-    pump = Pump(n_species=2, pressure_rise=120_000.0)
+    pump = Pump(n_species=2, pump_speed=120_000.0)
     element = pump.to_hydraulic_element("outlet")
 
     assert isinstance(element, PumpHydraulicElement)
@@ -77,9 +77,7 @@ def test_pump_hydraulic() -> None:
             }
         ),
         unknowns=MappingProxyType({"flow_rate": 1.25}),
-        parameters=MappingProxyType(
-            default_pump_hydraulic_parameters(pump_speed=pump.pressure_rise)
-        ),
+        parameters=MappingProxyType(default_pump_hydraulic_parameters(pump_speed=pump.pump_speed)),
     )["head_balance"]
     jacobian = element.jacobian(
         inputs=MappingProxyType(
@@ -89,9 +87,7 @@ def test_pump_hydraulic() -> None:
             }
         ),
         unknowns=MappingProxyType({"flow_rate": 1.25}),
-        parameters=MappingProxyType(
-            default_pump_hydraulic_parameters(pump_speed=pump.pressure_rise)
-        ),
+        parameters=MappingProxyType(default_pump_hydraulic_parameters(pump_speed=pump.pump_speed)),
     )[("head_balance", "flow_rate")]
 
     assert residual == pytest.approx(0.0, abs=1.0e-12)
@@ -179,7 +175,7 @@ def test_network_hydraulic_solve() -> None:
         (
             ComponentSeparator(
                 n_species=2,
-                split_fractions=np.array([0.0, 0.0], dtype=np.float64),
+                configured_split_fraction_targets=np.array([0.0, 0.0], dtype=np.float64),
             ),
             "outlet_1",
             5.0e3,
@@ -187,7 +183,7 @@ def test_network_hydraulic_solve() -> None:
         (
             ComponentSeparator(
                 n_species=2,
-                split_fractions=np.array([0.0, 0.0], dtype=np.float64),
+                configured_split_fraction_targets=np.array([0.0, 0.0], dtype=np.float64),
             ),
             "outlet_2",
             5.0e3,

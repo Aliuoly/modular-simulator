@@ -2,12 +2,13 @@ from __future__ import annotations
 
 # pyright: reportMissingTypeStubs=false
 
+import warnings
 from math import isfinite
 from typing import Annotated, ClassVar, Literal, cast, override
 
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import PrivateAttr, field_validator
+from pydantic import PrivateAttr, field_validator, model_validator
 
 from modular_simulation.measurables.process_model import StateMetadata as M
 from modular_simulation.measurables.process_model import StateType as T
@@ -112,18 +113,22 @@ class HeaterCooler(AlgebraicProcessModel):
     ] = np.zeros(0, dtype=np.float64)
     pressure_drop: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="Pa", description="pressure drop across the unit"),
+        M(type=T.CONSTANT, unit="Pa", description="fixed hydraulic pressure drop across the unit"),
     ] = 0.0
-    duty_setpoint: Annotated[
-        float,
-        M(type=T.CONTROLLED, unit="W", description="heat duty setpoint used in duty mode"),
-    ] = 0.0
-    target_temperature_setpoint: Annotated[
+    external_heat_duty: Annotated[
         float,
         M(
-            type=T.CONTROLLED,
+            type=T.CONSTANT,
+            unit="W",
+            description="externally imposed heat-duty boundary used in duty mode",
+        ),
+    ] = 0.0
+    external_outlet_temperature: Annotated[
+        float,
+        M(
+            type=T.CONSTANT,
             unit="K",
-            description="target outlet temperature setpoint used in temperature mode",
+            description="externally imposed outlet-temperature boundary used in temperature mode",
         ),
     ] = 298.15
 
@@ -166,6 +171,34 @@ class HeaterCooler(AlgebraicProcessModel):
         normalized = _mode_from_selector(numeric_mode)
         return _MODE_DUTY if normalized == "duty" else _MODE_TEMPERATURE
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_boundary_names(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+
+        normalized = dict(value)
+        legacy_name_map = {
+            "duty_setpoint": "external_heat_duty",
+            "target_temperature_setpoint": "external_outlet_temperature",
+        }
+        for legacy_name, canonical_name in legacy_name_map.items():
+            if legacy_name not in normalized:
+                continue
+            if canonical_name in normalized:
+                raise ValueError(
+                    f"{canonical_name} and legacy {legacy_name} cannot both be provided; use {canonical_name} only."
+                )
+
+            normalized[canonical_name] = normalized.pop(legacy_name)
+            warnings.warn(
+                f"{legacy_name} is deprecated; use {canonical_name}",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+
+        return normalized
+
     @override
     def model_post_init(self, context: object) -> None:
         super().model_post_init(context)
@@ -193,10 +226,10 @@ class HeaterCooler(AlgebraicProcessModel):
             raise ValueError("inlet_pressure must be finite and positive.")
         if not isfinite(self.pressure_drop) or self.pressure_drop < 0.0:
             raise ValueError("pressure_drop must be finite and non-negative.")
-        if not isfinite(self.duty_setpoint):
-            raise ValueError("duty_setpoint must be finite.")
-        if not isfinite(self.target_temperature_setpoint):
-            raise ValueError("target_temperature_setpoint must be finite.")
+        if not isfinite(self.external_heat_duty):
+            raise ValueError("external_heat_duty must be finite.")
+        if not isfinite(self.external_outlet_temperature):
+            raise ValueError("external_outlet_temperature must be finite.")
 
         _validate_composition(self.inlet_composition, name="inlet_composition")
 
@@ -269,9 +302,9 @@ class HeaterCooler(AlgebraicProcessModel):
         inlet_temperature = float(u[u_map["inlet_temperature"]])
         inlet_pressure = float(u[u_map["inlet_pressure"]])
         inlet_composition = _vector_from_state(u, u_map["inlet_composition"])
-        pressure_drop = float(u[u_map["pressure_drop"]])
-        duty_setpoint = float(u[u_map["duty_setpoint"]])
-        target_temperature = float(u[u_map["target_temperature_setpoint"]])
+        pressure_drop = float(k[k_map["pressure_drop"]])
+        external_heat_duty = float(k[k_map["external_heat_duty"]])
+        external_outlet_temperature = float(k[k_map["external_outlet_temperature"]])
 
         if not isfinite(inlet_flow) or inlet_flow < 0.0:
             raise ValueError("inlet_flow must be finite and non-negative.")
@@ -281,10 +314,10 @@ class HeaterCooler(AlgebraicProcessModel):
             raise ValueError("inlet_pressure must be finite and positive.")
         if not isfinite(pressure_drop) or pressure_drop < 0.0:
             raise ValueError("pressure_drop must be finite and non-negative.")
-        if not isfinite(duty_setpoint):
-            raise ValueError("duty_setpoint must be finite.")
-        if not isfinite(target_temperature):
-            raise ValueError("target_temperature_setpoint must be finite.")
+        if not isfinite(external_heat_duty):
+            raise ValueError("external_heat_duty must be finite.")
+        if not isfinite(external_outlet_temperature):
+            raise ValueError("external_outlet_temperature must be finite.")
         if inlet_composition.size != n_species:
             raise ValueError(
                 f"inlet_composition length mismatch: expected {n_species}, got {inlet_composition.size}."
@@ -293,13 +326,17 @@ class HeaterCooler(AlgebraicProcessModel):
         _validate_composition(inlet_composition, name="inlet_composition")
 
         outlet_pressure = max(inlet_pressure - pressure_drop, _TINY_POSITIVE_PRESSURE)
-        if mode == "duty" and inlet_flow <= _FLOW_EPSILON and abs(duty_setpoint) > _DUTY_EPSILON:
+        if (
+            mode == "duty"
+            and inlet_flow <= _FLOW_EPSILON
+            and abs(external_heat_duty) > _DUTY_EPSILON
+        ):
             raise ValueError(
-                "duty mode requires positive inlet_flow when duty_setpoint is non-zero."
+                "duty mode requires positive inlet_flow when external_heat_duty is non-zero."
             )
 
-        outlet_temperature = inlet_temperature if mode == "duty" else target_temperature
-        duty = duty_setpoint if mode == "duty" else 0.0
+        outlet_temperature = inlet_temperature if mode == "duty" else external_outlet_temperature
+        duty = external_heat_duty if mode == "duty" else 0.0
 
         result = np.zeros(algebraic_size, dtype=np.float64)
         result[algebraic_map["outlet_flow"]] = inlet_flow
@@ -330,14 +367,14 @@ class HeaterCooler(AlgebraicProcessModel):
         h_in = float(flash_in.enthalpy_molar)
 
         if inlet_flow <= _FLOW_EPSILON:
-            if mode == "duty" and abs(float(self.duty_setpoint)) > _DUTY_EPSILON:
+            if mode == "duty" and abs(float(self.external_heat_duty)) > _DUTY_EPSILON:
                 raise ValueError(
-                    "duty mode requires positive inlet_flow when duty_setpoint is non-zero."
+                    "duty mode requires positive inlet_flow when external_heat_duty is non-zero."
                 )
 
             if mode == "temperature":
                 flash_out = package.flash_tp(
-                    T=float(self.target_temperature_setpoint),
+                    T=float(self.external_outlet_temperature),
                     P=outlet_pressure,
                     z=z,
                 )
@@ -353,11 +390,11 @@ class HeaterCooler(AlgebraicProcessModel):
             return
 
         if mode == "duty":
-            target_enthalpy = h_in + float(self.duty_setpoint) / inlet_flow
+            target_enthalpy = h_in + float(self.external_heat_duty) / inlet_flow
             flash_out = package.flash_ph(P=outlet_pressure, H=target_enthalpy, z=z)
         else:
             flash_out = package.flash_tp(
-                T=float(self.target_temperature_setpoint),
+                T=float(self.external_outlet_temperature),
                 P=outlet_pressure,
                 z=z,
             )

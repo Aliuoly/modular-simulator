@@ -291,14 +291,14 @@ def _level_element(mv_tag: str) -> ControlElement:
         controller=PIDController(
             cv_tag="V",
             cv_range=(0.0, 2_000.0),
-            sp_trajectory=Trajectory(y0=900.0),
+            reference_trajectory=Trajectory(y0=900.0),
             Kp=1.0e-3,
             Ti=300.0,
         ),
     )
 
 
-def _composition_element(mv_tag: str, sp_b: float, gain: float) -> ControlElement:
+def _composition_element(mv_tag: str, reference_b: float, gain: float) -> ControlElement:
     return ControlElement(
         mv_tag=mv_tag,
         mv_range=(0.05, 1.0),
@@ -306,7 +306,7 @@ def _composition_element(mv_tag: str, sp_b: float, gain: float) -> ControlElemen
         controller=PIDController(
             cv_tag="B",
             cv_range=(0.0, 8.0),
-            sp_trajectory=Trajectory(y0=sp_b),
+            reference_trajectory=Trajectory(y0=reference_b),
             Kp=gain,
             Ti=500.0,
             inverted=True,
@@ -322,7 +322,7 @@ def _jacket_element() -> ControlElement:
         controller=PIDController(
             cv_tag="T_J",
             cv_range=(250.0, 350.0),
-            sp_trajectory=Trajectory(y0=289.0),
+            reference_trajectory=Trajectory(y0=289.0),
             Kp=0.2,
             Ti=150.0,
         ),
@@ -384,7 +384,7 @@ def build_three_tank_units() -> dict[str, TankUnit]:
             initial_b=0.10,
             control_elements=(
                 _level_element("mv_open_2_to_3"),
-                _composition_element("mv_open_feed_2", sp_b=3.20, gain=0.04),
+                _composition_element("mv_open_feed_2", reference_b=3.20, gain=0.04),
                 _jacket_element(),
             ),
         ),
@@ -394,7 +394,7 @@ def build_three_tank_units() -> dict[str, TankUnit]:
             initial_b=0.20,
             control_elements=(
                 _level_element("mv_open_product"),
-                _composition_element("mv_open_feed_3", sp_b=4.80, gain=0.05),
+                _composition_element("mv_open_feed_3", reference_b=4.80, gain=0.05),
                 _jacket_element(),
             ),
         ),
@@ -571,7 +571,7 @@ def _apply_stage_hydraulic_coupling(
 def _history_row(
     *,
     time_s: float,
-    target_b3_sp: float,
+    target_b3_reference: float,
     mv_outputs: dict[str, float],
     tank_units: dict[str, TankUnit],
 ) -> dict[str, float]:
@@ -580,7 +580,7 @@ def _history_row(
     tank_3 = tank_units["tank_3"].model
     row = {
         "time_h": float(time_s) / 3_600.0,
-        "target_b3_sp": float(target_b3_sp),
+        "target_b3_reference": float(target_b3_reference),
         "v1_l": float(tank_1.V),
         "v2_l": float(tank_2.V),
         "v3_l": float(tank_3.V),
@@ -616,18 +616,18 @@ def run_three_tank_staged_connected_components(
     tank_3 = tank_units["tank_3"]
     endpoint_context = build_topology_endpoint_context(topology)
 
-    tank_2.system.extend_controller_sp_trajectory(
+    tank_2.system.extend_controller_reference_trajectory(
         cv_tag="B",
         value=0.67 * final_product_target_b_mol_per_l,
     )
-    tank_3.system.extend_controller_sp_trajectory(
+    tank_3.system.extend_controller_reference_trajectory(
         cv_tag="B",
         value=final_product_target_b_mol_per_l,
     )
 
     request_ids: list[str] = []
     history: list[dict[str, float]] = []
-    target_b3_sp = final_product_target_b_mol_per_l
+    target_b3_reference = final_product_target_b_mol_per_l
     initial_mv = _collect_valve_mv_outputs(tank_units)
     last_bridge_openings = {
         mv_tag: _clamp_open_fraction(initial_mv.get(mv_tag, 0.05)) for mv_tag in VALVE_MV_TO_LINE
@@ -635,7 +635,7 @@ def run_three_tank_staged_connected_components(
     history.append(
         _history_row(
             time_s=0.0,
-            target_b3_sp=target_b3_sp,
+            target_b3_reference=target_b3_reference,
             mv_outputs=last_bridge_openings,
             tank_units=tank_units,
         )
@@ -647,9 +647,13 @@ def run_three_tank_staged_connected_components(
         time_s = index * dt_s
 
         if (not step_applied) and (time_s >= step_change_time_s):
-            target_b3_sp = step_target_b_mol_per_l
-            tank_2.system.extend_controller_sp_trajectory(cv_tag="B", value=0.67 * target_b3_sp)
-            tank_3.system.extend_controller_sp_trajectory(cv_tag="B", value=target_b3_sp)
+            target_b3_reference = step_target_b_mol_per_l
+            tank_2.system.extend_controller_reference_trajectory(
+                cv_tag="B", value=0.67 * target_b3_reference
+            )
+            tank_3.system.extend_controller_reference_trajectory(
+                cv_tag="B", value=target_b3_reference
+            )
             step_applied = True
 
         mv_outputs = _collect_valve_mv_outputs(tank_units)
@@ -678,7 +682,7 @@ def run_three_tank_staged_connected_components(
         history.append(
             _history_row(
                 time_s=time_s + dt_s,
-                target_b3_sp=target_b3_sp,
+                target_b3_reference=target_b3_reference,
                 mv_outputs=bounded_step_mv,
                 tank_units=tank_units,
             )

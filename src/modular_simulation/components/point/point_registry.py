@@ -1,4 +1,5 @@
 from collections.abc import Mapping, Callable, Iterator
+import warnings
 from typing import override
 from .point import Point, DataValue
 from astropy.units import UnitBase, UnitsError
@@ -18,6 +19,7 @@ class PointRegistry(Mapping[str, Point]):
         # Internal caches for filtered views
         self._measured_points: dict[str, Point] | None = None
         self._calculated_points: dict[str, Point] | None = None
+        self._reference_points: dict[str, Point] | None = None
         self._setpoint_points: dict[str, Point] | None = None
 
     @override
@@ -54,10 +56,24 @@ class PointRegistry(Mapping[str, Point]):
 
     @property
     def setpoint_points(self) -> dict[str, Point]:
-        """Returns a dictionary of all setpoint points."""
+        warnings.warn(
+            "setpoint_points is deprecated; use reference_points",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if self._setpoint_points is None:
-            self._setpoint_points = {k: v for k, v in self._points.items() if v.type == "setpoint"}
+            self._setpoint_points = {
+                k: v for k, v in self._points.items() if v.type in {"reference", "setpoint"}
+            }
         return self._setpoint_points
+
+    @property
+    def reference_points(self) -> dict[str, Point]:
+        if self._reference_points is None:
+            self._reference_points = {
+                k: v for k, v in self._points.items() if v.type == "reference"
+            }
+        return self._reference_points
 
     def add(
         self,
@@ -93,7 +109,9 @@ class PointRegistry(Mapping[str, Point]):
             self._measured_points[registration_tag] = point
         elif self._calculated_points is not None and point.type == "calculated":
             self._calculated_points[registration_tag] = point
-        elif self._setpoint_points is not None and point.type == "setpoint":
+        elif self._reference_points is not None and point.type == "reference":
+            self._reference_points[registration_tag] = point
+        elif self._setpoint_points is not None and point.type in {"reference", "setpoint"}:
             self._setpoint_points[registration_tag] = point
 
     def _resolve_registration_tag(

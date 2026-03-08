@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from math import exp, isfinite, log, sqrt
 from typing import Annotated, ClassVar, cast, override
+import warnings
 
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import PrivateAttr
+from pydantic import PrivateAttr, model_validator
 
 from modular_simulation.measurables.process_model import StateMetadata as M
 from modular_simulation.measurables.process_model import StateType as T
@@ -207,28 +208,36 @@ class ShortcutDistillation(AlgebraicProcessModel):
         M(type=T.CONSTANT, unit="", description="heavy key component index"),
     ] = 1
 
-    light_key_distillate_recovery: Annotated[
-        float,
-        M(type=T.CONTROLLED, unit="", description="light key recovery to distillate"),
-    ] = 0.98
-    heavy_key_bottoms_recovery: Annotated[
-        float,
-        M(type=T.CONTROLLED, unit="", description="heavy key recovery to bottoms"),
-    ] = 0.98
-    reflux_ratio_factor: Annotated[
+    configured_light_key_distillate_recovery_target: Annotated[
         float,
         M(
-            type=T.CONTROLLED,
+            type=T.CONSTANT,
             unit="",
-            description="R_actual = factor * R_min when reflux_ratio_setpoint <= 0",
+            description="configured abstract light-key recovery target to distillate",
+        ),
+    ] = 0.98
+    configured_heavy_key_bottoms_recovery_target: Annotated[
+        float,
+        M(
+            type=T.CONSTANT,
+            unit="",
+            description="configured abstract heavy-key recovery target to bottoms",
+        ),
+    ] = 0.98
+    configured_minimum_reflux_ratio_factor: Annotated[
+        float,
+        M(
+            type=T.CONSTANT,
+            unit="",
+            description="configured abstract multiplier applied to minimum reflux ratio when no explicit target is set",
         ),
     ] = 1.5
-    reflux_ratio_setpoint: Annotated[
+    configured_reflux_ratio_target: Annotated[
         float,
         M(
-            type=T.CONTROLLED,
+            type=T.CONSTANT,
             unit="",
-            description="optional explicit reflux ratio (>0 overrides factor)",
+            description="configured abstract explicit reflux-ratio target (>0 overrides factor mode)",
         ),
     ] = 0.0
 
@@ -309,6 +318,33 @@ class ShortcutDistillation(AlgebraicProcessModel):
     _reboiler_temperature: float = PrivateAttr(default=298.15)
     _reboiler_pressure: float = PrivateAttr(default=101325.0)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_configured_specs(cls, data: object) -> object:
+        if not isinstance(data, dict):
+            return data
+        legacy_names = {
+            "light_key_distillate_recovery": "configured_light_key_distillate_recovery_target",
+            "configured_light_key_distillate_recovery": "configured_light_key_distillate_recovery_target",
+            "heavy_key_bottoms_recovery": "configured_heavy_key_bottoms_recovery_target",
+            "configured_heavy_key_bottoms_recovery": "configured_heavy_key_bottoms_recovery_target",
+            "reflux_ratio_factor": "configured_minimum_reflux_ratio_factor",
+            "configured_reflux_ratio_factor": "configured_minimum_reflux_ratio_factor",
+            "reflux_ratio_setpoint": "configured_reflux_ratio_target",
+            "configured_reflux_ratio": "configured_reflux_ratio_target",
+        }
+        for legacy_name, new_name in legacy_names.items():
+            if legacy_name in data:
+                if new_name in data:
+                    raise ValueError(f"Provide only one of '{legacy_name}' or '{new_name}'.")
+                warnings.warn(
+                    f"{legacy_name} is deprecated; use {new_name}",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                data[new_name] = data.pop(legacy_name)
+        return data
+
     @override
     def model_post_init(self, context: object) -> None:
         super().model_post_init(context)
@@ -328,13 +364,27 @@ class ShortcutDistillation(AlgebraicProcessModel):
         if not isfinite(self.inlet_pressure) or self.inlet_pressure <= 0.0:
             raise ValueError("inlet_pressure must be finite and positive.")
 
-        _validate_recovery(self.light_key_distillate_recovery, "light_key_distillate_recovery")
-        _validate_recovery(self.heavy_key_bottoms_recovery, "heavy_key_bottoms_recovery")
+        _validate_recovery(
+            self.configured_light_key_distillate_recovery_target,
+            "configured_light_key_distillate_recovery_target",
+        )
+        _validate_recovery(
+            self.configured_heavy_key_bottoms_recovery_target,
+            "configured_heavy_key_bottoms_recovery_target",
+        )
 
-        if not isfinite(self.reflux_ratio_factor) or self.reflux_ratio_factor <= 1.0:
-            raise ValueError("reflux_ratio_factor must be finite and greater than 1.")
-        if not isfinite(self.reflux_ratio_setpoint) or self.reflux_ratio_setpoint < 0.0:
-            raise ValueError("reflux_ratio_setpoint must be finite and non-negative.")
+        if (
+            not isfinite(self.configured_minimum_reflux_ratio_factor)
+            or self.configured_minimum_reflux_ratio_factor <= 1.0
+        ):
+            raise ValueError(
+                "configured_minimum_reflux_ratio_factor must be finite and greater than 1."
+            )
+        if (
+            not isfinite(self.configured_reflux_ratio_target)
+            or self.configured_reflux_ratio_target < 0.0
+        ):
+            raise ValueError("configured_reflux_ratio_target must be finite and non-negative.")
 
         self.inlet_composition = _coerce_vector(
             self.inlet_composition,
@@ -480,8 +530,8 @@ class ShortcutDistillation(AlgebraicProcessModel):
         inlet_temperature = float(u[u_map["inlet_temperature"]])
         inlet_pressure = float(u[u_map["inlet_pressure"]])
         z = _vector_from_state(u, u_map["inlet_composition"])
-        lk_rec = float(u[u_map["light_key_distillate_recovery"]])
-        hk_bottoms_rec = float(u[u_map["heavy_key_bottoms_recovery"]])
+        lk_rec = float(k[k_map["configured_light_key_distillate_recovery_target"]])
+        hk_bottoms_rec = float(k[k_map["configured_heavy_key_bottoms_recovery_target"]])
 
         if not isfinite(inlet_flow) or inlet_flow < 0.0:
             raise ValueError("inlet_flow must be finite and non-negative.")
@@ -495,8 +545,8 @@ class ShortcutDistillation(AlgebraicProcessModel):
             )
 
         _validate_composition(z, name="inlet_composition")
-        _validate_recovery(lk_rec, "light_key_distillate_recovery")
-        _validate_recovery(hk_bottoms_rec, "heavy_key_bottoms_recovery")
+        _validate_recovery(lk_rec, "configured_light_key_distillate_recovery_target")
+        _validate_recovery(hk_bottoms_rec, "configured_heavy_key_bottoms_recovery_target")
 
         feed_components = inlet_flow * z
         recovery = np.full(n_species, 0.5, dtype=np.float64)
@@ -559,8 +609,8 @@ class ShortcutDistillation(AlgebraicProcessModel):
 
         lk = int(self.light_key_index)
         hk = int(self.heavy_key_index)
-        lk_rec = float(self.light_key_distillate_recovery)
-        hk_bottoms_rec = float(self.heavy_key_bottoms_recovery)
+        lk_rec = float(self.configured_light_key_distillate_recovery_target)
+        hk_bottoms_rec = float(self.configured_heavy_key_bottoms_recovery_target)
 
         flash = package.flash_tp(
             T=float(self.inlet_temperature),
@@ -646,10 +696,10 @@ class ShortcutDistillation(AlgebraicProcessModel):
                 "Underwood minimum reflux ratio is non-physical. Check key recoveries and feed state."
             )
 
-        if float(self.reflux_ratio_setpoint) > 0.0:
-            r_actual = float(self.reflux_ratio_setpoint)
+        if float(self.configured_reflux_ratio_target) > 0.0:
+            r_actual = float(self.configured_reflux_ratio_target)
         else:
-            r_actual = float(self.reflux_ratio_factor) * r_min
+            r_actual = float(self.configured_minimum_reflux_ratio_factor) * r_min
         if r_actual <= r_min:
             raise ValueError("R_actual must be greater than R_min for Gilliland stage estimation.")
 

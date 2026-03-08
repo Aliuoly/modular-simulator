@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# pyright: reportMissingTypeStubs=false
+
 from collections.abc import Mapping
 from types import MappingProxyType
 from typing import cast
@@ -268,7 +270,7 @@ def test_dynamic_process_network_workflow_end_to_end(
     assert system.controller_bindings["heater_pid"].mode == "auto"
     assert system.control_elements[0].controller is not None
 
-    _ = system.extend_controller_sp_trajectory("temperature", value=320.0)
+    _ = system.extend_controller_reference_trajectory("temperature", value=320.0)
     system.step(duration=1.0)
     heater_power = _require_float_attribute(thermal_process_model, "heater_power")
     assert heater_power > 0.0

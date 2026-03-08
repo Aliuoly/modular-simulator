@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportAny=false, reportExplicitAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportUnannotatedClassAttribute=false, reportMissingTypeArgument=false
+# pyright: reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportMissingTypeArgument=false
 
 from types import SimpleNamespace
 from typing import Any, cast
@@ -63,9 +63,9 @@ def test_fug_textbook_case() -> None:
         inlet_temperature=360.0,
         inlet_pressure=101325.0,
         inlet_composition=np.array([0.4, 0.35, 0.25], dtype=np.float64),
-        light_key_distillate_recovery=0.95,
-        heavy_key_bottoms_recovery=0.95,
-        reflux_ratio_factor=1.5,
+        configured_light_key_distillate_recovery_target=0.95,
+        configured_heavy_key_bottoms_recovery_target=0.95,
+        configured_minimum_reflux_ratio_factor=1.5,
     )
     column.set_property_package(cast(Any, package))
     _attach(column)
@@ -84,8 +84,12 @@ def test_fug_textbook_case() -> None:
     hk_feed = column.inlet_flow * column.inlet_composition[1]
     lk_dist = column.distillate_flow * column.distillate_composition[0]
     hk_bottoms = column.bottoms_flow * column.bottoms_composition[1]
-    assert lk_dist / lk_feed == pytest.approx(column.light_key_distillate_recovery, abs=1.0e-6)
-    assert hk_bottoms / hk_feed == pytest.approx(column.heavy_key_bottoms_recovery, abs=1.0e-6)
+    assert lk_dist / lk_feed == pytest.approx(
+        column.configured_light_key_distillate_recovery_target, abs=1.0e-6
+    )
+    assert hk_bottoms / hk_feed == pytest.approx(
+        column.configured_heavy_key_bottoms_recovery_target, abs=1.0e-6
+    )
 
     assert column.condenser_duty < 0.0
     assert column.reboiler_duty > 0.0
@@ -101,9 +105,9 @@ def test_mass_balance_closure() -> None:
         inlet_temperature=345.0,
         inlet_pressure=130000.0,
         inlet_composition=np.array([0.25, 0.25, 0.30, 0.20], dtype=np.float64),
-        light_key_distillate_recovery=0.96,
-        heavy_key_bottoms_recovery=0.94,
-        reflux_ratio_factor=1.8,
+        configured_light_key_distillate_recovery_target=0.96,
+        configured_heavy_key_bottoms_recovery_target=0.94,
+        configured_minimum_reflux_ratio_factor=1.8,
     )
     column.set_property_package(cast(Any, package))
     _attach(column)
@@ -128,3 +132,38 @@ def test_mass_balance_closure() -> None:
 
     assert column.actual_reflux_ratio > column.minimum_reflux_ratio
     assert column.actual_stages > column.minimum_stages
+
+
+def test_shortcut_distillation_accepts_legacy_configured_specs_with_warning() -> None:
+    legacy_kwargs: dict[str, Any] = {
+        "light_key_distillate_recovery": 0.93,
+        "heavy_key_bottoms_recovery": 0.94,
+        "reflux_ratio_factor": 1.7,
+        "reflux_ratio_setpoint": 0.0,
+    }
+
+    with pytest.warns(DeprecationWarning) as recorded:
+        column = ShortcutDistillation(
+            n_species=2,
+            light_key_index=0,
+            heavy_key_index=1,
+            **legacy_kwargs,
+        )
+
+    messages = {str(warning.message) for warning in recorded}
+    assert (
+        "light_key_distillate_recovery is deprecated; use configured_light_key_distillate_recovery_target"
+        in messages
+    )
+    assert (
+        "heavy_key_bottoms_recovery is deprecated; use configured_heavy_key_bottoms_recovery_target"
+        in messages
+    )
+    assert (
+        "reflux_ratio_factor is deprecated; use configured_minimum_reflux_ratio_factor" in messages
+    )
+    assert "reflux_ratio_setpoint is deprecated; use configured_reflux_ratio_target" in messages
+    assert column.configured_light_key_distillate_recovery_target == pytest.approx(0.93)
+    assert column.configured_heavy_key_bottoms_recovery_target == pytest.approx(0.94)
+    assert column.configured_minimum_reflux_ratio_factor == pytest.approx(1.7)
+    assert column.configured_reflux_ratio_target == pytest.approx(0.0)

@@ -1,11 +1,11 @@
-from modular_simulation.framework import System
-from modular_simulation.plotting import plot_triplet_series
-from process_definition import GasPhaseReactorProcessModel
-from component_definition import (
+from examples.simplified_gas_phase_system.process_definition import GasPhaseReactorProcessModel
+from examples.simplified_gas_phase_system.component_definition import (
     sensors,
     calculations,
     control_elements,
 )
+from modular_simulation.framework import System
+from modular_simulation.plotting import plot_triplet_series
 from modular_simulation.utils.wrappers import second, hour
 from functools import partial
 
@@ -33,7 +33,7 @@ if __name__ == "__main__":
     # cycle 1
     # system.extend_controller_trajectory("F_cat").ramp(-2.0, rate = per_hour(1)) # ramp dow 2 kg over 2 hours
     _ = (
-        system.extend_controller_sp_trajectory("rM2")
+        system.extend_controller_reference_trajectory("rM2")
         .step(0.1)
         .hold(hour(6))
         .step(-0.1)
@@ -82,8 +82,8 @@ if __name__ == "__main__":
     )  # seconds to hours
     ploter(
         ax,
-        history["pM1.sp"],
-        label="SP pM1",
+        history["pM1.ref"],
+        label="Ref pM1",
         line_kwargs={"color": "tab:red", "linestyle": "--"},
         time_converter=lambda t: t / 3600.0,
     )  # seconds to hours
@@ -118,8 +118,8 @@ if __name__ == "__main__":
     )  # seconds to hours
     ploter(
         ax,
-        history["rM2.sp"],
-        label="SP rM2",
+        history["rM2.ref"],
+        label="Ref rM2",
         line_kwargs={"color": "tab:red", "linestyle": "--"},
         time_converter=lambda t: t / 3600.0,
     )  # seconds to hours

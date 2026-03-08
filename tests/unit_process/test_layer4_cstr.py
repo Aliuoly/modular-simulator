@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportAny=false, reportExplicitAny=false, reportUnknownMemberType=false
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false
 
 from types import SimpleNamespace
 from typing import Any, cast
@@ -8,6 +8,14 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
+from modular_simulation.components import (
+    ControlElement,
+    ControllerMode,
+    PIDController,
+    SampledDelayedSensor,
+    Trajectory,
+)
+from modular_simulation.framework.system import System
 from modular_simulation.thermodynamics.kinetics import PowerLawRateLaw, Reaction, ReactionSet
 from modular_simulation.unit_processes import CSTR
 
@@ -52,11 +60,10 @@ def test_first_order_steady_state() -> None:
         temperature=320.0,
         volume=reactor_volume,
         inlet_flow=inlet_flow,
+        outlet_flow=inlet_flow,
         inlet_temperature=320.0,
         inlet_pressure=101325.0,
         inlet_composition=np.array([1.0, 0.0], dtype=np.float64),
-        reactor_volume=reactor_volume,
-        level_control_gain=3.0,
     )
     _attach(reactor)
 
@@ -75,11 +82,10 @@ def test_kinetics_swap() -> None:
         temperature=315.0,
         volume=10.0,
         inlet_flow=2.0,
+        outlet_flow=2.0,
         inlet_temperature=315.0,
         inlet_pressure=101325.0,
         inlet_composition=np.array([1.0, 0.0], dtype=np.float64),
-        reactor_volume=10.0,
-        level_control_gain=2.0,
     )
     _attach(reactor)
 
@@ -107,11 +113,10 @@ def test_energy_balance() -> None:
         temperature=300.0,
         volume=8.0,
         inlet_flow=1.0,
+        outlet_flow=1.0,
         inlet_temperature=300.0,
         inlet_pressure=101325.0,
         inlet_composition=np.array([1.0, 0.0], dtype=np.float64),
-        reactor_volume=8.0,
-        level_control_gain=2.0,
         volumetric_heat_capacity=4200.0,
         reaction_heat_coeffs=np.array([60000.0, 0.0], dtype=np.float64),
     )
@@ -137,3 +142,57 @@ def test_energy_balance() -> None:
     assert adiabatic.temperature > 300.0
     assert cooled.temperature < adiabatic.temperature
     assert cooled.temperature > 290.0
+
+
+def test_external_controller_drives_cstr_volume_via_outlet_flow_actuator() -> None:
+    reactor = CSTR(
+        n_species=2,
+        species_names=("A", "B"),
+        reaction_set=ReactionSet(reactions=()),
+        species_moles=np.array([6.0, 0.0], dtype=np.float64),
+        temperature=300.0,
+        volume=6.0,
+        inlet_flow=1.2,
+        outlet_flow=1.2,
+        inlet_temperature=300.0,
+        inlet_pressure=101325.0,
+        inlet_composition=np.array([1.0, 0.0], dtype=np.float64),
+    )
+    sensor = SampledDelayedSensor(
+        measurement_tag="volume",
+        alias_tag="reactor_volume",
+        unit="L",
+        sampling_period=0.0,
+        deadtime=0.0,
+    )
+    controller = PIDController(
+        cv_tag="reactor_volume",
+        cv_range=(1.0, 20.0),
+        reference_trajectory=Trajectory(y0=8.0),
+        Kp=0.4,
+        Ti=6.0,
+        inverted=True,
+        period=0.0,
+    )
+    outlet_flow_element = ControlElement(
+        mv_tag="outlet_flow",
+        mv_range=(0.0, 3.0),
+        mv_trajectory=Trajectory(y0=1.2),
+        controller=controller,
+        mode=ControllerMode.AUTO,
+    )
+    system = System(
+        dt=0.1,
+        process_model=reactor,
+        sensors=[sensor],
+        calculations=[],
+        control_elements=[outlet_flow_element],
+        show_progress=False,
+    )
+
+    reactor.inlet_flow = 1.5
+    for _ in range(320):
+        system.step(duration=0.1)
+
+    assert reactor.outlet_flow != pytest.approx(1.2, abs=1.0e-9)
+    assert reactor.volume == pytest.approx(8.0, rel=0.06, abs=0.2)

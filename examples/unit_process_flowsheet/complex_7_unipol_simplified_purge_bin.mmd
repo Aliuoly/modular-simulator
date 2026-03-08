@@ -1,0 +1,20 @@
+flowchart TD
+    n0(["fresh_loop_feed"])
+    n7(["recycle_gas_return"])
+    n1["gas_purge_splitter"]
+    n2["loop_mixer"]
+    n3["polymerizer"]
+    n4["purge_bin"]
+    n5["purge_export"]
+    n6["recycle_export"]
+    n8["resin_disengager"]
+    n9["resin_product_outlet"]
+    n0 -->|outlet -> inlet_1| n2
+    n7 -->|outlet -> inlet_2| n2
+    n2 -->|outlet -> inlet| n3
+    n3 -->|outlet -> inlet| n8
+    n8 -->|outlet_1 -> inlet| n4
+    n4 -->|outlet -> inlet| n9
+    n8 -->|outlet_2 -> inlet| n1
+    n1 -->|outlet_1 -> inlet| n6
+    n1 -->|outlet_2 -> inlet| n5

@@ -1,8 +1,11 @@
-# pyright: reportImplicitRelativeImport=false
 from modular_simulation.framework import System
 from modular_simulation.plotting import plot_triplet_series
-from process_definition import IrreversibleProcessModel
-from component_definition import sensors, calculations, control_elements
+from examples.simple_irreversible_system.process_definition import IrreversibleProcessModel
+from examples.simple_irreversible_system.component_definition import (
+    calculations,
+    control_elements,
+    sensors,
+)
 from modular_simulation.utils.wrappers import second, day
 from functools import partial
 import logging
@@ -27,14 +30,13 @@ if __name__ == "__main__":
     mpl.set_loglevel("warning")  # silence matplotlib debug messages
 
     pv_kwargs = {"linestyle": "-"}
-    sp_kwargs = {"linestyle": "--", "alpha": 0.5}
+    ref_kwargs = {"linestyle": "--", "alpha": 0.5}
     plt.figure(figsize=(12, 8))
     # --- First simulation run ---
     system.step(day(1))
-    # # --- Change the setpoint and continue the simulation ---
-    system.extend_controller_sp_trajectory(cv_tag="B", value=0.2)
+    system.extend_controller_reference_trajectory(cv_tag="B", value=0.2)
     system.step(day(1))
-    system.extend_controller_sp_trajectory(cv_tag="B").ramp(0.3, rate=0.1 / day(1))
+    system.extend_controller_reference_trajectory(cv_tag="B").ramp(0.3, rate=0.1 / day(1))
     system.step(day(4))
 
     # 3. Plot the results.
@@ -53,9 +55,9 @@ if __name__ == "__main__":
     )
     plot_in_days(
         ax,
-        history["B.sp"],
+        history["B.ref"],
         style="step",
-        line_kwargs=sp_kwargs,
+        line_kwargs=ref_kwargs,
     )
     plt.title("Concentration of B")
     plt.xlabel("Time ")

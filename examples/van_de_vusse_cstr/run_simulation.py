@@ -11,8 +11,8 @@ from modular_simulation.framework import System
 from modular_simulation.plotting import plot_triplet_series
 from modular_simulation.utils.wrappers import hour
 
-from component_definition import control_elements, sensors, calculations  # pyright: ignore[reportImplicitRelativeImport]
-from process_definition import VanDeVusseProcessModel  # pyright: ignore[reportImplicitRelativeImport]
+from examples.van_de_vusse_cstr.component_definition import calculations, control_elements, sensors
+from examples.van_de_vusse_cstr.process_definition import VanDeVusseProcessModel
 
 
 def make_systems(record_history: bool = False) -> dict[str, System]:
@@ -34,7 +34,7 @@ if __name__ == "__main__":
     mpl.set_loglevel("warning")
 
     pv_kwargs = {"linestyle": "-"}
-    sp_kwargs = {"linestyle": "--", "alpha": 0.5}
+    ref_kwargs = {"linestyle": "--", "alpha": 0.5}
 
     systems = make_systems()
     for label, system in systems.items():
@@ -54,10 +54,10 @@ if __name__ == "__main__":
         )
         plot_triplet_series(
             ax,
-            history["T.sp"],
+            history["T.ref"],
             style="step",
-            line_kwargs=sp_kwargs,
-            label=f"SP {label}",
+            line_kwargs=ref_kwargs,
+            label=f"Ref {label}",
         )
         plt.title("Reactor Temperature")
         plt.xlabel("Time [h]")
@@ -100,10 +100,10 @@ if __name__ == "__main__":
         )
         plot_triplet_series(
             ax,
-            history["Cb.sp"],
+            history["Cb.ref"],
             style="step",
-            line_kwargs=sp_kwargs,
-            label=f"SP {label}",
+            line_kwargs=ref_kwargs,
+            label=f"Ref {label}",
         )
         plt.title("Concentration of B")
         plt.xlabel("Time [h]")

@@ -1,6 +1,10 @@
 from __future__ import annotations
+
+# pyright: reportImportCycles=false
+
 import hashlib
 import json
+import warnings
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version as package_version
 from importlib import import_module
@@ -61,6 +65,7 @@ class _SensorMutationSnapshot:
     point_registry_points: dict[str, Point]
     measured_points_cache: dict[str, Point] | None
     calculated_points_cache: dict[str, Point] | None
+    reference_points_cache: dict[str, Point] | None
     setpoint_points_cache: dict[str, Point] | None
     sensor_bindings_by_id: dict[str, RuntimeSensorBinding]
     sensor_state_by_id: dict[str, SensorRuntimeBindingState]
@@ -95,6 +100,7 @@ class _ControllerMutationSnapshot:
     point_registry_points: dict[str, Point]
     measured_points_cache: dict[str, Point] | None
     calculated_points_cache: dict[str, Point] | None
+    reference_points_cache: dict[str, Point] | None
     setpoint_points_cache: dict[str, Point] | None
 
 
@@ -332,7 +338,7 @@ class System(BaseModel):
         elif isinstance(component, ControlElement):  # pyright: ignore[reportUnnecessaryIsInstance]
             exceptions = component.install(self)
             if not exceptions:
-                self.point_registry.add(component.controller_sp_point_dict)
+                self.point_registry.add(component.controller_reference_point_dict)
                 successful = True
             else:
                 error = exceptions[0]
@@ -371,11 +377,11 @@ class System(BaseModel):
         if pbar:
             pbar.close()
 
-    def extend_controller_sp_trajectory(
+    def extend_controller_reference_trajectory(
         self, cv_tag: str, value: StateValue | None = None
     ) -> "Trajectory":
         """
-        used to 'extend' the setpoint trajectory of a controller from the current time onwards.
+        used to 'extend' the reference trajectory of a controller from the current time onwards.
         If the trajectory has already been defined into the future, the trajectory is trimmed
         back to the current time.
 
@@ -394,9 +400,9 @@ class System(BaseModel):
                 f"Tried to change trajectory of '{controller.cv_tag}' controller but failed - "
                 + f"controller must be in AUTO mode, but is {controller.mode.name}. "
             )
-        active_trajectory = controller.sp_trajectory
+        active_trajectory = controller.reference_trajectory
         if active_trajectory is None:
-            raise RuntimeError("Somehow the controller has no sp_trajectory. Report bug.")
+            raise RuntimeError("Somehow the controller has no reference_trajectory. Report bug.")
         if value is None:
             value = active_trajectory(self.time)
 
@@ -404,11 +410,21 @@ class System(BaseModel):
         _ = active_trajectory.set(t=self.time, value=value)
         new_value = active_trajectory(self.time)
         logger.info(
-            "Setpoint trajectory for '%(tag)s' controller changed at time %(time)0.0f "
+            "Reference trajectory for '%(tag)s' controller changed at time %(time)0.0f "
             + "from %(old)0.1e to %(new)0.1e",
             {"tag": cv_tag, "time": self.time, "old": old_value, "new": new_value},
         )
         return active_trajectory
+
+    def extend_controller_sp_trajectory(
+        self, cv_tag: str, value: StateValue | None = None
+    ) -> "Trajectory":
+        warnings.warn(
+            "extend_controller_sp_trajectory() is deprecated; use extend_controller_reference_trajectory()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.extend_controller_reference_trajectory(cv_tag=cv_tag, value=value)
 
     def extend_control_element_mv_trajectory(
         self, mv_tag: str, value: StateValue | None = None
@@ -420,7 +436,7 @@ class System(BaseModel):
 
         !! Changes the corresponding controller's mode to MANUAL
 
-        mv_tag is used to specify which controller! different from extend_controller_sp_trajectory!
+        mv_tag is used to specify which controller! different from extend_controller_reference_trajectory!
 
         """
         if mv_tag not in self.control_element_mv_dictionary:
@@ -794,6 +810,18 @@ class System(BaseModel):
             raise ControllerConfigurationError(
                 f"controller '{controller_id}' is missing an actuator binding"
             )
+        from modular_simulation.measurables.control_surface_contract import (
+            ControlSurfaceContractError,
+            validate_runtime_actuator_binding,
+        )
+
+        normalized_actuator_tag = self._normalize_runtime_actuator_tag(actuator_tag)
+        try:
+            validate_runtime_actuator_binding(self.process_model, actuator_tag)
+        except ControlSurfaceContractError as error:
+            raise ControllerConfigurationError(
+                f"controller '{controller_id}' cannot bind actuator '{actuator_tag}': {error}"
+            ) from error
 
         signal_point = self.point_registry.get(signal_key)
         if signal_point is None or signal_point.type not in {"measured", "calculated"}:
@@ -802,7 +830,7 @@ class System(BaseModel):
                 + "expected a measured or calculated point"
             )
 
-        control_element = self._find_control_element_by_mv_tag(actuator_tag)
+        control_element = self._find_control_element_by_mv_tag(normalized_actuator_tag)
         if control_element is None:
             raise ControllerConfigurationError(
                 f"controller '{controller_id}' references unknown actuator '{actuator_tag}'"
@@ -829,7 +857,7 @@ class System(BaseModel):
             controller_module=definition.controller_module,
             controller_config=dict(definition.controller_config),
             signal_key=definition.signal_key,
-            actuator_tag=definition.actuator_tag,
+            actuator_tag=normalized_actuator_tag,
             mode=definition.mode,
             metadata=dict(definition.metadata),
             active=True,
@@ -837,10 +865,26 @@ class System(BaseModel):
         self._controller_bindings_by_id[controller_id] = RuntimeControllerBinding(
             controller_id=controller_id,
             signal_key=signal_key,
-            actuator_tag=actuator_tag,
+            actuator_tag=normalized_actuator_tag,
             mode=definition.mode,
             metadata=dict(definition.metadata),
         )
+
+    def _normalize_runtime_actuator_tag(self, actuator_tag: str) -> str:
+        from modular_simulation.measurables.control_surface_contract import (
+            resolve_process_state_tag,
+        )
+
+        resolved_state_name = resolve_process_state_tag(self.process_model, actuator_tag)
+        if resolved_state_name is None:
+            return actuator_tag
+        if resolved_state_name != actuator_tag:
+            warnings.warn(
+                f"raw actuator tag '{actuator_tag}' is deprecated; use '{resolved_state_name}'",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        return resolved_state_name
 
     def _instantiate_runtime_controller(
         self,
@@ -889,6 +933,13 @@ class System(BaseModel):
                     f"controller '{controller_id}' installation failed: {installation_errors[0]}"
                 )
 
+            cv_value = self.point_registry[controller.cv_tag].data.value
+            mv_value = control_element._mv_point.data.value
+            if bool(np.isscalar(cv_value)) != bool(np.isscalar(mv_value)):
+                raise ControllerConfigurationError(
+                    f"controller '{controller_id}' input/output dimensionality is incompatible with actuator '{control_element.mv_tag}'"
+                )
+
             mv_getter = control_element._mv_point.make_converted_data_getter()
             is_wired = controller.wire_to_element(
                 system=self,
@@ -902,13 +953,6 @@ class System(BaseModel):
                     f"controller '{controller_id}' failed to wire to actuator '{control_element.mv_tag}'"
                 )
 
-            cv_value = self.point_registry[controller.cv_tag].data.value
-            mv_value = control_element._mv_point.data.value
-            if bool(np.isscalar(cv_value)) != bool(np.isscalar(mv_value)):
-                raise ControllerConfigurationError(
-                    f"controller '{controller_id}' input/output dimensionality is incompatible with actuator '{control_element.mv_tag}'"
-                )
-
             control_element.controller = controller
             control_element._mode_manager = ControlElementModeManager(
                 mode=control_mode,
@@ -919,7 +963,7 @@ class System(BaseModel):
             )
             control_element.mode = control_mode
             _ = control_element.change_control_mode(control_mode)
-            self.point_registry.add(control_element.controller_sp_point_dict)
+            self.point_registry.add(control_element.controller_reference_point_dict)
             self._invalidate_controller_cache()
         except Exception:
             control_element.controller = previous_controller
@@ -967,6 +1011,11 @@ class System(BaseModel):
                 if self._point_registry._calculated_points is None
                 else dict(self._point_registry._calculated_points)
             ),
+            reference_points_cache=(
+                None
+                if self._point_registry._reference_points is None
+                else dict(self._point_registry._reference_points)
+            ),
             setpoint_points_cache=(
                 None
                 if self._point_registry._setpoint_points is None
@@ -989,6 +1038,11 @@ class System(BaseModel):
             if snapshot.calculated_points_cache is None
             else dict(snapshot.calculated_points_cache)
         )
+        self._point_registry._reference_points = (
+            None
+            if snapshot.reference_points_cache is None
+            else dict(snapshot.reference_points_cache)
+        )
         self._point_registry._setpoint_points = (
             None if snapshot.setpoint_points_cache is None else dict(snapshot.setpoint_points_cache)
         )
@@ -998,6 +1052,7 @@ class System(BaseModel):
         self,
     ) -> tuple[
         dict[str, Point],
+        dict[str, Point] | None,
         dict[str, Point] | None,
         dict[str, Point] | None,
         dict[str, Point] | None,
@@ -1012,6 +1067,9 @@ class System(BaseModel):
             if point_registry._calculated_points is None
             else dict(point_registry._calculated_points),
             None
+            if point_registry._reference_points is None
+            else dict(point_registry._reference_points),
+            None
             if point_registry._setpoint_points is None
             else dict(point_registry._setpoint_points),
         )
@@ -1023,13 +1081,15 @@ class System(BaseModel):
             dict[str, Point] | None,
             dict[str, Point] | None,
             dict[str, Point] | None,
+            dict[str, Point] | None,
         ],
     ) -> None:
         point_registry = self._point_registry
         point_registry._points = dict(snapshot[0])
         point_registry._measured_points = None if snapshot[1] is None else dict(snapshot[1])
         point_registry._calculated_points = None if snapshot[2] is None else dict(snapshot[2])
-        point_registry._setpoint_points = None if snapshot[3] is None else dict(snapshot[3])
+        point_registry._reference_points = None if snapshot[3] is None else dict(snapshot[3])
+        point_registry._setpoint_points = None if snapshot[4] is None else dict(snapshot[4])
 
     def _invalidate_controller_cache(self) -> None:
         for cache_field in (
@@ -1127,6 +1187,11 @@ class System(BaseModel):
                 if point_registry._calculated_points is None
                 else dict(point_registry._calculated_points)
             ),
+            reference_points_cache=(
+                None
+                if point_registry._reference_points is None
+                else dict(point_registry._reference_points)
+            ),
             setpoint_points_cache=(
                 None
                 if point_registry._setpoint_points is None
@@ -1147,6 +1212,11 @@ class System(BaseModel):
             None
             if snapshot.calculated_points_cache is None
             else dict(snapshot.calculated_points_cache)
+        )
+        point_registry._reference_points = (
+            None
+            if snapshot.reference_points_cache is None
+            else dict(snapshot.reference_points_cache)
         )
         point_registry._setpoint_points = (
             None if snapshot.setpoint_points_cache is None else dict(snapshot.setpoint_points_cache)

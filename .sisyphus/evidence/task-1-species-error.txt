@@ -1,0 +1,24 @@
+Traceback (most recent call last):
+  File "/home/alden/projects/ModularSimulator/src/modular_simulation/thermodynamics/species.py", line 57, in resolve_species
+    cas = str(CAS_from_any(normalized_identifier))
+              ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alden/projects/ModularSimulator/.venv/lib/python3.13/site-packages/chemicals/identifiers.py", line 835, in CAS_from_any
+    return search_chemical(ID, autoload=autoload, cache=cache).CASs
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/alden/projects/ModularSimulator/.venv/lib/python3.13/site-packages/chemicals/identifiers.py", line 952, in search_chemical
+    hit = _search_chemical(ID, autoload)
+  File "/home/alden/projects/ModularSimulator/.venv/lib/python3.13/site-packages/chemicals/identifiers.py", line 1092, in _search_chemical
+    return _search_chemical(ID, autoload=True)
+  File "/home/alden/projects/ModularSimulator/.venv/lib/python3.13/site-packages/chemicals/identifiers.py", line 1094, in _search_chemical
+    raise ValueError(f"Chemical name ({ID}) not recognized")
+ValueError: Chemical name (notachemical) not recognized
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    from modular_simulation.thermodynamics.species import resolve_species; resolve_species('notachemical')
+                                                                           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^
+  File "/home/alden/projects/ModularSimulator/src/modular_simulation/thermodynamics/species.py", line 60, in resolve_species
+    raise _build_resolution_error(normalized_identifier, error) from error
+ValueError: Unable to resolve species 'notachemical'. Use a common name (e.g., 'water') or a CAS number (e.g., '7732-18-5'). chemicals lookup error: Chemical name (notachemical) not recognized

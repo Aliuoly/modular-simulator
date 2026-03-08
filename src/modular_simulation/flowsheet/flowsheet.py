@@ -763,7 +763,7 @@ class Flowsheet:
                 raise ValueError(
                     f"pump hydraulic element on edge source '{source_node_id}' is missing unit context"
                 )
-            pump_speed = float(getattr(source_unit, "pressure_rise", 0.0))
+            pump_speed = float(getattr(source_unit, "pump_speed", 0.0))
             return MappingProxyType(default_pump_hydraulic_parameters(pump_speed=pump_speed))
 
         if isinstance(element, ValveHydraulicElement):

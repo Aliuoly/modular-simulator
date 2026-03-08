@@ -1,12 +1,15 @@
 from __future__ import annotations  # without this cant type hint the cascade controller properly
+
+# pyright: reportImportCycles=false
 from abc import ABC, abstractmethod
 import math
-from collections.abc import Callable
+import warnings
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, cast, override
 from astropy.units import UnitBase
 import numpy as np
 from .controller_mode import ControllerMode
-from pydantic import PrivateAttr, Field, ConfigDict, SerializeAsAny
+from pydantic import AliasChoices, ConfigDict, Field, PrivateAttr, SerializeAsAny, model_validator
 from modular_simulation.components.point import DataValue, Point
 from .trajectory import Trajectory
 from modular_simulation.validation.exceptions import ControllerConfigurationError
@@ -39,25 +42,27 @@ class AbstractController(AbstractComponent, ABC):
     ramp_rate: PerSeconds | None = Field(
         default=None,
         description=(
-            "Optional ramp rate limit for the controller setpoint. "
+            "Optional ramp rate limit for the controller reference signal. "
             "Must be provided as a 'per time' unitized Quantity."
         ),
     )
-    sp_trajectory: Trajectory | None = Field(
-        default=None, description="A Trajectory instance defining the setpoint (SP) over time."
+    reference_trajectory: Trajectory | None = Field(
+        default=None,
+        validation_alias=AliasChoices("reference_trajectory", "sp_trajectory"),
+        description="A Trajectory instance defining the reference (REF) over time.",
     )
     cascade_controller: SerializeAsAny[AbstractController | None] = Field(
         default=None,
         description=(
-            "If provided, and when controller mode is CASCADE, the setpoint source "
+            "If provided, and when controller mode is CASCADE, the reference source "
             "of this controller will be provided by the provided cascade controller. "
         ),
     )
     mode: ControllerMode = Field(
         default=ControllerMode.CASCADE,
         description=(
-            "Controller's mode - if AUTO, setpoint comes from the sp_trajectory provided. "
-            "If CASCADE, setpoint comes from the cascade controller, if provided. "
+            "Controller's mode - if AUTO, reference comes from the reference trajectory provided. "
+            "If CASCADE, reference comes from the cascade controller, if provided. "
         ),
     )
     period: Seconds = Field(
@@ -70,12 +75,28 @@ class AbstractController(AbstractComponent, ABC):
     _mv_range: tuple[StateValue, StateValue] = PrivateAttr()
     _cv_getter: Callable[[], DataValue] = PrivateAttr()
     _control_action: DataValue = PrivateAttr()
-    _sp_point: Point = PrivateAttr()
+    _reference_point: Point = PrivateAttr()
     _is_scalar: bool = PrivateAttr(default=False)
     _system: "System" = PrivateAttr()
+    _pending_runtime_state: dict[str, DataValue] | None = PrivateAttr(default=None)
     _initialized: bool = PrivateAttr(default=False)
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
+
+    @model_validator(mode="before")
+    @classmethod
+    def _warn_on_deprecated_reference_aliases(cls, data: Any) -> Any:  # pyright: ignore[reportExplicitAny]
+        if (
+            isinstance(data, Mapping)
+            and "sp_trajectory" in data
+            and "reference_trajectory" not in data
+        ):
+            warnings.warn(
+                "sp_trajectory is deprecated; use reference_trajectory",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        return data
 
     # -------- AbstractComponent Interface --------
 
@@ -112,9 +133,33 @@ class AbstractController(AbstractComponent, ABC):
     @override
     def _get_runtime_state_dict(self) -> dict[str, Any]:  # pyright: ignore[reportExplicitAny]
         """Subclass should overload this method and call super()._get_runtime_state_dict() before returning."""
-        return {
+        runtime_state: dict[str, Any] = {
             "mode": self.mode.name,
         }
+        reference_data = None
+        if hasattr(self, "_reference_point"):
+            reference_data = self._reference_point.data
+        elif self._pending_runtime_state is not None:
+            reference_data = self._pending_runtime_state.get("reference")
+        if reference_data is not None:
+            runtime_state["reference"] = {
+                "time": reference_data.time,
+                "value": reference_data.value,
+                "ok": reference_data.ok,
+            }
+
+        control_action_data = None
+        if hasattr(self, "_control_action"):
+            control_action_data = self._control_action
+        elif self._pending_runtime_state is not None:
+            control_action_data = self._pending_runtime_state.get("control_action")
+        if control_action_data is not None:
+            runtime_state["control_action"] = {
+                "time": control_action_data.time,
+                "value": control_action_data.value,
+                "ok": control_action_data.ok,
+            }
+        return runtime_state
 
     @classmethod
     @override
@@ -137,8 +182,23 @@ class AbstractController(AbstractComponent, ABC):
     def _load_runtime_state(self, state: dict[str, Any]) -> None:  # pyright: ignore[reportExplicitAny]
         """Subclass should overload this method and call super()._load_runtime_state() before returning."""
         self.mode = ControllerMode[state["mode"]]
-        self._sp_point.data = DataValue(**state["sp"])
-        self._control_action = DataValue(**state["control_action"])
+        reference_state = state.get("reference")
+        if reference_state is None and "sp" in state:
+            warnings.warn(
+                "controller runtime state field 'sp' is deprecated; use 'reference'",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            reference_state = state["sp"]
+
+        pending_runtime_state: dict[str, DataValue] = {}
+        if reference_state is not None:
+            pending_runtime_state["reference"] = DataValue(**cast(dict[str, Any], reference_state))
+        if "control_action" in state:
+            pending_runtime_state["control_action"] = DataValue(
+                **cast(dict[str, Any], state["control_action"])
+            )
+        self._pending_runtime_state = pending_runtime_state or None
 
     @override
     def _install(self, system: System) -> list[Exception]:
@@ -164,9 +224,8 @@ class AbstractController(AbstractComponent, ABC):
         # 2. Get CV getter from system's point registry
         self._cv_getter = system.point_registry.make_converted_data_getter(self.cv_tag)
 
-        # 3. Initialize SP trajectory if necessary
-        if self.sp_trajectory is None:
-            self.sp_trajectory = Trajectory(y0=cv_point.data.value, t0=cv_point.data.time)
+        if self.reference_trajectory is None:
+            self.reference_trajectory = Trajectory(y0=cv_point.data.value, t0=cv_point.data.time)
 
         # 4. Commission cascade controllers recursively if it exists
         if self.cascade_controller is not None:
@@ -178,15 +237,14 @@ class AbstractController(AbstractComponent, ABC):
             # Fallback to AUTO if CASCADE requested but no controller provided
             self.mode = ControllerMode.AUTO
 
-        # Prepare setpoint point
-        self._sp_point = Point(
-            tag=f"{self.cv_tag}.sp",
+        self._reference_point = Point(
+            tag=f"{self.cv_tag}.ref",
             unit=cv_point.unit,
-            type="setpoint",
-            description=f"setpoint for {self.cv_tag}",
+            type="reference",
+            description=f"reference signal for {self.cv_tag}",
         )
-        self._sp_point.data = DataValue(
-            time=system.time, value=self.sp_trajectory(system.time), ok=True
+        self._reference_point.data = DataValue(
+            time=system.time, value=self.reference_trajectory(system.time), ok=True
         )
 
         self._system = system
@@ -238,22 +296,23 @@ class AbstractController(AbstractComponent, ABC):
                 mv_getter=self._cv_getter,
                 mv_range=self.cv_range,
                 mv_tag=self.cv_tag,
-                mv_unit=self._sp_point.unit,  # Sp point has CV unit
+                mv_unit=self._reference_point.unit,
             ):
                 return False
 
         # Create mode manager
-        if not self.sp_trajectory:
+        if not self.reference_trajectory:
             raise RuntimeError(
-                f"Controller '{self.cv_tag}' must have a setpoint trajectory. ",
+                f"Controller '{self.cv_tag}' must have a reference trajectory. ",
                 "This is usually taken care of during `install` - check order of calling `install` and `wire_to_element`",
             )
+        self._apply_pending_runtime_state()
         self._mode_manager = ControllerModeManager(
             mode=self.mode,
             manual_mv_source=self._mv_trajectory,
-            auto_sp_source=self.sp_trajectory,
-            cascade_sp_source=self.cascade_controller,
-            sp_getter=self._sp_point.make_converted_data_getter(),
+            auto_ref_source=self.reference_trajectory,
+            cascade_ref_source=self.cascade_controller,
+            reference_getter=self._reference_point.make_converted_data_getter(),
             cv_getter=self._cv_getter,
             mv_getter=mv_getter,
             cv_tag=self.cv_tag,
@@ -267,6 +326,32 @@ class AbstractController(AbstractComponent, ABC):
             self._is_scalar = True
 
         return True
+
+    def _apply_pending_runtime_state(self) -> None:
+        if self._pending_runtime_state is None:
+            return
+
+        reference_data = self._pending_runtime_state.get("reference")
+        if reference_data is not None:
+            self._reference_point.data = DataValue(
+                time=reference_data.time,
+                value=reference_data.value,
+                ok=reference_data.ok,
+            )
+            self.reference_trajectory = Trajectory(
+                y0=reference_data.value,
+                t0=reference_data.time,
+            )
+
+        control_action_data = self._pending_runtime_state.get("control_action")
+        if control_action_data is not None:
+            self._control_action = DataValue(
+                time=control_action_data.time,
+                value=control_action_data.value,
+                ok=control_action_data.ok,
+            )
+
+        self._pending_runtime_state = None
 
     # -------- Control Logic --------
 
@@ -289,8 +374,8 @@ class AbstractController(AbstractComponent, ABC):
         # though it's redundant now.
 
         cv = self._cv_getter()
-        sp = self._mode_manager.get_setpoint(t)
-        self._sp_point.data = sp
+        reference = self._mode_manager.get_reference(t)
+        self._reference_point.data = reference
 
         if self.mode == ControllerMode.TRACKING:
             raise RuntimeError(
@@ -299,12 +384,12 @@ class AbstractController(AbstractComponent, ABC):
         elif self.mode == ControllerMode.MANUAL:
             return self._mode_manager.get_control_action(t)
 
-        proceed = cv.ok and sp.ok
+        proceed = cv.ok and reference.ok
         if not proceed:
             last_control_action.ok = False
             return last_control_action
 
-        control_output, successful = self._control_algorithm(t=t, cv=cv.value, sp=sp.value)
+        control_output, successful = self._control_algorithm(t=t, cv=cv.value, sp=reference.value)
         if (
             np.isnan(control_output).any()
             if isinstance(control_output, np.ndarray)
@@ -348,11 +433,20 @@ class AbstractController(AbstractComponent, ABC):
     # -------- Properties --------
 
     @property
-    def sp_point_dict(self) -> dict[str, Point]:
-        sp_point_dict = {self._sp_point.tag: self._sp_point}
+    def reference_point_dict(self) -> dict[str, Point]:
+        reference_point_dict = {self._reference_point.tag: self._reference_point}
         if self.cascade_controller is not None:
-            sp_point_dict.update(self.cascade_controller.sp_point_dict)
-        return sp_point_dict
+            reference_point_dict.update(self.cascade_controller.reference_point_dict)
+        return reference_point_dict
+
+    @property
+    def sp_point_dict(self) -> dict[str, Point]:
+        warnings.warn(
+            "sp_point_dict is deprecated; use reference_point_dict",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.reference_point_dict
 
     @property
     def t(self) -> Seconds:

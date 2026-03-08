@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import partial
+from typing import Any, cast
 
 from modular_simulation.components import (
     BangBangController,
@@ -15,14 +16,14 @@ from modular_simulation.components import (
 )
 from modular_simulation.components.calculations.first_order_filter import FirstOrderFilter
 from modular_simulation.utils.wrappers import minute, hour, per_hour
-from calculations.misc_calculations import (
+from examples.gas_phase_polymerization.calculations.misc_calculations import (
     AlTiRatioEstimator,
     CatInventoryEstimator,
     MoleRatioCalculation,
     Monomer1PartialPressure,
     ResidenceTimeCalculation,
 )
-from calculations.property_estimator import PropertyEstimator
+from examples.gas_phase_polymerization.calculations.property_estimator import PropertyEstimator
 
 analyzer_partial = partial(
     SampledDelayedSensor,
@@ -148,18 +149,19 @@ control_elements: list[ControlElement] = [
     ControlElement(
         mv_tag="F_cat",
         mv_range=(0.0, 20.0),
+        mv_trajectory=Trajectory(y0=1.0),
         controller=InternalModelController(
             cv_tag="cat_inventory",
             cv_range=(0.0, 200.0),
             sp_filter_tc=minute(10),
             model=CalculationModelPath(
-                calculation_name=CatInventoryEstimator,
+                calculation_name="CatInventoryEstimator",
                 method_name="model",
             ),
             cascade_controller=PIDController(
                 cv_tag="filtered_mass_prod_rate",
                 cv_range=(0.0, 100.0),
-                sp_trajectory=Trajectory(y0=0.0).ramp(50.0, rate=per_hour(10.0)),
+                reference_trajectory=Trajectory(y0=0.0).ramp(50.0, rate=per_hour(10.0)),
                 Kp=0.5,
                 Ti=hour(1),
                 setpoint_weight=0.0,
@@ -169,10 +171,11 @@ control_elements: list[ControlElement] = [
     ControlElement(
         mv_tag="F_m1",
         mv_range=(0.0, 70_000.0),
+        mv_trajectory=Trajectory(y0=100.0),
         controller=PIDController(
             cv_tag="pM1",
             cv_range=(0.0, 2000.0),
-            sp_trajectory=Trajectory(y0=700.0),
+            reference_trajectory=Trajectory(y0=700.0),
             Kp=50.0,
             Ti=hour(1),
             period=minute(2),
@@ -181,10 +184,11 @@ control_elements: list[ControlElement] = [
     ControlElement(
         mv_tag="F_m2",
         mv_range=(0.0, 7_000.0),
+        mv_trajectory=Trajectory(y0=100.0),
         controller=PIDController(
             cv_tag="rM2",
             cv_range=(0.0, 1.0),
-            sp_trajectory=Trajectory(y0=0.3),
+            reference_trajectory=Trajectory(y0=0.3),
             Kp=3500.0,
             Ti=hour(0.5),
             setpoint_weight=0.0,
@@ -193,13 +197,13 @@ control_elements: list[ControlElement] = [
                 cv_tag="inst_density",
                 cv_range=(900.0, 970.0),
                 model=CalculationModelPath(
-                    calculation_name=PropertyEstimator,
+                    calculation_name="PropertyEstimator",
                     method_name="inst_density_model",
                 ),
                 cascade_controller=FirstOrderTrajectoryController(
                     cv_tag="cumm_density",
                     cv_range=(900.0, 970.0),
-                    sp_trajectory=Trajectory(y0=918.0),
+                    reference_trajectory=Trajectory(y0=918.0),
                     closed_loop_time_constant_fraction=0.8,
                     open_loop_time_constant="residence_time",
                 ),
@@ -209,10 +213,11 @@ control_elements: list[ControlElement] = [
     ControlElement(
         mv_tag="F_h2",
         mv_range=(0.0, 15.0),
+        mv_trajectory=Trajectory(y0=10.0),
         controller=PIDController(
             cv_tag="rH2",
             cv_range=(0.0, 1.0),
-            sp_trajectory=Trajectory(y0=0.0),
+            reference_trajectory=Trajectory(y0=0.0),
             Kp=200.0,
             Ti=hour(1.5),
             setpoint_weight=0.0,
@@ -221,13 +226,13 @@ control_elements: list[ControlElement] = [
                 cv_tag="inst_MI",
                 cv_range=(0.0, 200.0),
                 model=CalculationModelPath(
-                    calculation_name=PropertyEstimator,
+                    calculation_name="PropertyEstimator",
                     method_name="inst_MI_model",
                 ),
                 cascade_controller=FirstOrderTrajectoryController(
                     cv_tag="cumm_MI",
                     cv_range=(0.0, 200.0),
-                    sp_trajectory=Trajectory(y0=2.0),
+                    reference_trajectory=Trajectory(y0=2.0),
                     closed_loop_time_constant_fraction=0.8,
                     open_loop_time_constant="residence_time",
                 ),
@@ -237,12 +242,13 @@ control_elements: list[ControlElement] = [
     ControlElement(
         mv_tag="F_teal",
         mv_range=(0.0, 1e5),
+        mv_trajectory=Trajectory(y0=10.0),
         controller=InternalModelController(
             cv_tag="Al_Ti_ratio",
             cv_range=(0.0, 10.0),
-            sp_trajectory=Trajectory(y0=0.4),
+            reference_trajectory=Trajectory(y0=0.4),
             model=CalculationModelPath(
-                calculation_name=AlTiRatioEstimator,
+                calculation_name="AlTiRatioEstimator",
                 method_name="AlTi_model",
             ),
         ),
@@ -250,20 +256,22 @@ control_elements: list[ControlElement] = [
     ControlElement(
         mv_tag="F_n2",
         mv_range=(0.0, 500.0),
+        mv_trajectory=Trajectory(y0=10.0),
         controller=PIDController(
             cv_tag="filtered_pressure",
             cv_range=(0.0, 3000.0),
-            sp_trajectory=Trajectory(y0=1900.0),
+            reference_trajectory=Trajectory(y0=1900.0),
             Kp=500.0 / 200.0,
         ),
     ),
     ControlElement(
         mv_tag="F_vent",
         mv_range=(0.0, 25_000.0),
+        mv_trajectory=Trajectory(y0=0.0),
         controller=PIDController(
             cv_tag="filtered_pressure_vent",
             cv_range=(0.0, 3000.0),
-            sp_trajectory=Trajectory(y0=1900.0),
+            reference_trajectory=Trajectory(y0=1900.0),
             Kp=25_000.0 / 200.0,
             inverted=True,
         ),
@@ -271,10 +279,11 @@ control_elements: list[ControlElement] = [
     ControlElement(
         mv_tag="discharge_valve_position",
         mv_range=(0.0, 1.0),
-        controller=BangBangController(
+        mv_trajectory=Trajectory(y0=0.0),
+        controller=cast(Any, BangBangController)(
             cv_tag="bed_level",
             cv_range=(0.0, 20.0),
-            sp_trajectory=Trajectory(y0=15.0),
+            reference_trajectory=Trajectory(y0=15.0),
             deadband=0.1,
             alpha=0.4,
             inverted=True,

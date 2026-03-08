@@ -1,12 +1,14 @@
 from enum import IntEnum
 
+
 class ControllerMode(IntEnum):
     """
-    TRACKING: CV's SP = CV's PV Always. SP cannot be changed - always follows PV.
-    AUTO    : CV's SP is provided by sp_trajectory. 
-    CASCADE : CV's SP is provided by a cascade controller.
+    TRACKING: CV reference tracks PV.
+    AUTO    : CV reference is provided by the local reference trajectory.
+    CASCADE : CV reference is provided by an upstream cascade controller.
     """
-    TRACKING = -1 
+
+    TRACKING = -1
     tracking = -1
     track = -1
 
@@ -43,6 +45,4 @@ class ControllerMode(IntEnum):
                     f"Unrecognized controller mode string '{value}'. "
                     f"Accepted strings: {cls.__members__.keys()}"
                 )
-        raise TypeError(
-            f"Expected ControllerMode, int, or str, got {type(value).__name__}"
-        )
+        raise TypeError(f"Expected ControllerMode, int, or str, got {type(value).__name__}")

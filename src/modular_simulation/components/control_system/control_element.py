@@ -1,4 +1,7 @@
 from __future__ import annotations
+
+# pyright: reportImportCycles=false
+import warnings
 from typing import TYPE_CHECKING, Any, override
 import numpy as np
 from dataclasses import asdict
@@ -104,12 +107,9 @@ class ControlElement(AbstractComponent):
         # or just a registry point (e.g. calculation input)
         try:
             if self.mv_tag in system.process_model.state_metadata_dict:
-                from astropy.units import Unit
-
                 metadata = system.process_model.state_metadata_dict[self.mv_tag]
-                target_unit = Unit(metadata.unit)
-                # If mv_point came from a sensor, use its unit, otherwise use metadata unit
-                source_unit = Unit(self._mv_point.unit) if self._mv_point.unit else target_unit
+                target_unit = metadata.unit
+                source_unit = self._mv_point.unit if self._mv_point.unit else target_unit
 
                 converter = source_unit.get_converter(target_unit)
 
@@ -265,10 +265,19 @@ class ControlElement(AbstractComponent):
     # -------- Properties --------
 
     @property
-    def controller_sp_point_dict(self) -> dict[str, Point]:
+    def controller_reference_point_dict(self) -> dict[str, Point]:
         if self.controller is None:
             return {}
-        return self.controller.sp_point_dict
+        return self.controller.reference_point_dict
+
+    @property
+    def controller_sp_point_dict(self) -> dict[str, Point]:
+        warnings.warn(
+            "controller_sp_point_dict is deprecated; use controller_reference_point_dict",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.controller_reference_point_dict
 
 
 ControlElement.model_rebuild()

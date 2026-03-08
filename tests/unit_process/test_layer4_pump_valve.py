@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportAny=false, reportExplicitAny=false, reportUnknownMemberType=false
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false
 
 from types import SimpleNamespace
 from typing import Any, cast
@@ -115,7 +115,7 @@ def test_pump_pressure_power_and_hydraulic_invariant() -> None:
         inlet_temperature=300.0,
         inlet_pressure=100000.0,
         inlet_composition=np.array([0.7, 0.3], dtype=np.float64),
-        pressure_rise=200000.0,
+        pump_speed=200000.0,
         efficiency=0.8,
     )
     pump.set_property_package(cast(Any, package))
@@ -143,7 +143,7 @@ def test_pump_pressure_power_and_hydraulic_invariant() -> None:
             "downstream_pressure": pump.outlet_pressure,
         },
         unknowns={"flow_rate": pump.inlet_flow},
-        parameters={"pump_speed": pump.pressure_rise},
+        parameters={"pump_speed": pump.pump_speed},
     )["head_balance"]
     assert residual == pytest.approx(0.0, abs=1.0e-9)
 
@@ -220,13 +220,36 @@ def test_pump_invalid_inputs_raise(kwargs: dict[str, object], error_match: str) 
         "inlet_temperature": 300.0,
         "inlet_pressure": 100000.0,
         "inlet_composition": np.array([0.5, 0.5], dtype=np.float64),
-        "pressure_rise": 50000.0,
+        "pump_speed": 50000.0,
         "efficiency": 0.75,
     }
     params.update(kwargs)
 
     with pytest.raises(ValueError, match=error_match):
         _ = Pump(**cast(Any, params))
+
+
+def test_pump_constructor_accepts_legacy_pressure_rise_alias_with_warning() -> None:
+    with pytest.warns(DeprecationWarning, match="pressure_rise is deprecated; use pump_speed"):
+        pump = cast(
+            Pump,
+            Pump.model_validate(
+                cast(
+                    Any,
+                    {
+                        "n_species": 2,
+                        "inlet_flow": 0.01,
+                        "inlet_temperature": 300.0,
+                        "inlet_pressure": 100000.0,
+                        "inlet_composition": np.array([0.5, 0.5], dtype=np.float64),
+                        "pressure_rise": 50000.0,
+                        "efficiency": 0.75,
+                    },
+                )
+            ),
+        )
+
+    assert pump.pump_speed == pytest.approx(50000.0)
 
 
 @pytest.mark.parametrize(

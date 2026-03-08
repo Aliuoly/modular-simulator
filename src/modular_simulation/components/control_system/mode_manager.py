@@ -105,7 +105,9 @@ class ControlElementModeManager:
             return DataValue(time=t, value=self.manual_mv_source(t), ok=True)
         elif self.mode == ControllerMode.AUTO and self.auto_mv_source is not None:
             result = self.auto_mv_source.update(t)
-            return result.data_value  # type: ignore
+            if isinstance(result.data_value, DataValue):
+                return result.data_value
+            raise RuntimeError("controller update returned non-scalar data payload")
         else:
             raise RuntimeError("Error in mode change for control element '%s'.")
 
@@ -136,7 +138,7 @@ class ControllerModeManager:
                 here, A's SP is dictated by a trajectory (A.sp_trajectory)
         even though both options above are functionally equivalent. 
     """
-    auto_sp_source: Trajectory
+    auto_ref_source: Trajectory
     """
     For a control element:
         auto_sp_source corresponds to its associated controller's `update` method,
@@ -144,7 +146,7 @@ class ControllerModeManager:
         The control element, when in AUTO mode, simply passes the controller's control output
         to its CONTROLLED state using its `_mv_setter` callable private attribute. 
     """
-    cascade_sp_source: AbstractController | None
+    cascade_ref_source: AbstractController | None
     """
     for a controller:
         corresponds to the cascade controller's `update` method, which provides
@@ -153,27 +155,27 @@ class ControllerModeManager:
     mode: ControllerMode
     mv_getter: Callable[[], DataValue]
     cv_getter: Callable[[], DataValue]
-    sp_getter: Callable[[], DataValue]
+    reference_getter: Callable[[], DataValue]
     cv_tag: str
 
     def __init__(
         self,
         mode: ControllerMode,
         manual_mv_source: Trajectory,
-        auto_sp_source: Trajectory,
-        cascade_sp_source: AbstractController | None,
+        auto_ref_source: Trajectory,
+        cascade_ref_source: AbstractController | None,
         mv_getter: Callable[[], DataValue],
         cv_getter: Callable[[], DataValue],
-        sp_getter: Callable[[], DataValue],
+        reference_getter: Callable[[], DataValue],
         cv_tag: str,
     ):
         self.mode = mode
         self.manual_mv_source = manual_mv_source
-        self.auto_sp_source = auto_sp_source
-        self.cascade_sp_source = cascade_sp_source
+        self.auto_ref_source = auto_ref_source
+        self.cascade_ref_source = cascade_ref_source
         self.mv_getter = mv_getter
         self.cv_getter = cv_getter
-        self.sp_getter = sp_getter
+        self.reference_getter = reference_getter
         self.cv_tag = cv_tag
 
     def change_mode(self, mode: ControllerMode):
@@ -213,10 +215,10 @@ class ControllerModeManager:
         is updated with the last setpoint, wherever it came from.
         """
         self.mode = ControllerMode.AUTO
-        if self.cascade_sp_source is not None:
-            self.cascade_sp_source.change_control_mode(ControllerMode.TRACKING)
-        sp_data = self.sp_getter()
-        _ = self.auto_sp_source.set(value=sp_data.value, t=sp_data.time)
+        if self.cascade_ref_source is not None:
+            self.cascade_ref_source.change_control_mode(ControllerMode.TRACKING)
+        reference_data = self.reference_getter()
+        _ = self.auto_ref_source.set(value=reference_data.value, t=reference_data.time)
         return self.mode
 
     def _change_mode_to_cascade(self) -> ControllerMode:
@@ -228,7 +230,7 @@ class ControllerModeManager:
         the _change_mode_to_auto method.
         If no cascade controller is available, will fall back to AUTO mode with a warning.
         """
-        if self.cascade_sp_source is None:
+        if self.cascade_ref_source is None:
             logging.info(
                 f"Attemped to change '{self.cv_tag}' controller mode to CASCADE; however, "
                 + "no cascade controller was provided. Falling back to AUTO mode. "
@@ -236,21 +238,26 @@ class ControllerModeManager:
             return self._change_mode_to_auto()
         else:
             self.mode = ControllerMode.CASCADE
-            self.cascade_sp_source.change_control_mode(ControllerMode.AUTO)
+            self.cascade_ref_source.change_control_mode(ControllerMode.AUTO)
             return self.mode
 
-    def get_setpoint(self, t: float) -> DataValue:
+    def get_reference(self, t: float) -> DataValue:
         if self.mode == ControllerMode.TRACKING:
             return self.cv_getter()
         elif self.mode == ControllerMode.AUTO:
-            return DataValue(time=t, value=self.auto_sp_source(t), ok=True)
-        elif self.mode == ControllerMode.CASCADE and self.cascade_sp_source is not None:
-            result = self.cascade_sp_source.update(t)
-            return result.data_value  # type: ignore
+            return DataValue(time=t, value=self.auto_ref_source(t), ok=True)
+        elif self.mode == ControllerMode.CASCADE and self.cascade_ref_source is not None:
+            result = self.cascade_ref_source.update(t)
+            if isinstance(result.data_value, DataValue):
+                return result.data_value
+            raise RuntimeError("cascade controller update returned non-scalar data payload")
         else:
             raise RuntimeError(
-                f"Invalid mode '{self.mode}' for get_setpoint. This is a bug. Please report it."
+                f"Invalid mode '{self.mode}' for get_reference. This is a bug. Please report it."
             )
+
+    def get_setpoint(self, t: float) -> DataValue:
+        return self.get_reference(t)
 
     def get_control_action(self, t: float) -> DataValue:
         if self.mode == ControllerMode.MANUAL:

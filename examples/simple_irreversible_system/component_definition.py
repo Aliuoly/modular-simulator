@@ -38,9 +38,10 @@ control_elements = [
     ControlElement(
         mv_tag="F_in",
         mv_range=(0, 100 * 60),
+        mv_trajectory=Trajectory(y0=60.0),
         controller=PIDController(
             cv_tag="B",
-            sp_trajectory=Trajectory(y0=0.5),
+            reference_trajectory=Trajectory(y0=0.5),
             cv_range=(0, 2),
             Kp=1.0e-1 * 60,
             Ti=minute(2),

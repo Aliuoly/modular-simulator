@@ -106,7 +106,7 @@ def test_mixer_uses_property_package_for_enthalpy_correct_temperature() -> None:
     assert mixer.outlet_temperature != pytest.approx(linear_temperature)
 
 
-def test_splitter_conservation_and_state_copy() -> None:
+def test_splitter_copies_state_without_internal_branch_allocation() -> None:
     splitter = Splitter(
         n_outlets=2,
         n_species=2,
@@ -121,9 +121,8 @@ def test_splitter_conservation_and_state_copy() -> None:
     splitter.step(0.1)
 
     assert np.asarray(splitter.outlet_flows, dtype=np.float64) == pytest.approx(
-        np.array([6.0, 4.0])
+        np.array([0.0, 0.0])
     )
-    assert float(np.sum(np.asarray(splitter.outlet_flows, dtype=np.float64))) == pytest.approx(10.0)
     assert np.asarray(splitter.outlet_temperatures, dtype=np.float64) == pytest.approx(
         np.array([325.0, 325.0])
     )
@@ -133,6 +132,7 @@ def test_splitter_conservation_and_state_copy() -> None:
     assert np.asarray(splitter.outlet_compositions, dtype=np.float64) == pytest.approx(
         np.array([0.2, 0.8, 0.2, 0.8], dtype=np.float64)
     )
+    assert "split_ratios" not in splitter.controlled_view.state_list
     assert splitter.ports.inlets == ("inlet",)
     assert splitter.ports.outlets == ("outlet_1", "outlet_2")
 

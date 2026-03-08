@@ -1,0 +1,18 @@
+flowchart TD
+    n2(["fresh_syngas"])
+    n7(["recycle_return"])
+    n0["ammonia_reactor"]
+    n1["condenser_separator"]
+    n3["liquid_product_outlet"]
+    n4["purge_export"]
+    n5["purge_splitter"]
+    n6["recycle_export"]
+    n8["synthesis_mixer"]
+    n2 -->|outlet -> inlet_1| n8
+    n7 -->|outlet -> inlet_2| n8
+    n8 -->|outlet -> inlet| n0
+    n0 -->|outlet -> inlet| n1
+    n1 -->|outlet_1 -> inlet| n3
+    n1 -->|outlet_2 -> inlet| n5
+    n5 -->|outlet_1 -> inlet| n6
+    n5 -->|outlet_2 -> inlet| n4

@@ -23,7 +23,7 @@ classDiagram
         <<ControllerBase>>
         cv_tag
         cv_range
-        sp_trajectory
+        reference_trajectory
         cascade_controller
         mode
         +install(System)

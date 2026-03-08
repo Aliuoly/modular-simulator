@@ -134,13 +134,17 @@ class FlashDrum(AlgebraicProcessModel):
         NDArray[np.float64],
         M(type=T.CONTROLLED, unit="", description="inlet composition vector by species index"),
     ] = np.zeros(0, dtype=np.float64)
-    flash_pressure: Annotated[
+    imposed_pressure: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="Pa", description="flash pressure"),
+        M(type=T.CONSTANT, unit="Pa", description="externally imposed flash pressure boundary"),
     ] = 101325.0
-    flash_temperature_setpoint: Annotated[
+    imposed_temperature: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="K", description="isothermal flash temperature setpoint"),
+        M(
+            type=T.CONSTANT,
+            unit="K",
+            description="externally imposed isothermal flash temperature boundary",
+        ),
     ] = 298.15
 
     outlet_temperature: Annotated[
@@ -221,10 +225,10 @@ class FlashDrum(AlgebraicProcessModel):
             raise ValueError("inlet_temperature must be finite.")
         if not isfinite(self.inlet_pressure) or self.inlet_pressure <= 0.0:
             raise ValueError("inlet_pressure must be finite and positive.")
-        if not isfinite(self.flash_pressure) or self.flash_pressure <= 0.0:
-            raise ValueError("flash_pressure must be finite and positive.")
-        if not isfinite(self.flash_temperature_setpoint):
-            raise ValueError("flash_temperature_setpoint must be finite.")
+        if not isfinite(self.imposed_pressure) or self.imposed_pressure <= 0.0:
+            raise ValueError("imposed_pressure must be finite and positive.")
+        if not isfinite(self.imposed_temperature):
+            raise ValueError("imposed_temperature must be finite.")
 
         _validate_composition(self.inlet_composition, name="inlet_composition")
 
@@ -237,11 +241,11 @@ class FlashDrum(AlgebraicProcessModel):
 
     @property
     def outlet_pressure(self) -> float:
-        return float(self.flash_pressure)
+        return float(self.imposed_pressure)
 
     @outlet_pressure.setter
     def outlet_pressure(self, value: float) -> None:
-        self.flash_pressure = float(value)
+        self.imposed_pressure = float(value)
 
     def apply_inlet(self, port_name: str, stream: StreamData) -> None:
         if port_name not in self.ports.inlets:
@@ -305,8 +309,8 @@ class FlashDrum(AlgebraicProcessModel):
         inlet_temperature = float(u[u_map["inlet_temperature"]])
         inlet_pressure = float(u[u_map["inlet_pressure"]])
         inlet_composition = _vector_from_state(u, u_map["inlet_composition"])
-        flash_pressure = float(u[u_map["flash_pressure"]])
-        flash_temperature = float(u[u_map["flash_temperature_setpoint"]])
+        flash_pressure = float(k[k_map["imposed_pressure"]])
+        flash_temperature = float(k[k_map["imposed_temperature"]])
 
         if not isfinite(inlet_flow) or inlet_flow < 0.0:
             raise ValueError("inlet_flow must be finite and non-negative.")
@@ -315,9 +319,9 @@ class FlashDrum(AlgebraicProcessModel):
         if not isfinite(inlet_pressure) or inlet_pressure <= 0.0:
             raise ValueError("inlet_pressure must be finite and positive.")
         if not isfinite(flash_pressure) or flash_pressure <= 0.0:
-            raise ValueError("flash_pressure must be finite and positive.")
+            raise ValueError("imposed_pressure must be finite and positive.")
         if not isfinite(flash_temperature):
-            raise ValueError("flash_temperature_setpoint must be finite.")
+            raise ValueError("imposed_temperature must be finite.")
         if inlet_composition.size != n_species:
             raise ValueError(
                 f"inlet_composition length mismatch: expected {n_species}, got {inlet_composition.size}."
@@ -349,10 +353,10 @@ class FlashDrum(AlgebraicProcessModel):
         z_array = np.asarray(self.inlet_composition, dtype=np.float64)
         z = tuple(cast(list[float], z_array.tolist()))
 
-        outlet_pressure = max(float(self.flash_pressure), _TINY_POSITIVE_PRESSURE)
+        outlet_pressure = max(float(self.imposed_pressure), _TINY_POSITIVE_PRESSURE)
         if mode == "isothermal":
             flash = package.flash_tp(
-                T=float(self.flash_temperature_setpoint),
+                T=float(self.imposed_temperature),
                 P=outlet_pressure,
                 z=z,
             )

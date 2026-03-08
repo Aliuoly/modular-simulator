@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from math import isfinite
 from typing import Annotated, ClassVar, cast, override
+import warnings
 
 import numpy as np
 from numpy.typing import NDArray
@@ -48,11 +49,15 @@ def _validate_composition(composition: NDArray[np.float64], *, name: str) -> Non
         raise ValueError(f"{name} must sum to 1.0.")
 
 
-def _validate_split_fractions(split_fractions: NDArray[np.float64]) -> None:
-    if not np.all(np.isfinite(split_fractions)):
-        raise ValueError("split_fractions must contain only finite values.")
-    if np.any(split_fractions < 0.0) or np.any(split_fractions > 1.0):
-        raise ValueError("split_fractions must stay within [0, 1].")
+def _validate_configured_split_fraction_targets(
+    configured_split_fraction_targets: NDArray[np.float64],
+) -> None:
+    if not np.all(np.isfinite(configured_split_fraction_targets)):
+        raise ValueError("configured_split_fraction_targets must contain only finite values.")
+    if np.any(configured_split_fraction_targets < 0.0) or np.any(
+        configured_split_fraction_targets > 1.0
+    ):
+        raise ValueError("configured_split_fraction_targets must stay within [0, 1].")
 
 
 def _build_label_index(n_species: int, species_order: Sequence[str] | None) -> dict[str, int]:
@@ -94,7 +99,8 @@ def _resolve_species_index(label_index: Mapping[str, int], raw_key: object, n_sp
             index = int(key)
         else:
             raise ValueError(
-                f"Unknown species key '{raw_key}'. Provide species_order for named split_fractions."
+                "Unknown species key '"
+                + f"{raw_key}'. Provide species_order for named configured_split_fraction_targets."
             )
 
     if index < 0 or index >= n_species:
@@ -102,33 +108,36 @@ def _resolve_species_index(label_index: Mapping[str, int], raw_key: object, n_sp
     return index
 
 
-def _coerce_split_fractions(
+def _coerce_configured_split_fraction_targets(
     *,
     n_species: int,
-    split_fractions: object,
+    configured_split_fraction_targets: object,
     species_order: Sequence[str] | None,
 ) -> NDArray[np.float64]:
-    if split_fractions is None:
+    if configured_split_fraction_targets is None:
         return np.zeros(n_species, dtype=np.float64)
 
-    if isinstance(split_fractions, Mapping):
+    if isinstance(configured_split_fraction_targets, Mapping):
         label_index = _build_label_index(n_species, species_order)
         split_vector = np.zeros(n_species, dtype=np.float64)
-        split_mapping = cast(Mapping[object, object], split_fractions)
+        split_mapping = cast(Mapping[object, object], configured_split_fraction_targets)
         for species_key, raw_value in split_mapping.items():
             species_index = _resolve_species_index(label_index, species_key, n_species)
             if not isinstance(raw_value, (int, float)):
-                raise ValueError("split_fractions values must be numeric.")
+                raise ValueError("configured_split_fraction_targets values must be numeric.")
             split_vector[species_index] = float(raw_value)
-        _validate_split_fractions(split_vector)
+        _validate_configured_split_fraction_targets(split_vector)
         return split_vector
 
-    split_vector = np.asarray(split_fractions, dtype=np.float64).reshape(-1)
+    split_vector = np.asarray(configured_split_fraction_targets, dtype=np.float64).reshape(-1)
+    if split_vector.size == 0:
+        return np.zeros(n_species, dtype=np.float64)
     if split_vector.size != n_species:
         raise ValueError(
-            f"split_fractions length mismatch: expected {n_species}, got {split_vector.size}."
+            "configured_split_fraction_targets length mismatch: "
+            + f"expected {n_species}, got {split_vector.size}."
         )
-    _validate_split_fractions(split_vector)
+    _validate_configured_split_fraction_targets(split_vector)
     return split_vector
 
 
@@ -157,12 +166,16 @@ class ComponentSeparator(AlgebraicProcessModel):
     }
 
     n_species: Annotated[int, M(type=T.CONSTANT, unit="", description="number of species")] = 2
-    split_fractions: Annotated[
+    configured_split_fraction_targets: Annotated[
         NDArray[np.float64],
         M(
             type=T.CONSTANT,
             unit="",
-            description="species-wise split fraction to outlet_1 (remainder goes to outlet_2)",
+            description=(
+                "configured abstract species-wise split fraction targets to outlet_1 "
+                + "(remainder goes to outlet_2); physical separation control belongs "
+                + "in higher-fidelity units and physical manipulated quantities"
+            ),
         ),
     ] = np.zeros(0, dtype=np.float64)
 
@@ -217,15 +230,31 @@ class ComponentSeparator(AlgebraicProcessModel):
     ] = np.zeros(0, dtype=np.float64)
 
     def __init__(self, **data: object) -> None:
-        raw_species_order = data.pop("species_order", None)
-        raw_split_fractions = data.get("split_fractions", None)
+        legacy_name = "split_fractions"
+        canonical_name = "configured_split_fraction_targets"
+        if legacy_name in data:
+            if canonical_name in data:
+                raise ValueError(f"Provide only one of '{legacy_name}' or '{canonical_name}'.")
+            warnings.warn(
+                f"{legacy_name} is deprecated; use {canonical_name}",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            data[canonical_name] = data.pop(legacy_name)
 
-        if raw_split_fractions is not None and isinstance(raw_split_fractions, Mapping):
+        raw_species_order = data.pop("species_order", None)
+        raw_configured_split_fraction_targets = data.get(canonical_name, None)
+
+        if raw_configured_split_fraction_targets is not None and isinstance(
+            raw_configured_split_fraction_targets, Mapping
+        ):
             raw_n_species = data.get("n_species", 2)
             if not isinstance(raw_n_species, (int, float)):
-                raise ValueError("n_species must be numeric when split_fractions is a mapping.")
+                raise ValueError(
+                    "n_species must be numeric when configured_split_fraction_targets is a mapping."
+                )
             n_species = int(raw_n_species)
-            split_mapping = cast(Mapping[object, object], raw_split_fractions)
+            split_mapping = cast(Mapping[object, object], raw_configured_split_fraction_targets)
             typed_species_order: tuple[str, ...] | None
             if raw_species_order is None:
                 typed_species_order = None
@@ -237,9 +266,9 @@ class ComponentSeparator(AlgebraicProcessModel):
                 raise ValueError("species_order must be a sequence of species labels.")
 
             species_order = typed_species_order
-            data["split_fractions"] = _coerce_split_fractions(
+            data[canonical_name] = _coerce_configured_split_fraction_targets(
                 n_species=n_species,
-                split_fractions=split_mapping,
+                configured_split_fraction_targets=split_mapping,
                 species_order=species_order,
             )
 
@@ -257,9 +286,9 @@ class ComponentSeparator(AlgebraicProcessModel):
         if not isfinite(self.inlet_pressure) or self.inlet_pressure <= 0.0:
             raise ValueError("inlet_pressure must be finite and positive.")
 
-        self.split_fractions = _coerce_split_fractions(
+        self.configured_split_fraction_targets = _coerce_configured_split_fraction_targets(
             n_species=self.n_species,
-            split_fractions=self.split_fractions,
+            configured_split_fraction_targets=self.configured_split_fraction_targets,
             species_order=None,
         )
         self.inlet_composition = _coerce_vector(
@@ -284,7 +313,9 @@ class ComponentSeparator(AlgebraicProcessModel):
         _validate_composition(
             np.asarray(self.inlet_composition, dtype=np.float64), name="inlet_composition"
         )
-        _validate_split_fractions(np.asarray(self.split_fractions, dtype=np.float64))
+        _validate_configured_split_fraction_targets(
+            np.asarray(self.configured_split_fraction_targets, dtype=np.float64)
+        )
 
     @property
     def ports(self) -> UnitProcessPorts:
@@ -351,7 +382,9 @@ class ComponentSeparator(AlgebraicProcessModel):
         inlet_temperature = float(u[u_map["inlet_temperature"]])
         inlet_pressure = float(u[u_map["inlet_pressure"]])
         inlet_composition = _vector_from_state(u, u_map["inlet_composition"])
-        split_fractions = _vector_from_state(k, k_map["split_fractions"])
+        configured_split_fraction_targets = _vector_from_state(
+            k, k_map["configured_split_fraction_targets"]
+        )
 
         if not isfinite(inlet_flow) or inlet_flow < 0.0:
             raise ValueError("inlet_flow must be finite and non-negative.")
@@ -363,17 +396,18 @@ class ComponentSeparator(AlgebraicProcessModel):
             raise ValueError(
                 f"inlet_composition length mismatch: expected {n_species}, got {inlet_composition.size}."
             )
-        if split_fractions.size != n_species:
+        if configured_split_fraction_targets.size != n_species:
             raise ValueError(
-                f"split_fractions length mismatch: expected {n_species}, got {split_fractions.size}."
+                "configured_split_fraction_targets length mismatch: "
+                + f"expected {n_species}, got {configured_split_fraction_targets.size}."
             )
 
         _validate_composition(inlet_composition, name="inlet_composition")
-        _validate_split_fractions(split_fractions)
+        _validate_configured_split_fraction_targets(configured_split_fraction_targets)
 
         inlet_component_flows = inlet_flow * inlet_composition
-        outlet_1_component_flows = inlet_component_flows * split_fractions
-        outlet_2_component_flows = inlet_component_flows * (1.0 - split_fractions)
+        outlet_1_component_flows = inlet_component_flows * configured_split_fraction_targets
+        outlet_2_component_flows = inlet_component_flows * (1.0 - configured_split_fraction_targets)
 
         outlet_1_flow = float(np.sum(outlet_1_component_flows))
         outlet_2_flow = float(np.sum(outlet_2_component_flows))

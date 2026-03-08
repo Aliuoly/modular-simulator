@@ -38,7 +38,7 @@ control_elements = [
         controller=PIDController(
             cv_tag="V",
             cv_range=(0.0, 2000.0),
-            sp_trajectory=Trajectory(y0=1.0e3),
+            reference_trajectory=Trajectory(y0=1.0e3),
             Kp=1.0e-2,
             Ti=100.0,
         ),
@@ -60,7 +60,7 @@ control_elements = [
                 cascade_controller=PIDController(
                     cv_tag="B",
                     cv_range=(0.0, 1.0),
-                    sp_trajectory=Trajectory(y0=0.02),
+                    reference_trajectory=Trajectory(y0=0.02),
                     Kp=2.0e-1,
                     Ti=5.0,
                 ),

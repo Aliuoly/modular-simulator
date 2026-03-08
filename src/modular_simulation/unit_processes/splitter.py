@@ -91,9 +91,9 @@ class Splitter(AlgebraicProcessModel):
     split_ratios: Annotated[
         NDArray[np.float64],
         M(
-            type=T.CONTROLLED,
+            type=T.CONSTANT,
             unit="",
-            description="N-1 split ratios; final ratio computed as 1-sum(split_ratios)",
+            description="configured abstract split ratios; not used by the physical hydraulic-owned splitter",
         ),
     ] = np.zeros(0, dtype=np.float64)
 
@@ -269,8 +269,6 @@ class Splitter(AlgebraicProcessModel):
         inlet_temperature = float(u[u_map["inlet_temperature"]])
         inlet_pressure = float(u[u_map["inlet_pressure"]])
         inlet_composition = _vector_from_state(u, u_map["inlet_composition"])
-        split_ratios = _vector_from_state(u, u_map["split_ratios"])
-
         if not np.isfinite(inlet_flow) or inlet_flow < 0.0:
             raise ValueError("inlet_flow must be finite and non-negative.")
         if not np.isfinite(inlet_temperature):
@@ -282,16 +280,8 @@ class Splitter(AlgebraicProcessModel):
             raise ValueError(
                 f"inlet_composition length mismatch: expected {n_species}, got {inlet_composition.size}."
             )
-        expected_ratio_size = max(n_outlets - 1, 0)
-        if split_ratios.size != expected_ratio_size:
-            raise ValueError(
-                f"split_ratios length mismatch: expected {expected_ratio_size}, got {split_ratios.size}."
-            )
-
         _validate_composition(inlet_composition, name="inlet_composition")
-        full_split = _validate_split_ratios(split_ratios)
-
-        outlet_flows = inlet_flow * full_split
+        outlet_flows = np.zeros(n_outlets, dtype=np.float64)
         outlet_temperatures = np.full(n_outlets, inlet_temperature, dtype=np.float64)
         outlet_pressures = np.full(n_outlets, inlet_pressure, dtype=np.float64)
         outlet_compositions = np.tile(inlet_composition, n_outlets)

@@ -1,4 +1,5 @@
 import pytest
+from typing import TYPE_CHECKING
 
 from modular_simulation.components import (
     SampledDelayedSensor,
@@ -9,8 +10,13 @@ from modular_simulation.components import (
 )
 from modular_simulation.framework.system import System
 
+if TYPE_CHECKING:
+    from tests.conftest import ThermalProcessModel
 
-def test_sampled_delayed_sensor_measures_and_histories(thermal_process_model):
+
+def test_sampled_delayed_sensor_measures_and_histories(
+    thermal_process_model: "ThermalProcessModel",
+):
     sensor = SampledDelayedSensor(
         measurement_tag="temperature",
         alias_tag="reactor_temperature",
@@ -44,7 +50,7 @@ def test_sampled_delayed_sensor_measures_and_histories(thermal_process_model):
 
     # Step to 0.25 (half sample period) - should hold value
     # But wait, we need to update process model first to see a change IF it sampled
-    system.process_model.temperature = 320.0
+    thermal_process_model.temperature = 320.0
     system.step(duration=0.25)
 
     # Sensor logic: if t < last + period, return holding value
@@ -79,7 +85,9 @@ def test_sampled_delayed_sensor_measures_and_histories(thermal_process_model):
     assert sensor.alias_tag == "reactor_temperature"
 
 
-def test_pid_controller_updates_manipulated_variable(thermal_process_model):
+def test_pid_controller_updates_manipulated_variable(
+    thermal_process_model: "ThermalProcessModel",
+):
     # Setup: Sensor for PV, Sensor for MV (optional, but good for tracking),
     # ControlElement with PIDController
 
@@ -93,7 +101,7 @@ def test_pid_controller_updates_manipulated_variable(thermal_process_model):
     controller = PIDController(
         cv_tag="temperature",
         cv_range=(200.0, 400.0),
-        sp_trajectory=Trajectory(y0=310.0),  # SP = 310
+        reference_trajectory=Trajectory(y0=310.0),  # SP = 310
         Kp=2.0,
         Ti=5.0,
     )
@@ -141,11 +149,11 @@ def test_pid_controller_updates_manipulated_variable(thermal_process_model):
     # Let's just verify it MOVES in the right direction
     # Heater power should increase because T(300) < SP(310)
 
-    assert system.process_model.heater_power > 0.0
+    assert thermal_process_model.heater_power > 0.0
 
     # Check that control element updated
-    assert control_element._mv_point.data.value == pytest.approx(system.process_model.heater_power)
+    assert control_element._mv_point.data.value == pytest.approx(thermal_process_model.heater_power)
 
     # Check controller internals (public access has changed to PrivateAttr for state)
     # We can check the point data in tag_store
-    assert system.point_registry["temperature.sp"].data.value == 310.0
+    assert system.point_registry["temperature.ref"].data.value == 310.0

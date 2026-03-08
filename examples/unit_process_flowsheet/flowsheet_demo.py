@@ -17,8 +17,8 @@ def run_flowsheet_demo(
     fs = Flowsheet(
         context=SimulationRuntimeContext.create(species_names=["methane", "n-heptane"]), dt=dt
     )
-    heater = HeaterCooler(mode="temperature", target_temperature_setpoint=350.0)
-    flash = FlashDrum(flash_temperature_setpoint=330.0)
+    heater = HeaterCooler(mode="duty", external_heat_duty=0.0)
+    flash = FlashDrum(imposed_temperature=330.0)
     vapor_trim, liquid_trim = HeaterCooler(), HeaterCooler()
     fs.add_unit("heater", heater)
     fs.add_unit("flash", flash)
@@ -31,11 +31,14 @@ def run_flowsheet_demo(
     sys = fs.get_system("heater")
     traj = c.Trajectory(y0=0.0)
     sensor = c.SampledDelayedSensor(measurement_tag="outlet_temperature", alias_tag="T", unit="K")
-    pid = c.PIDController(cv_tag="T", cv_range=(0.0, 1.0), sp_trajectory=traj, Kp=1.0)
+    pid = c.PIDController(cv_tag="T", cv_range=(250.0, 400.0), reference_trajectory=traj, Kp=1.0)
     _ = sys.add_component(sensor)
     _ = sys.add_component(
         c.ControlElement(
-            mv_tag="duty_setpoint", mv_range=(-1.0, 1.0), mv_trajectory=traj, controller=pid
+            mv_tag="external_heat_duty",
+            mv_range=(-1.0, 1.0),
+            mv_trajectory=traj,
+            controller=pid,
         )
     )
     _ = fs.compile()

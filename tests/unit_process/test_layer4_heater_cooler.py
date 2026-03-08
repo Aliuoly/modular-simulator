@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportAny=false, reportExplicitAny=false, reportUnknownMemberType=false
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false
 
 from types import SimpleNamespace
 from typing import Any, cast
@@ -70,7 +70,7 @@ def test_heater_duty_mode_energy_balance() -> None:
         inlet_pressure=200000.0,
         inlet_composition=np.array([0.7, 0.3], dtype=np.float64),
         pressure_drop=5000.0,
-        duty_setpoint=1000.0,
+        external_heat_duty=1000.0,
     )
     heater.set_property_package(cast(Any, package))
     _attach(heater)
@@ -98,7 +98,7 @@ def test_cooler_temperature_mode_computes_duty() -> None:
         inlet_pressure=160000.0,
         inlet_composition=np.array([0.4, 0.6], dtype=np.float64),
         pressure_drop=2000.0,
-        target_temperature_setpoint=320.0,
+        external_outlet_temperature=320.0,
     )
     cooler.set_property_package(cast(Any, package))
     _attach(cooler)
@@ -123,7 +123,7 @@ def test_zero_duty_leaves_state_unchanged() -> None:
         inlet_pressure=101325.0,
         inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
         pressure_drop=0.0,
-        duty_setpoint=0.0,
+        external_heat_duty=0.0,
     )
     heater.set_property_package(cast(Any, package))
     _attach(heater)
@@ -148,7 +148,7 @@ def test_outlet_pressure_applies_drop_with_positive_floor() -> None:
         inlet_pressure=5.0,
         inlet_composition=np.array([0.2, 0.8], dtype=np.float64),
         pressure_drop=100.0,
-        target_temperature_setpoint=320.0,
+        external_outlet_temperature=320.0,
     )
     cooler.set_property_package(cast(Any, package))
     _attach(cooler)
@@ -171,3 +171,39 @@ def test_negative_inlet_flow_raises() -> None:
             inlet_flow=-1.0,
             inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
         )
+
+
+def test_heater_cooler_uses_external_boundary_names_not_controller_proxies() -> None:
+    heater = HeaterCooler(mode="temperature", n_species=2)
+
+    assert "pressure_drop" not in heater.controlled_view.state_list
+    assert "external_heat_duty" not in heater.controlled_view.state_list
+    assert "external_outlet_temperature" not in heater.controlled_view.state_list
+    assert "duty_setpoint" not in heater.state_list
+    assert "target_temperature_setpoint" not in heater.state_list
+    assert "external_heat_duty" in heater.constant_view.state_list
+    assert "external_outlet_temperature" in heater.constant_view.state_list
+
+
+def test_legacy_setpoint_inputs_warn_and_normalize() -> None:
+    with pytest.warns(
+        DeprecationWarning, match="duty_setpoint is deprecated; use external_heat_duty"
+    ):
+        with pytest.warns(
+            DeprecationWarning,
+            match="target_temperature_setpoint is deprecated; use external_outlet_temperature",
+        ):
+            heater = HeaterCooler(
+                **cast(
+                    Any,
+                    {
+                        "mode": "temperature",
+                        "n_species": 2,
+                        "duty_setpoint": 123.0,
+                        "target_temperature_setpoint": 345.0,
+                    },
+                )
+            )
+
+    assert heater.external_heat_duty == pytest.approx(123.0)
+    assert heater.external_outlet_temperature == pytest.approx(345.0)
