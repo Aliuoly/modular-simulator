@@ -2,6 +2,8 @@
 
 import math
 
+import modular_simulation.thermodynamics.property_package as property_package_module
+
 from modular_simulation.thermodynamics.property_package import (
     PengRobinsonPackage,
     create_property_package,
@@ -58,6 +60,15 @@ def test_flash_methods_expose_cache_info_with_hits() -> None:
     info = package.flash_tp.cache_info()
     assert info.hits >= 1
     assert info.maxsize == 128
+
+
+def test_peng_robinson_owns_private_preprocessing_helpers() -> None:
+    assert hasattr(PengRobinsonPackage, "_as_finite_float")
+    assert hasattr(PengRobinsonPackage, "_round_composition")
+    assert hasattr(PengRobinsonPackage, "_normalize_composition")
+    assert not hasattr(property_package_module, "_as_finite_float")
+    assert not hasattr(property_package_module, "_round_composition")
+    assert not hasattr(property_package_module, "_normalize_composition")
 
 
 def test_pure_water_near_boiling_condition_returns_high_vapor_fraction() -> None:

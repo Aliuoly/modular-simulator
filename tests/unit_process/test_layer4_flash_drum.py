@@ -1,19 +1,25 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false, reportAny=false, reportExplicitAny=false
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false
 
-from types import SimpleNamespace
-from typing import Any, cast
+from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 import pytest
 
+from modular_simulation.framework.system import System
 from modular_simulation.thermodynamics.property_package import PengRobinsonPackage
 from modular_simulation.unit_processes import FlashDrum
 
 
+@dataclass
+class _StubSystem:
+    solver_options: dict[str, object]
+
+
 def _attach(model: FlashDrum) -> None:
-    model.attach_system(cast(Any, SimpleNamespace(solver_options={})))
+    model.attach_system(cast(System, cast(object, _StubSystem(solver_options={}))))
 
 
 @pytest.fixture(scope="module")
@@ -56,7 +62,7 @@ def test_binary_isothermal_flash(binary_package: PengRobinsonPackage) -> None:
 
 
 def test_adiabatic_flash_energy(binary_package: PengRobinsonPackage) -> None:
-    z = (0.5, 0.5)
+    z = (0.5000004, 0.4999996)
     inlet_flash = binary_package.flash_tp(T=350.0, P=101325.0, z=z)
 
     drum = FlashDrum(
@@ -78,8 +84,10 @@ def test_adiabatic_flash_energy(binary_package: PengRobinsonPackage) -> None:
     assert drum.outlet_temperature == pytest.approx(expected.temperature, abs=1.0e-6)
     assert drum.vapor_fraction == pytest.approx(expected.vapor_fraction, abs=1.0e-8)
 
-    y = tuple(float(value) for value in np.asarray(drum.vapor_composition, dtype=np.float64))
-    x = tuple(float(value) for value in np.asarray(drum.liquid_composition, dtype=np.float64))
+    y_array = cast(np.ndarray[tuple[int], np.dtype[np.float64]], drum.vapor_composition)
+    x_array = cast(np.ndarray[tuple[int], np.dtype[np.float64]], drum.liquid_composition)
+    y = tuple(float(value) for value in y_array)
+    x = tuple(float(value) for value in x_array)
     vf = float(drum.vapor_fraction)
     h_v = binary_package.enthalpy(T=drum.outlet_temperature, P=85000.0, z=y, phase="vapor")
     h_l = binary_package.enthalpy(T=drum.outlet_temperature, P=85000.0, z=x, phase="liquid")

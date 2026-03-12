@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # pyright: reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportMissingTypeArgument=false
 
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -167,3 +168,20 @@ def test_shortcut_distillation_accepts_legacy_configured_specs_with_warning() ->
     assert column.configured_heavy_key_bottoms_recovery_target == pytest.approx(0.94)
     assert column.configured_minimum_reflux_ratio_factor == pytest.approx(1.7)
     assert column.configured_reflux_ratio_target == pytest.approx(0.0)
+
+
+def test_shortcut_distillation_helper_cluster_is_class_owned() -> None:
+    module_path = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "modular_simulation"
+        / "unit_processes"
+        / "shortcut_distillation.py"
+    )
+    module_text = module_path.read_text(encoding="utf-8")
+    class_prefix = module_text.split("class ShortcutDistillation", 1)[0]
+
+    assert hasattr(ShortcutDistillation, "_solve_underwood_theta")
+    assert hasattr(ShortcutDistillation, "_fenske_n_min")
+    assert "def _solve_underwood_theta" not in class_prefix
+    assert "def _fenske_n_min" not in class_prefix

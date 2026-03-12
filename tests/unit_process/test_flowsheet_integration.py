@@ -335,3 +335,12 @@ def test_flash_imposed_pressure_boundary_changes_phase_split_dynamics() -> None:
     assert float(drum.outlet_pressure) == pytest.approx(85000.0, abs=1.0e-9)
     assert high_pressure_vf == pytest.approx(0.0, abs=1.0e-12)
     assert low_pressure_vf > high_pressure_vf
+
+
+def test_runtime_context_factory_preserves_sanctioned_property_package_api() -> None:
+    context = SimulationRuntimeContext.create(species_names=["ethanol", "water"])
+
+    package = context.get_property_package()
+
+    assert isinstance(package, PengRobinsonPackage)
+    assert package.species_cas == context.species_registry.cas_list

@@ -15,7 +15,6 @@ from modular_simulation.connection.hydraulic_element import (
 from modular_simulation.connection.hydraulic_solver import (
     ElementEquation,
     HydraulicSystemDefinition,
-    solve_hydraulic_system,
 )
 from modular_simulation.thermodynamics.hydraulic_adapters import (
     default_pipe_hydraulic_parameters,
@@ -138,8 +137,7 @@ def test_network_hydraulic_solve() -> None:
     )
     system = HydraulicSystemDefinition(equations=equations)
 
-    result = solve_hydraulic_system(
-        system,
+    result = system.solve(
         initial_unknowns=MappingProxyType(
             {
                 "heater_flow": 0.0,

@@ -29,151 +29,6 @@ _ROOT_EPSILON = 1.0e-9
 SHORTCUT_DISTILLATION_PORTS = UnitProcessPorts(("inlet",), ("distillate", "bottoms"))
 
 
-def _vector_from_state(values: NDArray[np.float64], index: ArrayIndex) -> NDArray[np.float64]:
-    return np.asarray(values[index], dtype=np.float64).reshape(-1)
-
-
-def _coerce_vector(
-    value: NDArray[np.float64], *, expected_size: int, name: str, default: float
-) -> NDArray[np.float64]:
-    vector = np.asarray(value, dtype=np.float64).reshape(-1)
-    if vector.size == 0:
-        return np.full(expected_size, default, dtype=np.float64)
-    if vector.size != expected_size:
-        raise ValueError(f"{name} length mismatch: expected {expected_size}, got {vector.size}.")
-    return vector
-
-
-def _validate_composition(composition: NDArray[np.float64], *, name: str) -> None:
-    if not np.all(np.isfinite(composition)):
-        raise ValueError(f"{name} must contain only finite values.")
-    if np.any(composition < 0.0):
-        raise ValueError(f"{name} must contain non-negative values.")
-    if abs(float(np.sum(composition)) - 1.0) > _COMPOSITION_TOL:
-        raise ValueError(f"{name} must sum to 1.0.")
-
-
-def _validate_recovery(value: float, name: str) -> None:
-    if not isfinite(value) or value <= 0.0 or value >= 1.0:
-        raise ValueError(f"{name} must be finite and strictly within (0, 1).")
-
-
-def _safe_normalize(
-    flow_vector: NDArray[np.float64], fallback: NDArray[np.float64]
-) -> NDArray[np.float64]:
-    flow_vector = np.clip(np.asarray(flow_vector, dtype=np.float64), 0.0, None)
-    total = float(np.sum(flow_vector))
-    if total <= _FLOW_EPSILON:
-        return fallback.copy()
-    return flow_vector / total
-
-
-def _extract_k_values(flash: FlashResult, n_species: int) -> NDArray[np.float64]:
-    if flash.K_values is not None and len(flash.K_values) == n_species:
-        k = np.asarray(flash.K_values, dtype=np.float64)
-    elif flash.vapor_composition is not None and flash.liquid_composition is not None:
-        y = np.asarray(flash.vapor_composition, dtype=np.float64)
-        x = np.asarray(flash.liquid_composition, dtype=np.float64)
-        if y.size != n_species or x.size != n_species:
-            raise ValueError("Flash composition size mismatch while extracting K-values.")
-        k = y / np.maximum(x, _SMALL_POSITIVE)
-    else:
-        raise ValueError(
-            "Unable to estimate K-values from property package; flash result did not provide K_values "
-            + "or both vapor/liquid compositions."
-        )
-
-    if not np.all(np.isfinite(k)) or np.any(k <= 0.0):
-        raise ValueError("Estimated K-values must be finite and positive.")
-    return np.clip(k, _SMALL_POSITIVE, 1.0e12)
-
-
-def _fenske_n_min(
-    *, x_d_lk: float, x_b_lk: float, x_d_hk: float, x_b_hk: float, alpha_lk: float
-) -> float:
-    if alpha_lk <= 1.0:
-        raise ValueError(
-            "Light-key relative volatility must be greater than 1 for Fenske equation."
-        )
-    numerator = (x_d_lk / max(x_b_lk, _SMALL_POSITIVE)) * (x_b_hk / max(x_d_hk, _SMALL_POSITIVE))
-    if numerator <= 1.0:
-        raise ValueError("Fenske equation produced non-physical separation term (<= 1).")
-    return max(_SMALL_POSITIVE, log(numerator) / log(alpha_lk))
-
-
-def _underwood_function(
-    theta: float, z: NDArray[np.float64], alpha: NDArray[np.float64], q: float
-) -> float:
-    denominator = alpha - theta
-    signed_denominator = np.where(
-        np.abs(denominator) < _SMALL_POSITIVE,
-        np.where(denominator >= 0.0, _SMALL_POSITIVE, -_SMALL_POSITIVE),
-        denominator,
-    )
-    return float(np.sum(z * alpha / signed_denominator) - (1.0 - q))
-
-
-def _solve_underwood_theta(
-    *,
-    z: NDArray[np.float64],
-    alpha: NDArray[np.float64],
-    q: float,
-    alpha_hk: float,
-    alpha_lk: float,
-) -> float:
-    if alpha_lk <= alpha_hk:
-        raise ValueError("Expected alpha_lk > alpha_hk while solving Underwood root.")
-
-    poles = sorted(float(value) for value in alpha if alpha_hk < float(value) < alpha_lk)
-    boundaries = [alpha_hk + _ROOT_EPSILON, *poles, alpha_lk - _ROOT_EPSILON]
-    for left_raw, right_raw in zip(boundaries[:-1], boundaries[1:]):
-        left = left_raw + _ROOT_EPSILON
-        right = right_raw - _ROOT_EPSILON
-        if left >= right:
-            continue
-
-        f_left = _underwood_function(left, z, alpha, q)
-        f_right = _underwood_function(right, z, alpha, q)
-        if not isfinite(f_left) or not isfinite(f_right):
-            continue
-        if f_left == 0.0:
-            return left
-        if f_right == 0.0:
-            return right
-        if f_left * f_right > 0.0:
-            continue
-
-        lo = left
-        hi = right
-        flo = f_left
-        for _ in range(200):
-            mid = 0.5 * (lo + hi)
-            f_mid = _underwood_function(mid, z, alpha, q)
-            if not isfinite(f_mid):
-                break
-            if abs(f_mid) < 1.0e-10 or abs(hi - lo) < 1.0e-10:
-                return mid
-            if flo * f_mid <= 0.0:
-                hi = mid
-            else:
-                lo = mid
-                flo = f_mid
-        return 0.5 * (lo + hi)
-
-    raise ValueError(
-        "Underwood root not found in (alpha_HK, alpha_LK). Check recoveries, key components, "
-        + "and feed thermodynamic state."
-    )
-
-
-def _gilliland_n_actual(n_min: float, r_min: float, r_actual: float) -> float:
-    x = (r_actual - r_min) / (r_actual + 1.0)
-    x = min(max(x, 1.0e-9), 1.0 - 1.0e-9)
-    y = 1.0 - exp(((1.0 + 54.4 * x) / (11.0 + 117.2 * x)) * ((x - 1.0) / sqrt(x)))
-    y = min(max(y, 1.0e-9), 1.0 - 1.0e-9)
-    return max(n_min + 1.0e-6, (n_min + y) / (1.0 - y))
-
-
 class ShortcutDistillation(AlgebraicProcessModel):
     _INLET_MAP: ClassVar[dict[str, PortAttributeMap]] = {
         "inlet": PortAttributeMap(
@@ -318,6 +173,155 @@ class ShortcutDistillation(AlgebraicProcessModel):
     _reboiler_temperature: float = PrivateAttr(default=298.15)
     _reboiler_pressure: float = PrivateAttr(default=101325.0)
 
+    @staticmethod
+    def _vector_from_state(values: NDArray[np.float64], index: ArrayIndex) -> NDArray[np.float64]:
+        return np.asarray(values[index], dtype=np.float64).reshape(-1)
+
+    @staticmethod
+    def _coerce_vector(
+        value: NDArray[np.float64], *, expected_size: int, name: str, default: float
+    ) -> NDArray[np.float64]:
+        vector = np.asarray(value, dtype=np.float64).reshape(-1)
+        if vector.size == 0:
+            return np.full(expected_size, default, dtype=np.float64)
+        if vector.size != expected_size:
+            raise ValueError(
+                f"{name} length mismatch: expected {expected_size}, got {vector.size}."
+            )
+        return vector
+
+    @staticmethod
+    def _validate_composition(composition: NDArray[np.float64], *, name: str) -> None:
+        if not np.all(np.isfinite(composition)):
+            raise ValueError(f"{name} must contain only finite values.")
+        if np.any(composition < 0.0):
+            raise ValueError(f"{name} must contain non-negative values.")
+        if abs(float(np.sum(composition)) - 1.0) > _COMPOSITION_TOL:
+            raise ValueError(f"{name} must sum to 1.0.")
+
+    @staticmethod
+    def _validate_recovery(value: float, name: str) -> None:
+        if not isfinite(value) or value <= 0.0 or value >= 1.0:
+            raise ValueError(f"{name} must be finite and strictly within (0, 1).")
+
+    @staticmethod
+    def _safe_normalize(
+        flow_vector: NDArray[np.float64], fallback: NDArray[np.float64]
+    ) -> NDArray[np.float64]:
+        flow_vector = np.clip(np.asarray(flow_vector, dtype=np.float64), 0.0, None)
+        total = float(np.sum(flow_vector))
+        if total <= _FLOW_EPSILON:
+            return fallback.copy()
+        return flow_vector / total
+
+    @staticmethod
+    def _extract_k_values(flash: FlashResult, n_species: int) -> NDArray[np.float64]:
+        if flash.K_values is not None and len(flash.K_values) == n_species:
+            k = np.asarray(flash.K_values, dtype=np.float64)
+        elif flash.vapor_composition is not None and flash.liquid_composition is not None:
+            y = np.asarray(flash.vapor_composition, dtype=np.float64)
+            x = np.asarray(flash.liquid_composition, dtype=np.float64)
+            if y.size != n_species or x.size != n_species:
+                raise ValueError("Flash composition size mismatch while extracting K-values.")
+            k = y / np.maximum(x, _SMALL_POSITIVE)
+        else:
+            raise ValueError(
+                "Unable to estimate K-values from property package; flash result did not provide K_values "
+                + "or both vapor/liquid compositions."
+            )
+
+        if not np.all(np.isfinite(k)) or np.any(k <= 0.0):
+            raise ValueError("Estimated K-values must be finite and positive.")
+        return np.clip(k, _SMALL_POSITIVE, 1.0e12)
+
+    @staticmethod
+    def _fenske_n_min(
+        *, x_d_lk: float, x_b_lk: float, x_d_hk: float, x_b_hk: float, alpha_lk: float
+    ) -> float:
+        if alpha_lk <= 1.0:
+            raise ValueError(
+                "Light-key relative volatility must be greater than 1 for Fenske equation."
+            )
+        numerator = (x_d_lk / max(x_b_lk, _SMALL_POSITIVE)) * (
+            x_b_hk / max(x_d_hk, _SMALL_POSITIVE)
+        )
+        if numerator <= 1.0:
+            raise ValueError("Fenske equation produced non-physical separation term (<= 1).")
+        return max(_SMALL_POSITIVE, log(numerator) / log(alpha_lk))
+
+    @staticmethod
+    def _underwood_function(
+        theta: float, z: NDArray[np.float64], alpha: NDArray[np.float64], q: float
+    ) -> float:
+        denominator = alpha - theta
+        signed_denominator = np.where(
+            np.abs(denominator) < _SMALL_POSITIVE,
+            np.where(denominator >= 0.0, _SMALL_POSITIVE, -_SMALL_POSITIVE),
+            denominator,
+        )
+        return float(np.sum(z * alpha / signed_denominator) - (1.0 - q))
+
+    @staticmethod
+    def _solve_underwood_theta(
+        *,
+        z: NDArray[np.float64],
+        alpha: NDArray[np.float64],
+        q: float,
+        alpha_hk: float,
+        alpha_lk: float,
+    ) -> float:
+        if alpha_lk <= alpha_hk:
+            raise ValueError("Expected alpha_lk > alpha_hk while solving Underwood root.")
+
+        poles = sorted(float(value) for value in alpha if alpha_hk < float(value) < alpha_lk)
+        boundaries = [alpha_hk + _ROOT_EPSILON, *poles, alpha_lk - _ROOT_EPSILON]
+        for left_raw, right_raw in zip(boundaries[:-1], boundaries[1:]):
+            left = left_raw + _ROOT_EPSILON
+            right = right_raw - _ROOT_EPSILON
+            if left >= right:
+                continue
+
+            f_left = ShortcutDistillation._underwood_function(left, z, alpha, q)
+            f_right = ShortcutDistillation._underwood_function(right, z, alpha, q)
+            if not isfinite(f_left) or not isfinite(f_right):
+                continue
+            if f_left == 0.0:
+                return left
+            if f_right == 0.0:
+                return right
+            if f_left * f_right > 0.0:
+                continue
+
+            lo = left
+            hi = right
+            flo = f_left
+            for _ in range(200):
+                mid = 0.5 * (lo + hi)
+                f_mid = ShortcutDistillation._underwood_function(mid, z, alpha, q)
+                if not isfinite(f_mid):
+                    break
+                if abs(f_mid) < 1.0e-10 or abs(hi - lo) < 1.0e-10:
+                    return mid
+                if flo * f_mid <= 0.0:
+                    hi = mid
+                else:
+                    lo = mid
+                    flo = f_mid
+            return 0.5 * (lo + hi)
+
+        raise ValueError(
+            "Underwood root not found in (alpha_HK, alpha_LK). Check recoveries, key components, "
+            + "and feed thermodynamic state."
+        )
+
+    @staticmethod
+    def _gilliland_n_actual(n_min: float, r_min: float, r_actual: float) -> float:
+        x = (r_actual - r_min) / (r_actual + 1.0)
+        x = min(max(x, 1.0e-9), 1.0 - 1.0e-9)
+        y = 1.0 - exp(((1.0 + 54.4 * x) / (11.0 + 117.2 * x)) * ((x - 1.0) / sqrt(x)))
+        y = min(max(y, 1.0e-9), 1.0 - 1.0e-9)
+        return max(n_min + 1.0e-6, (n_min + y) / (1.0 - y))
+
     @model_validator(mode="before")
     @classmethod
     def _normalize_legacy_configured_specs(cls, data: object) -> object:
@@ -364,11 +368,11 @@ class ShortcutDistillation(AlgebraicProcessModel):
         if not isfinite(self.inlet_pressure) or self.inlet_pressure <= 0.0:
             raise ValueError("inlet_pressure must be finite and positive.")
 
-        _validate_recovery(
+        self._validate_recovery(
             self.configured_light_key_distillate_recovery_target,
             "configured_light_key_distillate_recovery_target",
         )
-        _validate_recovery(
+        self._validate_recovery(
             self.configured_heavy_key_bottoms_recovery_target,
             "configured_heavy_key_bottoms_recovery_target",
         )
@@ -386,32 +390,32 @@ class ShortcutDistillation(AlgebraicProcessModel):
         ):
             raise ValueError("configured_reflux_ratio_target must be finite and non-negative.")
 
-        self.inlet_composition = _coerce_vector(
+        self.inlet_composition = self._coerce_vector(
             self.inlet_composition,
             expected_size=self.n_species,
             name="inlet_composition",
             default=1.0 / float(self.n_species),
         )
-        self.distillate_composition = _coerce_vector(
+        self.distillate_composition = self._coerce_vector(
             self.distillate_composition,
             expected_size=self.n_species,
             name="distillate_composition",
             default=1.0 / float(self.n_species),
         )
-        self.bottoms_composition = _coerce_vector(
+        self.bottoms_composition = self._coerce_vector(
             self.bottoms_composition,
             expected_size=self.n_species,
             name="bottoms_composition",
             default=1.0 / float(self.n_species),
         )
-        self.relative_volatility = _coerce_vector(
+        self.relative_volatility = self._coerce_vector(
             self.relative_volatility,
             expected_size=self.n_species,
             name="relative_volatility",
             default=1.0,
         )
 
-        _validate_composition(
+        self._validate_composition(
             np.asarray(self.inlet_composition, dtype=np.float64), name="inlet_composition"
         )
         self._condenser_temperature = float(self.inlet_temperature)
@@ -529,7 +533,7 @@ class ShortcutDistillation(AlgebraicProcessModel):
         inlet_flow = float(u[u_map["inlet_flow"]])
         inlet_temperature = float(u[u_map["inlet_temperature"]])
         inlet_pressure = float(u[u_map["inlet_pressure"]])
-        z = _vector_from_state(u, u_map["inlet_composition"])
+        z = ShortcutDistillation._vector_from_state(u, u_map["inlet_composition"])
         lk_rec = float(k[k_map["configured_light_key_distillate_recovery_target"]])
         hk_bottoms_rec = float(k[k_map["configured_heavy_key_bottoms_recovery_target"]])
 
@@ -544,9 +548,13 @@ class ShortcutDistillation(AlgebraicProcessModel):
                 f"inlet_composition length mismatch: expected {n_species}, got {z.size}."
             )
 
-        _validate_composition(z, name="inlet_composition")
-        _validate_recovery(lk_rec, "configured_light_key_distillate_recovery_target")
-        _validate_recovery(hk_bottoms_rec, "configured_heavy_key_bottoms_recovery_target")
+        ShortcutDistillation._validate_composition(z, name="inlet_composition")
+        ShortcutDistillation._validate_recovery(
+            lk_rec, "configured_light_key_distillate_recovery_target"
+        )
+        ShortcutDistillation._validate_recovery(
+            hk_bottoms_rec, "configured_heavy_key_bottoms_recovery_target"
+        )
 
         feed_components = inlet_flow * z
         recovery = np.full(n_species, 0.5, dtype=np.float64)
@@ -558,8 +566,8 @@ class ShortcutDistillation(AlgebraicProcessModel):
         distillate_flow = float(np.sum(distillate_component))
         bottoms_flow = float(np.sum(bottoms_component))
 
-        distillate_comp = _safe_normalize(distillate_component, z)
-        bottoms_comp = _safe_normalize(bottoms_component, z)
+        distillate_comp = ShortcutDistillation._safe_normalize(distillate_component, z)
+        bottoms_comp = ShortcutDistillation._safe_normalize(bottoms_component, z)
 
         result = np.zeros(algebraic_size, dtype=np.float64)
         result[algebraic_map["distillate_flow"]] = distillate_flow
@@ -590,7 +598,7 @@ class ShortcutDistillation(AlgebraicProcessModel):
             return
 
         z = np.asarray(self.inlet_composition, dtype=np.float64)
-        _validate_composition(z, name="inlet_composition")
+        self._validate_composition(z, name="inlet_composition")
         feed_flow = float(self.inlet_flow)
         if feed_flow <= _FLOW_EPSILON:
             self.distillate_flow = 0.0
@@ -617,7 +625,7 @@ class ShortcutDistillation(AlgebraicProcessModel):
             P=float(self.inlet_pressure),
             z=tuple(cast(list[float], z.tolist())),
         )
-        k_values = _extract_k_values(flash, int(self.n_species))
+        k_values = self._extract_k_values(flash, int(self.n_species))
 
         k_hk = float(k_values[hk])
         if k_hk <= 0.0:
@@ -664,10 +672,10 @@ class ShortcutDistillation(AlgebraicProcessModel):
                 "Shortcut distillation produced a degenerate split with near-zero product flow."
             )
 
-        x_d = _safe_normalize(distillate_component, z)
-        x_b = _safe_normalize(bottoms_component, z)
+        x_d = self._safe_normalize(distillate_component, z)
+        x_b = self._safe_normalize(bottoms_component, z)
 
-        n_min = _fenske_n_min(
+        n_min = self._fenske_n_min(
             x_d_lk=float(x_d[lk]),
             x_b_lk=float(x_b[lk]),
             x_d_hk=float(x_d[hk]),
@@ -676,7 +684,7 @@ class ShortcutDistillation(AlgebraicProcessModel):
         )
 
         q = min(max(1.0 - float(flash.vapor_fraction), 0.0), 1.0)
-        theta = _solve_underwood_theta(
+        theta = self._solve_underwood_theta(
             z=z,
             alpha=alpha,
             q=q,
@@ -703,7 +711,7 @@ class ShortcutDistillation(AlgebraicProcessModel):
         if r_actual <= r_min:
             raise ValueError("R_actual must be greater than R_min for Gilliland stage estimation.")
 
-        n_actual = _gilliland_n_actual(n_min, r_min, r_actual)
+        n_actual = self._gilliland_n_actual(n_min, r_min, r_actual)
         if n_actual <= n_min:
             raise ValueError("N_actual must be greater than N_min for physical feasibility.")
 
