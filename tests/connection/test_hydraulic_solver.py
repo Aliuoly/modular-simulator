@@ -17,10 +17,6 @@ ElementUnknownSpec = hydraulic_element.ElementUnknownSpec
 ElementEquation = hydraulic_solver.ElementEquation
 HydraulicSystemDefinition = hydraulic_solver.HydraulicSystemDefinition
 SparseJacobianTriplet = hydraulic_solver.SparseJacobianTriplet
-assemble_sparse_jacobian_triplet = hydraulic_solver.assemble_sparse_jacobian_triplet
-assemble_unknown_vector = hydraulic_solver.assemble_unknown_vector
-solve_hydraulic_system = hydraulic_solver.solve_hydraulic_system
-triplet_to_dense = hydraulic_solver.triplet_to_dense
 
 
 @dataclass(frozen=True)
@@ -110,8 +106,7 @@ def _build_affine_system() -> HydraulicSystemDefinition:
 def test_solver_converges_on_small_deterministic_network() -> None:
     system = _build_affine_system()
 
-    result = solve_hydraulic_system(
-        system,
+    result = system.solve(
         initial_unknowns=MappingProxyType({"flow_a": 0.0, "flow_b": 0.0}),
         tolerance=1.0e-12,
         max_iterations=10,
@@ -127,14 +122,12 @@ def test_solver_converges_on_small_deterministic_network() -> None:
 def test_warm_start_does_not_increase_iteration_count() -> None:
     system = _build_affine_system()
 
-    cold_start = solve_hydraulic_system(
-        system,
+    cold_start = system.solve(
         initial_unknowns=MappingProxyType({"flow_a": 0.0, "flow_b": 0.0}),
         tolerance=1.0e-12,
         max_iterations=10,
     )
-    warm_start = solve_hydraulic_system(
-        system,
+    warm_start = system.solve(
         warm_start=cold_start.solution_vector,
         tolerance=1.0e-12,
         max_iterations=10,
@@ -159,10 +152,9 @@ def test_sparse_jacobian_assembly_uses_element_derivative_entries() -> None:
         unknown_order=("flow_rate",),
         residual_order=("head_balance",),
     )
-    unknown_vector = assemble_unknown_vector(system, MappingProxyType({"flow_rate": 12.0}))
+    unknown_vector = system.assemble_unknown_vector(MappingProxyType({"flow_rate": 12.0}))
 
-    triplet, unknown_index_map, residual_index_map = assemble_sparse_jacobian_triplet(
-        system,
+    triplet, unknown_index_map, residual_index_map = system.assemble_sparse_jacobian_triplet(
         unknown_vector,
     )
 
@@ -173,4 +165,4 @@ def test_sparse_jacobian_assembly_uses_element_derivative_entries() -> None:
     assert triplet.rows == (0,)
     assert triplet.cols == (0,)
     assert triplet.data == pytest.approx((7.5,))
-    assert triplet_to_dense(triplet)[0, 0] == pytest.approx(7.5)
+    assert triplet.to_dense()[0, 0] == pytest.approx(7.5)

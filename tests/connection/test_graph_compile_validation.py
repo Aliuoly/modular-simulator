@@ -9,7 +9,6 @@ from modular_simulation.connection.hydraulic_compile import (
     GraphCompileDiagnostic,
     GraphCompileError,
     HydraulicCompileLifecycle,
-    compile_hydraulic_graph,
     resolve_line_resistance,
 )
 from modular_simulation.connection.hydraulic_solver import (
@@ -44,7 +43,8 @@ def _valid_system() -> HydraulicSystemDefinition:
 
 
 def test_compile_happy_path_validates_without_runtime_execution() -> None:
-    compiled = compile_hydraulic_graph(system=_valid_system(), graph_revision="rev-1")
+    lifecycle = HydraulicCompileLifecycle()
+    compiled = lifecycle.compile(system=_valid_system(), graph_revision="rev-1")
 
     assert compiled.graph_revision == "rev-1"
     assert compiled.unknown_order == ("flow_a", "flow_b", "pressure_a", "pressure_b")
@@ -61,9 +61,10 @@ def test_compile_missing_pressure_reference_has_deterministic_diagnostics() -> N
     )
 
     runs: list[tuple[GraphCompileDiagnostic, ...]] = []
+    lifecycle = HydraulicCompileLifecycle()
     for _ in range(2):
         with pytest.raises(GraphCompileError) as error:
-            _ = compile_hydraulic_graph(system=system, graph_revision="rev-bad")
+            _ = lifecycle.compile(system=system, graph_revision="rev-bad")
         runs.append(error.value.diagnostics)
 
     assert runs[0] == runs[1]
@@ -83,8 +84,9 @@ def test_compile_disconnected_invalid_topology_reports_component_stably() -> Non
         ),
     )
 
+    lifecycle = HydraulicCompileLifecycle()
     with pytest.raises(GraphCompileError) as error:
-        _ = compile_hydraulic_graph(system=system, graph_revision="rev-disconnected")
+        _ = lifecycle.compile(system=system, graph_revision="rev-disconnected")
 
     diagnostic = error.value.diagnostics[0]
     assert diagnostic.code == "missing_pressure_reference"
@@ -101,8 +103,9 @@ def test_compile_invalid_cardinality_reports_assertion_friendly_payload() -> Non
         ),
     )
 
+    lifecycle = HydraulicCompileLifecycle()
     with pytest.raises(GraphCompileError) as error:
-        _ = compile_hydraulic_graph(system=system, graph_revision="rev-cardinality")
+        _ = lifecycle.compile(system=system, graph_revision="rev-cardinality")
 
     diagnostic = error.value.diagnostics[0]
     assert diagnostic.code == "invalid_cardinality"

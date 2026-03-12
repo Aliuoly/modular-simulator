@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# pyright: reportMissingTypeStubs=false, reportPrivateUsage=false
+
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib import import_module
@@ -8,14 +10,10 @@ from math import isfinite
 from typing import TYPE_CHECKING, Protocol, cast
 
 from modular_simulation.connection.connection_layer import (
+    MacroCoupler,
     MacroStepBookkeeping,
     PicardIterationGateConfig,
     TransportAndMixingUpdate,
-    run_macro_coupling_step,
-)
-from modular_simulation.connection.hydraulic_compile import (
-    apply_valve_commands_to_compiled_graph,
-    solve_compiled_hydraulic_graph,
 )
 from modular_simulation.connection.hydraulic_solver import HydraulicSolveResult
 from modular_simulation.connection.network import (
@@ -469,13 +467,14 @@ class ConnectionRuntimeOrchestrator:
                     macro_step_time_s=macro_step_time_s,
                 )
 
-            macro_step_result = run_macro_coupling_step(
-                macro_step_time_s=macro_step_time_s,
-                macro_step_index=self._macro_step_index + 1,
+            macro_step_result = MacroCoupler(
                 hydraulic_solve_step=_hydraulic_solve,
                 transport_update_step=_transport_update,
                 boundary_propagation_step=_boundary_propagation,
                 picard_gate_config=self._picard_gate_config,
+            ).run(
+                macro_step_time_s=macro_step_time_s,
+                macro_step_index=self._macro_step_index + 1,
             )
             self._macro_step_index += 1
             self._simulation_time_s += macro_step_time_s
@@ -1292,13 +1291,10 @@ class ConnectionRuntimeOrchestrator:
         pending_valve_commands = network.consume_pending_valve_open_fraction_commands()
         hydraulic_graph = compiled.hydraulic
         if pending_valve_commands:
-            hydraulic_graph = apply_valve_commands_to_compiled_graph(
-                compiled=hydraulic_graph,
-                valve_commands=pending_valve_commands,
-            )
+            hydraulic_graph = hydraulic_graph.with_valve_commands(pending_valve_commands)
             network.replace_compiled_hydraulic(hydraulic=hydraulic_graph)
 
-        return solve_compiled_hydraulic_graph(hydraulic_graph)
+        return hydraulic_graph.solve()
 
     def _default_transport_and_mixing_step(
         self,

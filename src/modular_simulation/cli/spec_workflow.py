@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# pyright: reportMissingTypeStubs=false, reportPrivateUsage=false
+
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import json
@@ -222,62 +224,6 @@ def compile_spec_delta(*, network: ConnectionNetwork, spec_path: str) -> SpecDel
         update=tuple(update_mutations),
         transaction_batches=tuple(batches),
     )
-
-
-def apply_spec_delta(
-    *,
-    network: ConnectionNetwork,
-    spec_path: str,
-    macro_step_time_s: float = 0.0,
-) -> dict[str, object]:
-    if macro_step_time_s < 0.0 or not isfinite(macro_step_time_s):
-        raise ValueError("macro_step_time_s must be finite and non-negative")
-
-    delta = compile_spec_delta(network=network, spec_path=spec_path)
-    diff_payload = delta.as_mapping()
-    if not delta.transaction_batches:
-        return {
-            "diff": diff_payload,
-            "queued_request_ids": (),
-            "applied_request_ids": (),
-            "skipped_request_ids": (),
-            "graph_revision": _active_graph_revision(network),
-        }
-
-    baseline_snapshot = network.capture_reconfiguration_state()
-    baseline_revision = _active_graph_revision(network)
-    queued_request_ids: list[str] = []
-    try:
-        for batch_index, batch in enumerate(delta.transaction_batches, start=1):
-            payload: dict[str, object] = {
-                "operation": "spec_apply_batch",
-                "metadata": {
-                    "workflow": "spec_apply",
-                    "batch_name": batch.name,
-                    "batch_index": batch_index,
-                },
-                "mutations": [dict(mutation) for mutation in batch.mutations],
-            }
-            if baseline_revision is not None:
-                payload["expected_revision"] = baseline_revision
-            queued_request_ids.append(network.queue_reconfiguration(payload))
-
-        step_result = network.step(macro_step_time_s=macro_step_time_s)
-    except Exception as error:
-        network.restore_reconfiguration_state(baseline_snapshot)
-        raise SpecApplyError(f"spec apply rollback: {error}", diff=diff_payload) from error
-
-    barrier = getattr(step_result, "barrier_reconfiguration", None)
-    applied_request_ids = tuple(getattr(barrier, "applied_request_ids", ()))
-    skipped_request_ids = tuple(getattr(barrier, "skipped_request_ids", ()))
-    graph_revision = _active_graph_revision(network)
-    return {
-        "diff": diff_payload,
-        "queued_request_ids": tuple(queued_request_ids),
-        "applied_request_ids": applied_request_ids,
-        "skipped_request_ids": skipped_request_ids,
-        "graph_revision": graph_revision,
-    }
 
 
 def _load_spec_payload(spec_path: str) -> Mapping[str, object]:
@@ -762,11 +708,6 @@ def _compile_line_configuration_updates(
             )
 
 
-def _active_graph_revision(network: ConnectionNetwork) -> str | None:
-    compiled = network.compiled
-    return None if compiled is None else str(compiled.graph_revision)
-
-
 def _require_mapping(value: object, *, field_name: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{field_name} must be a mapping")
@@ -822,6 +763,5 @@ __all__ = [
     "SpecApplyError",
     "SpecDelta",
     "SpecTransactionBatch",
-    "apply_spec_delta",
     "compile_spec_delta",
 ]

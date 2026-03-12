@@ -68,6 +68,102 @@ class CompiledHydraulicGraph:
         default_factory=_empty_valve_state_mapping
     )
 
+    def build_solver_inputs(self) -> HydraulicSolverInputs:
+        system = HydraulicSystemDefinition(
+            equations=self.system.equations,
+            linear_residual_equations=self.system.linear_residual_equations,
+            unknown_order=self.unknown_order,
+            residual_order=self.residual_order,
+        )
+        unknown_index_map, residual_index_map = build_index_maps(system)
+        unknown_order = tuple(sorted(unknown_index_map, key=unknown_index_map.__getitem__))
+        residual_order = tuple(sorted(residual_index_map, key=residual_index_map.__getitem__))
+        return HydraulicSolverInputs(
+            graph_revision=self.graph_revision,
+            system=system,
+            unknown_order=unknown_order,
+            residual_order=residual_order,
+            unknown_index_map=unknown_index_map,
+            residual_index_map=residual_index_map,
+        )
+
+    def solve(
+        self,
+        *,
+        initial_unknowns: Mapping[str, float] | None = None,
+        warm_start: NDArray[np.float64] | None = None,
+        valve_commands: Mapping[str, float] | None = None,
+        tolerance: float = 1.0e-8,
+        max_iterations: int = 25,
+        min_damping: float = 1.0e-6,
+    ) -> HydraulicSolveResult:
+        compiled_for_solve = self
+        if valve_commands:
+            compiled_for_solve = self.with_valve_commands(valve_commands)
+
+        solver_inputs = compiled_for_solve.build_solver_inputs()
+        return solve_hydraulic_system(
+            solver_inputs.system,
+            initial_unknowns=initial_unknowns,
+            warm_start=warm_start,
+            tolerance=tolerance,
+            max_iterations=max_iterations,
+            min_damping=min_damping,
+        )
+
+    def with_valve_commands(self, valve_commands: Mapping[str, float]) -> CompiledHydraulicGraph:
+        if not valve_commands:
+            return self
+
+        normalized_valve_state_by_line = _normalize_compiled_valve_states(
+            valve_state_by_line=self.valve_state_by_line
+        )
+        next_valve_state_by_line: dict[str, CompiledValveHydraulicState] = dict(
+            normalized_valve_state_by_line
+        )
+
+        for line_id in sorted(valve_commands):
+            command_open_fraction = float(valve_commands[line_id])
+            state = normalized_valve_state_by_line.get(line_id)
+            if state is None:
+                known_lines = tuple(sorted(normalized_valve_state_by_line.keys()))
+                raise ValueError(
+                    "unknown valve command line_id {!r}; known valve lines are {!r}".format(
+                        line_id,
+                        known_lines,
+                    )
+                )
+            _validate_valve_open_fraction_command(
+                line_id=line_id,
+                open_fraction=command_open_fraction,
+                state=state,
+            )
+            next_valve_state_by_line[line_id] = CompiledValveHydraulicState(
+                line_id=state.line_id,
+                valve_id=state.valve_id,
+                equation_name=state.equation_name,
+                resistance_parameter_name=state.resistance_parameter_name,
+                resistance_when_open=state.resistance_when_open,
+                minimum_open_fraction=state.minimum_open_fraction,
+                maximum_open_fraction=state.maximum_open_fraction,
+                current_open_fraction=command_open_fraction,
+            )
+
+        normalized_next_valve_state_by_line = _normalize_compiled_valve_states(
+            valve_state_by_line=next_valve_state_by_line
+        )
+        system = _apply_compiled_valve_states_to_system(
+            system=self.system,
+            valve_state_by_line=normalized_next_valve_state_by_line,
+        )
+        return CompiledHydraulicGraph(
+            graph_revision=self.graph_revision,
+            system=system,
+            unknown_order=self.unknown_order,
+            residual_order=self.residual_order,
+            valve_state_by_line=normalized_next_valve_state_by_line,
+        )
+
 
 @dataclass(frozen=True)
 class HydraulicSolverInputs:
@@ -117,16 +213,26 @@ class HydraulicCompileLifecycle:
         *,
         system: HydraulicSystemDefinition,
         graph_revision: str,
+        valve_state_by_line: Mapping[str, CompiledValveHydraulicState] | None = None,
     ) -> CompiledHydraulicGraph:
-        return compile_hydraulic_graph(system=system, graph_revision=graph_revision)
+        return compile_hydraulic_graph(
+            system=system,
+            graph_revision=graph_revision,
+            valve_state_by_line=valve_state_by_line,
+        )
 
     def compile_candidate(
         self,
         *,
         system: HydraulicSystemDefinition,
         graph_revision: str,
+        valve_state_by_line: Mapping[str, CompiledValveHydraulicState] | None = None,
     ) -> CompiledHydraulicGraph:
-        return compile_hydraulic_graph(system=system, graph_revision=graph_revision)
+        return compile_hydraulic_graph(
+            system=system,
+            graph_revision=graph_revision,
+            valve_state_by_line=valve_state_by_line,
+        )
 
     def activate(self, compiled: CompiledHydraulicGraph) -> None:
         self._active_compiled = compiled
@@ -215,23 +321,7 @@ def compile_hydraulic_graph(
 
 
 def build_hydraulic_solver_inputs(compiled: CompiledHydraulicGraph) -> HydraulicSolverInputs:
-    system = HydraulicSystemDefinition(
-        equations=compiled.system.equations,
-        linear_residual_equations=compiled.system.linear_residual_equations,
-        unknown_order=compiled.unknown_order,
-        residual_order=compiled.residual_order,
-    )
-    unknown_index_map, residual_index_map = build_index_maps(system)
-    unknown_order = tuple(sorted(unknown_index_map, key=unknown_index_map.__getitem__))
-    residual_order = tuple(sorted(residual_index_map, key=residual_index_map.__getitem__))
-    return HydraulicSolverInputs(
-        graph_revision=compiled.graph_revision,
-        system=system,
-        unknown_order=unknown_order,
-        residual_order=residual_order,
-        unknown_index_map=unknown_index_map,
-        residual_index_map=residual_index_map,
-    )
+    return compiled.build_solver_inputs()
 
 
 def solve_compiled_hydraulic_graph(
@@ -244,18 +334,10 @@ def solve_compiled_hydraulic_graph(
     max_iterations: int = 25,
     min_damping: float = 1.0e-6,
 ) -> HydraulicSolveResult:
-    compiled_for_solve = compiled
-    if valve_commands:
-        compiled_for_solve = apply_valve_commands_to_compiled_graph(
-            compiled=compiled,
-            valve_commands=valve_commands,
-        )
-
-    solver_inputs = build_hydraulic_solver_inputs(compiled_for_solve)
-    return solve_hydraulic_system(
-        solver_inputs.system,
+    return compiled.solve(
         initial_unknowns=initial_unknowns,
         warm_start=warm_start,
+        valve_commands=valve_commands,
         tolerance=tolerance,
         max_iterations=max_iterations,
         min_damping=min_damping,
@@ -384,57 +466,7 @@ def apply_valve_commands_to_compiled_graph(
     compiled: CompiledHydraulicGraph,
     valve_commands: Mapping[str, float],
 ) -> CompiledHydraulicGraph:
-    if not valve_commands:
-        return compiled
-
-    normalized_valve_state_by_line = _normalize_compiled_valve_states(
-        valve_state_by_line=compiled.valve_state_by_line
-    )
-    next_valve_state_by_line: dict[str, CompiledValveHydraulicState] = dict(
-        normalized_valve_state_by_line
-    )
-
-    for line_id in sorted(valve_commands):
-        command_open_fraction = float(valve_commands[line_id])
-        state = normalized_valve_state_by_line.get(line_id)
-        if state is None:
-            known_lines = tuple(sorted(normalized_valve_state_by_line.keys()))
-            raise ValueError(
-                "unknown valve command line_id {!r}; known valve lines are {!r}".format(
-                    line_id,
-                    known_lines,
-                )
-            )
-        _validate_valve_open_fraction_command(
-            line_id=line_id,
-            open_fraction=command_open_fraction,
-            state=state,
-        )
-        next_valve_state_by_line[line_id] = CompiledValveHydraulicState(
-            line_id=state.line_id,
-            valve_id=state.valve_id,
-            equation_name=state.equation_name,
-            resistance_parameter_name=state.resistance_parameter_name,
-            resistance_when_open=state.resistance_when_open,
-            minimum_open_fraction=state.minimum_open_fraction,
-            maximum_open_fraction=state.maximum_open_fraction,
-            current_open_fraction=command_open_fraction,
-        )
-
-    normalized_next_valve_state_by_line = _normalize_compiled_valve_states(
-        valve_state_by_line=next_valve_state_by_line
-    )
-    system = _apply_compiled_valve_states_to_system(
-        system=compiled.system,
-        valve_state_by_line=normalized_next_valve_state_by_line,
-    )
-    return CompiledHydraulicGraph(
-        graph_revision=compiled.graph_revision,
-        system=system,
-        unknown_order=compiled.unknown_order,
-        residual_order=compiled.residual_order,
-        valve_state_by_line=normalized_next_valve_state_by_line,
-    )
+    return compiled.with_valve_commands(valve_commands)
 
 
 def _solvability_error_to_diagnostic(*, message: str) -> GraphCompileDiagnostic:
@@ -658,7 +690,6 @@ def _validate_valve_hydraulic_inputs(
 __all__ = [
     "CompiledValveHydraulicState",
     "CompiledHydraulicGraph",
-    "apply_valve_commands_to_compiled_graph",
     "calculate_effective_valve_resistance",
     "compile_valve_hydraulic_state",
     "GraphCompileDiagnostic",
@@ -666,9 +697,6 @@ __all__ = [
     "HydraulicSolverInputs",
     "HydraulicCompileLifecycle",
     "ResolvedLineResistance",
-    "build_hydraulic_solver_inputs",
-    "compile_hydraulic_graph",
     "resolve_line_resistance",
-    "solve_compiled_hydraulic_graph",
     "validate_hydraulic_graph",
 ]

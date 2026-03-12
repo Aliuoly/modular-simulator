@@ -3,7 +3,6 @@ from __future__ import annotations
 from .hydraulic_compile import (
     CompiledHydraulicGraph,
     HydraulicCompileLifecycle,
-    solve_compiled_hydraulic_graph,
 )
 from .hydraulic_element import (
     ElementOutputSpec,
@@ -47,7 +46,6 @@ __all__ = [
     "ProcessBinding",
     "Subsystem",
     "SubsystemRuntimeDescriptor",
-    "solve_compiled_hydraulic_graph",
     "ElementOutputSpec",
     "ElementParameterSpec",
     "ElementUnknownSpec",

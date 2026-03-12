@@ -1,17 +1,22 @@
+# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownMemberType=false
+
 from __future__ import annotations
 
-import importlib
+import inspect
 
 import pytest
 
-transport = importlib.import_module("modular_simulation.connection.transport")
-
-AdvancedConservativeTransportModelScaffold = transport.AdvancedConservativeTransportModelScaffold
-LagTransportState = transport.LagTransportState
-MVPLagTransportModel = transport.MVPLagTransportModel
-TransportModelSelection = transport.TransportModelSelection
-select_transport_model = transport.select_transport_model
-update_lag_transport_state = transport.update_lag_transport_state
+import modular_simulation.connection.transport as transport
+import modular_simulation.connection.transport_runtime as transport_runtime
+from modular_simulation.connection.transport import (
+    AdvancedConservativeTransportModelScaffold,
+    LagTransportState,
+    MVPLagTransportModel,
+    TransportModelSelection,
+    select_transport_model,
+    update_lag_transport_state,
+)
+from modular_simulation.connection.transport_runtime import TransportRuntime
 
 
 def test_selector_picks_mvp_and_advanced_models() -> None:
@@ -31,7 +36,7 @@ def test_invalid_mode_fails_with_actionable_error() -> None:
         ValueError,
         match="Unsupported transport model 'unknown_mode'. Supported models: mvp_lag, advanced_conservative.",
     ):
-        select_transport_model(TransportModelSelection(model="unknown_mode"))
+        _ = select_transport_model(TransportModelSelection(model="unknown_mode"))
 
 
 def test_mvp_selected_path_matches_existing_lag_update_behavior() -> None:
@@ -69,6 +74,17 @@ def test_mvp_selected_path_matches_existing_lag_update_behavior() -> None:
     assert selected_result == direct_result
 
 
+def test_transport_public_surface_documents_owner_and_sanctioned_exceptions() -> None:
+    kernel_doc = inspect.getdoc(transport.update_lag_transport_state)
+    factory_doc = inspect.getdoc(select_transport_model)
+
+    assert hasattr(MVPLagTransportModel, "update")
+    assert kernel_doc is not None
+    assert factory_doc is not None
+    assert "Prefer ``MVPLagTransportModel.update(...)``" in kernel_doc
+    assert "Sanctioned public factory" in factory_doc
+
+
 def test_advanced_scaffold_update_has_clear_not_implemented_path() -> None:
     model = select_transport_model(TransportModelSelection(model="advanced_conservative"))
 
@@ -76,10 +92,18 @@ def test_advanced_scaffold_update_has_clear_not_implemented_path() -> None:
         NotImplementedError,
         match="Advanced conservative transport is scaffolded only and is not implemented in T3.5.",
     ):
-        model.update(
+        _ = model.update(
             current_state=LagTransportState(composition=(0.5, 0.5), temperature=300.0),
             advected_state=LagTransportState(composition=(0.6, 0.4), temperature=320.0),
             dt=0.1,
             through_molar_flow_rate=1.0,
             previous_through_molar_flow_rate=-1.0,
         )
+
+
+def test_public_transport_surfaces_preserve_kernel_and_owner_distinction() -> None:
+    assert "update_lag_transport_state" in getattr(transport, "__all__", ())
+    assert callable(update_lag_transport_state)
+    assert "TransportRuntime" in getattr(transport_runtime, "__all__", ())
+    assert hasattr(TransportRuntime, "step")
+    assert "update_transport_runtime_states" not in getattr(transport_runtime, "__all__", ())

@@ -19,10 +19,7 @@ from modular_simulation.components.control_system import (
 from modular_simulation.components.control_system.mode_manager import ControllerModeManager
 from modular_simulation.components.sensors import SampledDelayedSensor
 from modular_simulation.components.point import DataValue
-from modular_simulation.connection.hydraulic_compile import (
-    HydraulicCompileLifecycle,
-    solve_compiled_hydraulic_graph,
-)
+from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
 from modular_simulation.connection.hydraulic_solver import (
     HydraulicSolveResult,
     HydraulicSystemDefinition,
@@ -128,7 +125,7 @@ def build_controller_runtime_api(
         compiled = network.compiled
         if compiled is None or compiled.hydraulic is None:
             raise RuntimeError("compiled hydraulic graph is required")
-        result = solve_compiled_hydraulic_graph(compiled.hydraulic)
+        result = compiled.hydraulic.solve()
         if solve_observer is not None:
             solve_observer(result)
         return result

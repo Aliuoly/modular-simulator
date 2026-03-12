@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportMissingParameterType=false
+# pyright: reportMissingImports=false, reportAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportMissingParameterType=false
 
 import importlib
 from dataclasses import dataclass
@@ -24,18 +24,16 @@ ElementUnknownSpec = hydraulic_element.ElementUnknownSpec
 HydraulicSystemDefinition = hydraulic_solver.HydraulicSystemDefinition
 HydraulicCompileLifecycle = hydraulic_compile.HydraulicCompileLifecycle
 LagTransportState = transport.LagTransportState
+MVPLagTransportModel = transport.MVPLagTransportModel
 LinearResidualEquation = hydraulic_solver.LinearResidualEquation
 MaterialState = state.MaterialState
 PipeHydraulicElement = hydraulic_element.PipeHydraulicElement
 PortCondition = state.PortCondition
 ConnectionNetwork = network.ConnectionNetwork
-assemble_residual_vector = hydraulic_solver.assemble_residual_vector
 smooth_signed_quadratic_flow_term = hydraulic_element.smooth_signed_quadratic_flow_term
 smooth_signed_quadratic_flow_term_derivative = (
     hydraulic_element.smooth_signed_quadratic_flow_term_derivative
 )
-solve_compiled_hydraulic_graph = hydraulic_compile.solve_compiled_hydraulic_graph
-update_lag_transport_state = transport.update_lag_transport_state
 mix_junction_state = junction.mix_junction_state
 
 
@@ -188,6 +186,7 @@ def _run_reversal_sequence() -> tuple[tuple[float, float, float, float, float, b
     state_value = LagTransportState(composition=(0.5, 0.5), temperature=320.0)
     forward_advected = LagTransportState(composition=(0.92, 0.08), temperature=390.0)
     reverse_advected = LagTransportState(composition=(0.08, 0.92), temperature=260.0)
+    transport_model = MVPLagTransportModel(lag_time_constant_s=0.7)
 
     previous_flow: float | None = None
     warm_start = None
@@ -196,13 +195,12 @@ def _run_reversal_sequence() -> tuple[tuple[float, float, float, float, float, b
         upstream_pressure = 120000.0 if step % 2 == 0 else 100000.0
         downstream_pressure = 100000.0 if step % 2 == 0 else 120000.0
 
-        hydraulic_result = solve_compiled_hydraulic_graph(
-            _compile_single_pipe_network(
-                _single_pipe_system(
-                    upstream_pressure=upstream_pressure,
-                    downstream_pressure=downstream_pressure,
-                )
-            ),
+        hydraulic_result = _compile_single_pipe_network(
+            _single_pipe_system(
+                upstream_pressure=upstream_pressure,
+                downstream_pressure=downstream_pressure,
+            )
+        ).solve(
             warm_start=warm_start,
             tolerance=1.0e-12,
             max_iterations=12,
@@ -212,11 +210,10 @@ def _run_reversal_sequence() -> tuple[tuple[float, float, float, float, float, b
         flow_rate = hydraulic_result.unknowns["edge_flow"]
 
         advected_state = forward_advected if flow_rate >= 0.0 else reverse_advected
-        update_result = update_lag_transport_state(
+        update_result = transport_model.update(
             current_state=state_value,
             advected_state=advected_state,
             dt=0.05,
-            lag_time_constant_s=0.7,
             through_molar_flow_rate=flow_rate,
             previous_through_molar_flow_rate=previous_flow,
         )
@@ -251,8 +248,7 @@ def test_causality_contract_preserves_pressure_flow_consistency_without_unilater
     forward_system = _single_pipe_system(upstream_pressure=120000.0, downstream_pressure=100000.0)
     reverse_system = _single_pipe_system(upstream_pressure=100000.0, downstream_pressure=120000.0)
 
-    forward = solve_compiled_hydraulic_graph(
-        _compile_single_pipe_network(forward_system),
+    forward = _compile_single_pipe_network(forward_system).solve(
         initial_unknowns=MappingProxyType(
             {
                 "edge_flow": 0.0,
@@ -263,8 +259,7 @@ def test_causality_contract_preserves_pressure_flow_consistency_without_unilater
         tolerance=1.0e-12,
         max_iterations=12,
     )
-    reverse = solve_compiled_hydraulic_graph(
-        _compile_single_pipe_network(reverse_system),
+    reverse = _compile_single_pipe_network(reverse_system).solve(
         initial_unknowns=MappingProxyType(
             {
                 "edge_flow": 0.0,
@@ -286,8 +281,8 @@ def test_causality_contract_preserves_pressure_flow_consistency_without_unilater
     assert reverse.unknowns["edge_flow"] < 0.0
     assert abs(forward.unknowns["edge_flow"]) == pytest.approx(abs(reverse.unknowns["edge_flow"]))
 
-    forward_residual, _, _ = assemble_residual_vector(forward_system, forward.solution_vector)
-    reverse_residual, _, _ = assemble_residual_vector(reverse_system, reverse.solution_vector)
+    forward_residual, _, _ = forward_system.assemble_residual_vector(forward.solution_vector)
+    reverse_residual, _, _ = reverse_system.assemble_residual_vector(reverse.solution_vector)
     assert max(abs(value) for value in forward_residual) <= 1.0e-8
     assert max(abs(value) for value in reverse_residual) <= 1.0e-8
 
@@ -313,11 +308,9 @@ def test_reversal_sequence_is_bounded_and_deterministic_across_macro_steps() -> 
 def test_representative_topology_closure_preserves_mass_balance_and_stable_bookkeeping() -> None:
     system = _build_three_branch_topology_system()
     compiled = _compile_three_branch_network(system)
-    solved = solve_compiled_hydraulic_graph(
-        compiled.hydraulic, tolerance=1.0e-10, max_iterations=20
-    )
-    warm_solved = solve_compiled_hydraulic_graph(
-        compiled.hydraulic,
+    assert compiled.hydraulic is not None
+    solved = compiled.hydraulic.solve(tolerance=1.0e-10, max_iterations=20)
+    warm_solved = compiled.hydraulic.solve(
         warm_start=solved.solution_vector,
         tolerance=1.0e-10,
         max_iterations=20,
@@ -334,7 +327,7 @@ def test_representative_topology_closure_preserves_mass_balance_and_stable_bookk
     assert flow_outlet > 0.0
     assert flow_outlet == pytest.approx(flow_feed_a + flow_feed_b)
 
-    residual_vector, _, _ = assemble_residual_vector(system, solved.solution_vector)
+    residual_vector, _, _ = system.assemble_residual_vector(solved.solution_vector)
     assert max(abs(value) for value in residual_vector) <= 1.0e-8
 
     for key in ("flow_feed_a", "flow_feed_b", "flow_outlet", "mix_head"):

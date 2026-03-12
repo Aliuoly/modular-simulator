@@ -1,3 +1,5 @@
+# pyright: reportMissingTypeStubs=false
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -21,68 +23,86 @@ class TransportRuntimeStepResult:
     previous_edge_flow_rates: Mapping[str, float]
 
 
-def update_transport_runtime_states(
-    *,
-    topology: TopologyGraph,
-    current_edge_states: Mapping[str, LagTransportState],
-    advected_edge_states: Mapping[str, LagTransportState],
-    edge_flow_rates: Mapping[str, float],
-    previous_edge_flow_rates: Mapping[str, float] | None,
-    dt: float,
-    lag_time_constant_s: float,
-    near_zero_flow_epsilon: float = 1.0e-12,
-    flow_smoothing_flow_rate: float = 1.0e-9,
-) -> TransportRuntimeStepResult:
-    missing_data: list[str] = []
-    edge_updates: dict[str, LagTransportUpdateResult] = {}
-    edge_states: dict[str, LagTransportState] = {}
-    next_previous_edge_flow_rates: dict[str, float] = {}
+@dataclass(frozen=True)
+class TransportRuntime:
+    topology: TopologyGraph
+    lag_time_constant_s: float
+    near_zero_flow_epsilon: float = 1.0e-12
+    flow_smoothing_flow_rate: float = 1.0e-9
 
-    for edge_id in sorted(edge.edge_id for edge in topology.edges):
-        current_state = current_edge_states.get(edge_id)
-        if current_state is None:
-            missing_data.append(f"{edge_id}:current_state")
+    def __post_init__(self) -> None:
+        if self.lag_time_constant_s <= 0.0:
+            raise ValueError("lag_time_constant_s must be positive")
+        if not isfinite(self.lag_time_constant_s):
+            raise ValueError("lag_time_constant_s must be finite")
+        if self.near_zero_flow_epsilon <= 0.0:
+            raise ValueError("near_zero_flow_epsilon must be positive")
+        if not isfinite(self.near_zero_flow_epsilon):
+            raise ValueError("near_zero_flow_epsilon must be finite")
+        if self.flow_smoothing_flow_rate <= 0.0:
+            raise ValueError("flow_smoothing_flow_rate must be positive")
+        if not isfinite(self.flow_smoothing_flow_rate):
+            raise ValueError("flow_smoothing_flow_rate must be finite")
 
-        advected_state = advected_edge_states.get(edge_id)
-        if advected_state is None:
-            missing_data.append(f"{edge_id}:advected_state")
+    def step(
+        self,
+        *,
+        current_edge_states: Mapping[str, LagTransportState],
+        advected_edge_states: Mapping[str, LagTransportState],
+        edge_flow_rates: Mapping[str, float],
+        previous_edge_flow_rates: Mapping[str, float] | None,
+        dt: float,
+    ) -> TransportRuntimeStepResult:
+        missing_data: list[str] = []
+        edge_updates: dict[str, LagTransportUpdateResult] = {}
+        edge_states: dict[str, LagTransportState] = {}
+        next_previous_edge_flow_rates: dict[str, float] = {}
 
-        through_molar_flow_rate = edge_flow_rates.get(edge_id)
-        if through_molar_flow_rate is None:
-            missing_data.append(f"{edge_id}:flow_rate")
+        for edge_id in sorted(edge.edge_id for edge in self.topology.edges):
+            current_state = current_edge_states.get(edge_id)
+            if current_state is None:
+                missing_data.append(f"{edge_id}:current_state")
 
-        if current_state is None or advected_state is None or through_molar_flow_rate is None:
-            continue
+            advected_state = advected_edge_states.get(edge_id)
+            if advected_state is None:
+                missing_data.append(f"{edge_id}:advected_state")
 
-        previous_through_molar_flow_rate: float | None = None
-        if previous_edge_flow_rates is not None:
-            previous_through_molar_flow_rate = previous_edge_flow_rates.get(edge_id)
+            through_molar_flow_rate = edge_flow_rates.get(edge_id)
+            if through_molar_flow_rate is None:
+                missing_data.append(f"{edge_id}:flow_rate")
 
-        update_result = update_lag_transport_state(
-            current_state=current_state,
-            advected_state=advected_state,
-            dt=dt,
-            lag_time_constant_s=lag_time_constant_s,
-            through_molar_flow_rate=through_molar_flow_rate,
-            previous_through_molar_flow_rate=previous_through_molar_flow_rate,
-            near_zero_flow_epsilon=near_zero_flow_epsilon,
-            flow_smoothing_flow_rate=flow_smoothing_flow_rate,
+            if current_state is None or advected_state is None or through_molar_flow_rate is None:
+                continue
+
+            previous_through_molar_flow_rate: float | None = None
+            if previous_edge_flow_rates is not None:
+                previous_through_molar_flow_rate = previous_edge_flow_rates.get(edge_id)
+
+            update_result = update_lag_transport_state(
+                current_state=current_state,
+                advected_state=advected_state,
+                dt=dt,
+                lag_time_constant_s=self.lag_time_constant_s,
+                through_molar_flow_rate=through_molar_flow_rate,
+                previous_through_molar_flow_rate=previous_through_molar_flow_rate,
+                near_zero_flow_epsilon=self.near_zero_flow_epsilon,
+                flow_smoothing_flow_rate=self.flow_smoothing_flow_rate,
+            )
+            _assert_runtime_invariants(edge_id=edge_id, update_result=update_result)
+
+            edge_updates[edge_id] = update_result
+            edge_states[edge_id] = update_result.state
+            next_previous_edge_flow_rates[edge_id] = through_molar_flow_rate
+
+        if missing_data:
+            details = ", ".join(missing_data)
+            raise ValueError(f"missing runtime edge data: {details}")
+
+        return TransportRuntimeStepResult(
+            edge_updates=edge_updates,
+            edge_states=edge_states,
+            previous_edge_flow_rates=next_previous_edge_flow_rates,
         )
-        _assert_runtime_invariants(edge_id=edge_id, update_result=update_result)
-
-        edge_updates[edge_id] = update_result
-        edge_states[edge_id] = update_result.state
-        next_previous_edge_flow_rates[edge_id] = through_molar_flow_rate
-
-    if missing_data:
-        details = ", ".join(missing_data)
-        raise ValueError(f"missing runtime edge data: {details}")
-
-    return TransportRuntimeStepResult(
-        edge_updates=edge_updates,
-        edge_states=edge_states,
-        previous_edge_flow_rates=next_previous_edge_flow_rates,
-    )
 
 
 def _assert_runtime_invariants(*, edge_id: str, update_result: LagTransportUpdateResult) -> None:
@@ -116,4 +136,4 @@ def _assert_runtime_invariants(*, edge_id: str, update_result: LagTransportUpdat
         raise ValueError(f"transport runtime produced non-normalized composition for '{edge_id}'")
 
 
-__all__ = ["TransportRuntimeStepResult", "update_transport_runtime_states"]
+__all__ = ["TransportRuntime", "TransportRuntimeStepResult"]

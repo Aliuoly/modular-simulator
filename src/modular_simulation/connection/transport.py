@@ -101,6 +101,13 @@ class TransportModel(Protocol):
 
 @dataclass(frozen=True)
 class MVPLagTransportModel:
+    """Preferred owner-led API for MVP lag transport updates.
+
+    Normal callers should use ``MVPLagTransportModel.update(...)``. The
+    module-level ``update_lag_transport_state(...)`` function is kept public only
+    as a sanctioned low-level kernel for deliberate advanced use.
+    """
+
     lag_time_constant_s: float
     near_zero_flow_epsilon: float = 1.0e-12
     flow_smoothing_flow_rate: float = 1.0e-9
@@ -173,6 +180,13 @@ class AdvancedConservativeTransportModelScaffold:
 
 
 def select_transport_model(config: TransportModelSelection) -> TransportModel:
+    """Sanctioned public factory for transport model owners.
+
+    Use this selection boundary when configuration determines the transport model,
+    then drive transport behavior through the returned owner object's
+    ``.update(...)`` method.
+    """
+
     parameters = dict(config.parameters or {})
 
     if config.model == "mvp_lag":
@@ -201,6 +215,13 @@ def update_lag_transport_state(
     near_zero_flow_epsilon: float = 1.0e-12,
     flow_smoothing_flow_rate: float = 1.0e-9,
 ) -> LagTransportUpdateResult:
+    """Sanctioned public low-level lag transport kernel.
+
+    Prefer ``MVPLagTransportModel.update(...)`` for standard discoverable usage.
+    Call this function directly only when intentionally composing the deterministic
+    lag kernel outside the owner-led API.
+    """
+
     if dt <= 0.0:
         raise ValueError("dt must be positive")
     if not isfinite(dt):

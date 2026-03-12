@@ -8,9 +8,7 @@ import pytest
 
 from modular_simulation.connection.hydraulic_compile import (
     CompiledHydraulicGraph,
-    build_hydraulic_solver_inputs,
-    compile_hydraulic_graph,
-    solve_compiled_hydraulic_graph,
+    HydraulicCompileLifecycle,
 )
 from modular_simulation.connection.hydraulic_solver import (
     HydraulicSystemDefinition,
@@ -120,9 +118,10 @@ def test_compile_bridge_produces_solver_inputs_with_deterministic_orders(
     expected_unknowns: tuple[str, ...],
     expected_residuals: tuple[str, ...],
 ) -> None:
-    compiled = compile_hydraulic_graph(system=system_factory(), graph_revision="rev-bridge")
+    lifecycle = HydraulicCompileLifecycle()
+    compiled = lifecycle.compile(system=system_factory(), graph_revision="rev-bridge")
 
-    bridge_inputs = build_hydraulic_solver_inputs(compiled)
+    bridge_inputs = compiled.build_solver_inputs()
 
     assert bridge_inputs.graph_revision == "rev-bridge"
     assert bridge_inputs.unknown_order == expected_unknowns
@@ -132,9 +131,10 @@ def test_compile_bridge_produces_solver_inputs_with_deterministic_orders(
 
 
 def test_compile_bridge_solution_preserves_declared_unknown_residual_index_order() -> None:
-    compiled = compile_hydraulic_graph(system=_branch_topology_system(), graph_revision="rev-order")
+    lifecycle = HydraulicCompileLifecycle()
+    compiled = lifecycle.compile(system=_branch_topology_system(), graph_revision="rev-order")
 
-    bridge_inputs = build_hydraulic_solver_inputs(compiled)
+    bridge_inputs = compiled.build_solver_inputs()
     unknown_index_map, residual_index_map = build_index_maps(bridge_inputs.system)
 
     assert tuple(sorted(unknown_index_map, key=unknown_index_map.__getitem__)) == (
@@ -152,9 +152,10 @@ def test_compile_bridge_solution_preserves_declared_unknown_residual_index_order
 
 
 def test_compile_bridge_solve_runs_against_existing_solver_contract() -> None:
-    compiled = compile_hydraulic_graph(system=_linear_topology_system(), graph_revision="rev-solve")
+    lifecycle = HydraulicCompileLifecycle()
+    compiled = lifecycle.compile(system=_linear_topology_system(), graph_revision="rev-solve")
 
-    solved = solve_compiled_hydraulic_graph(compiled, tolerance=1.0e-12, max_iterations=10)
+    solved = compiled.solve(tolerance=1.0e-12, max_iterations=10)
 
     assert solved.converged
     assert solved.unknowns["pressure_upstream"] == pytest.approx(120_000.0)
@@ -175,7 +176,7 @@ def test_compile_bridge_preserves_component_specific_pressure_reference_diagnost
     messages: list[str] = []
     for _ in range(2):
         with pytest.raises(ValueError) as error:
-            solve_compiled_hydraulic_graph(compiled)
+            _ = compiled.solve()
         messages.append(str(error.value))
 
     assert messages[0] == messages[1]

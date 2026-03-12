@@ -8,16 +8,12 @@ import pytest
 from modular_simulation.connection.domain_contracts import ResistanceConfig, ValveConfig
 from modular_simulation.connection.hydraulic_compile import (
     HydraulicCompileLifecycle,
-    apply_valve_commands_to_compiled_graph,
-    compile_hydraulic_graph,
     compile_valve_hydraulic_state,
     resolve_line_resistance,
-    solve_compiled_hydraulic_graph,
 )
-from modular_simulation.connection.hydraulic_element import ValveHydraulicElement
+from modular_simulation.connection.hydraulic_element import HydraulicElement, ValveHydraulicElement
 from modular_simulation.connection.hydraulic_solver import (
     ElementEquation,
-    HydraulicElementLike,
     HydraulicSystemDefinition,
 )
 from modular_simulation.connection.network import ConnectionNetwork
@@ -33,7 +29,7 @@ def _valve_system() -> HydraulicSystemDefinition:
             ElementEquation(
                 name="eq_line_feed",
                 element=cast(
-                    HydraulicElementLike,
+                    HydraulicElement,
                     cast(object, ValveHydraulicElement()),
                 ),
                 inputs=MappingProxyType(
@@ -91,7 +87,7 @@ def _configure_compiled_valve_state(network: ConnectionNetwork) -> None:
             initial_open_fraction=0.2,
         ),
     )
-    hydraulic = compile_hydraulic_graph(
+    hydraulic = HydraulicCompileLifecycle().compile(
         system=_valve_system(),
         graph_revision=compiled.graph_revision,
         valve_state_by_line={"line_feed": valve_state},
@@ -111,9 +107,7 @@ def _solve_flow_rate(network: ConnectionNetwork) -> float:
     compiled = network.compiled
     if compiled is None or compiled.hydraulic is None:
         raise RuntimeError("compiled hydraulic graph is required")
-    solved = solve_compiled_hydraulic_graph(
-        compiled.hydraulic, tolerance=1.0e-12, max_iterations=25
-    )
+    solved = compiled.hydraulic.solve(tolerance=1.0e-12, max_iterations=25)
     return solved.unknowns["flow_line_feed"]
 
 
@@ -200,19 +194,13 @@ def test_apply_valve_command_updates_compiled_graph_deterministically() -> None:
             initial_open_fraction=0.2,
         ),
     )
-    compiled = compile_hydraulic_graph(
+    compiled = HydraulicCompileLifecycle().compile(
         system=_valve_system(),
         graph_revision="rev_valve",
         valve_state_by_line={"line_feed": valve_state},
     )
 
-    updated_a = apply_valve_commands_to_compiled_graph(
-        compiled=compiled,
-        valve_commands={"line_feed": 0.65},
-    )
-    updated_b = apply_valve_commands_to_compiled_graph(
-        compiled=compiled,
-        valve_commands={"line_feed": 0.65},
-    )
+    updated_a = compiled.with_valve_commands({"line_feed": 0.65})
+    updated_b = compiled.with_valve_commands({"line_feed": 0.65})
 
     assert updated_a == updated_b

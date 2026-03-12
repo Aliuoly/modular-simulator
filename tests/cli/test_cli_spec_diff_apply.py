@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+# pyright: reportMissingTypeStubs=false
+
+import importlib
 from collections.abc import Mapping
 import json
 from pathlib import Path
@@ -212,3 +215,11 @@ def test_spec_apply_invalid_spec_rolls_back_without_state_change(tmp_path: Path)
             "line_id": "edge_0003",
         },
     ]
+
+
+def test_spec_workflow_public_surface_keeps_compile_only() -> None:
+    spec_workflow = importlib.import_module("modular_simulation.cli.spec_workflow")
+
+    assert "compile_spec_delta" in getattr(spec_workflow, "__all__", ())
+    assert "apply_spec_delta" not in getattr(spec_workflow, "__all__", ())
+    assert not hasattr(spec_workflow, "apply_spec_delta")

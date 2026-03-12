@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# pyright: reportMissingTypeStubs=false
+
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from math import isfinite
@@ -103,99 +105,112 @@ class ProcessPortConditionWriteStep(Protocol):
     ) -> None: ...
 
 
-def run_macro_coupling_step(
-    *,
-    macro_step_time_s: float,
-    hydraulic_solve_step: HydraulicSolveStep,
-    transport_update_step: TransportUpdateStep,
-    boundary_propagation_step: BoundaryPropagationStep,
-    macro_step_index: int | None = None,
-    picard_gate_config: PicardIterationGateConfig | None = None,
-) -> MacroCouplingStepResult:
-    if macro_step_time_s < 0.0:
-        raise ValueError("macro_step_time_s must be non-negative")
-    if not isfinite(macro_step_time_s):
-        raise ValueError("macro_step_time_s must be finite")
+class MacroCoupler:
+    def __init__(
+        self,
+        *,
+        hydraulic_solve_step: HydraulicSolveStep,
+        transport_update_step: TransportUpdateStep,
+        boundary_propagation_step: BoundaryPropagationStep,
+        picard_gate_config: PicardIterationGateConfig | None = None,
+    ) -> None:
+        self._hydraulic_solve_step: HydraulicSolveStep = hydraulic_solve_step
+        self._transport_update_step: TransportUpdateStep = transport_update_step
+        self._boundary_propagation_step: BoundaryPropagationStep = boundary_propagation_step
+        self._picard_gate_config: PicardIterationGateConfig | None = picard_gate_config
 
-    def _run_sequence_once() -> tuple[
-        HydraulicSolveResult,
-        TransportAndMixingUpdate,
-        Mapping[str, PortCondition],
-    ]:
-        hydraulic_result = hydraulic_solve_step(macro_step_time_s=macro_step_time_s)
-        transport_and_mixing_update = transport_update_step(
-            hydraulic_result=hydraulic_result,
-            macro_step_time_s=macro_step_time_s,
+    def run(
+        self,
+        *,
+        macro_step_time_s: float,
+        macro_step_index: int | None = None,
+    ) -> MacroCouplingStepResult:
+        if macro_step_time_s < 0.0:
+            raise ValueError("macro_step_time_s must be non-negative")
+        if not isfinite(macro_step_time_s):
+            raise ValueError("macro_step_time_s must be finite")
+
+        def _run_sequence_once() -> tuple[
+            HydraulicSolveResult,
+            TransportAndMixingUpdate,
+            Mapping[str, PortCondition],
+        ]:
+            hydraulic_result = self._hydraulic_solve_step(macro_step_time_s=macro_step_time_s)
+            transport_and_mixing_update = self._transport_update_step(
+                hydraulic_result=hydraulic_result,
+                macro_step_time_s=macro_step_time_s,
+            )
+            port_conditions = self._boundary_propagation_step(
+                hydraulic_result=hydraulic_result,
+                transport_and_mixing_update=transport_and_mixing_update,
+                macro_step_time_s=macro_step_time_s,
+            )
+            return hydraulic_result, transport_and_mixing_update, port_conditions
+
+        hydraulic_result, transport_and_mixing_update, port_conditions = _run_sequence_once()
+
+        gate_residual = _extract_gate_residual(hydraulic_result)
+        picard_gate_enabled = (
+            self._picard_gate_config is not None
+            and self._picard_gate_config.enabled
+            and gate_residual > self._picard_gate_config.residual_threshold
         )
-        port_conditions = boundary_propagation_step(
+        picard_iterations_used = 0
+        picard_converged = True
+        picard_last_residual: float | None = None
+
+        if picard_gate_enabled and self._picard_gate_config is not None:
+            previous_port_conditions = port_conditions
+            picard_converged = False
+            for iteration in range(1, self._picard_gate_config.max_iterations + 1):
+                hydraulic_result, transport_and_mixing_update, port_conditions = (
+                    _run_sequence_once()
+                )
+                picard_iterations_used = iteration
+                picard_last_residual = _compute_coupling_residual(
+                    previous_port_conditions=previous_port_conditions,
+                    current_port_conditions=port_conditions,
+                )
+                if picard_last_residual <= self._picard_gate_config.tolerance:
+                    picard_converged = True
+                    break
+                previous_port_conditions = port_conditions
+
+        transport_fallback_keys = tuple(
+            sorted(
+                edge_key
+                for edge_key, update_result in transport_and_mixing_update.transport_results.items()
+                if update_result.held_for_near_zero_flow
+            )
+        )
+        junction_fallback_keys = tuple(
+            sorted(
+                junction_key
+                for junction_key, update_result in transport_and_mixing_update.junction_results.items()
+                if update_result.used_fallback
+            )
+        )
+        used_fallback = bool(transport_fallback_keys or junction_fallback_keys)
+
+        bookkeeping = MacroStepBookkeeping(
+            macro_step_time_s=macro_step_time_s,
+            macro_step_index=macro_step_index,
+            executed_sequence=MACRO_COUPLING_SEQUENCE,
+            updated_port_keys=tuple(sorted(port_conditions.keys())),
+            transport_fallback_keys=transport_fallback_keys,
+            junction_fallback_keys=junction_fallback_keys,
+            used_fallback=used_fallback,
+            picard_gate_enabled=picard_gate_enabled,
+            picard_iterations_used=picard_iterations_used,
+            picard_converged=picard_converged,
+            picard_last_residual=picard_last_residual,
+        )
+        return MacroCouplingStepResult(
             hydraulic_result=hydraulic_result,
             transport_and_mixing_update=transport_and_mixing_update,
-            macro_step_time_s=macro_step_time_s,
+            port_conditions=port_conditions,
+            bookkeeping=bookkeeping,
         )
-        return hydraulic_result, transport_and_mixing_update, port_conditions
-
-    hydraulic_result, transport_and_mixing_update, port_conditions = _run_sequence_once()
-
-    gate_residual = _extract_gate_residual(hydraulic_result)
-    picard_gate_enabled = (
-        picard_gate_config is not None
-        and picard_gate_config.enabled
-        and gate_residual > picard_gate_config.residual_threshold
-    )
-    picard_iterations_used = 0
-    picard_converged = True
-    picard_last_residual: float | None = None
-
-    if picard_gate_enabled and picard_gate_config is not None:
-        previous_port_conditions = port_conditions
-        picard_converged = False
-        for iteration in range(1, picard_gate_config.max_iterations + 1):
-            hydraulic_result, transport_and_mixing_update, port_conditions = _run_sequence_once()
-            picard_iterations_used = iteration
-            picard_last_residual = _compute_coupling_residual(
-                previous_port_conditions=previous_port_conditions,
-                current_port_conditions=port_conditions,
-            )
-            if picard_last_residual <= picard_gate_config.tolerance:
-                picard_converged = True
-                break
-            previous_port_conditions = port_conditions
-
-    transport_fallback_keys = tuple(
-        sorted(
-            edge_key
-            for edge_key, update_result in transport_and_mixing_update.transport_results.items()
-            if update_result.held_for_near_zero_flow
-        )
-    )
-    junction_fallback_keys = tuple(
-        sorted(
-            junction_key
-            for junction_key, update_result in transport_and_mixing_update.junction_results.items()
-            if update_result.used_fallback
-        )
-    )
-    used_fallback = bool(transport_fallback_keys or junction_fallback_keys)
-
-    bookkeeping = MacroStepBookkeeping(
-        macro_step_time_s=macro_step_time_s,
-        macro_step_index=macro_step_index,
-        executed_sequence=MACRO_COUPLING_SEQUENCE,
-        updated_port_keys=tuple(sorted(port_conditions.keys())),
-        transport_fallback_keys=transport_fallback_keys,
-        junction_fallback_keys=junction_fallback_keys,
-        used_fallback=used_fallback,
-        picard_gate_enabled=picard_gate_enabled,
-        picard_iterations_used=picard_iterations_used,
-        picard_converged=picard_converged,
-        picard_last_residual=picard_last_residual,
-    )
-    return MacroCouplingStepResult(
-        hydraulic_result=hydraulic_result,
-        transport_and_mixing_update=transport_and_mixing_update,
-        port_conditions=port_conditions,
-        bookkeeping=bookkeeping,
-    )
 
 
 def _extract_gate_residual(hydraulic_result: HydraulicSolveResult) -> float:
@@ -271,11 +286,11 @@ __all__ = [
     "MACRO_COUPLING_SEQUENCE",
     "BoundaryPropagationStep",
     "HydraulicSolveStep",
+    "MacroCoupler",
     "MacroCouplingStepResult",
     "MacroStepBookkeeping",
     "PicardIterationGateConfig",
     "ProcessPortConditionWriteStep",
     "TransportAndMixingUpdate",
     "TransportUpdateStep",
-    "run_macro_coupling_step",
 ]

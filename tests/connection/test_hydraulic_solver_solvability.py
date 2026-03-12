@@ -15,7 +15,6 @@ ConnectionNetwork = network.ConnectionNetwork
 HydraulicCompileLifecycle = hydraulic_compile.HydraulicCompileLifecycle
 HydraulicSystemDefinition = hydraulic_solver.HydraulicSystemDefinition
 LinearResidualEquation = hydraulic_solver.LinearResidualEquation
-solve_compiled_hydraulic_graph = hydraulic_compile.solve_compiled_hydraulic_graph
 
 
 def _linear_equation(
@@ -98,11 +97,7 @@ def test_disconnected_components_with_references_solve_deterministically() -> No
         ),
     )
 
-    result = solve_compiled_hydraulic_graph(
-        _compile_hydraulic_via_network(system),
-        tolerance=1.0e-12,
-        max_iterations=10,
-    )
+    result = _compile_hydraulic_via_network(system).solve(tolerance=1.0e-12, max_iterations=10)
 
     assert result.converged
     assert result.unknowns["pressure_a"] == pytest.approx(5.0)
@@ -141,7 +136,7 @@ def test_singular_jacobian_fails_with_actionable_message() -> None:
     compiled = _compile_hydraulic_via_network(system)
 
     with pytest.raises(ValueError) as error:
-        _ = solve_compiled_hydraulic_graph(compiled)
+        _ = compiled.solve()
 
     message = str(error.value)
     assert "Jacobian is singular or underdetermined" in message

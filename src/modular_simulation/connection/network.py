@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# pyright: reportMissingTypeStubs=false
+
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from math import isfinite
@@ -10,8 +12,6 @@ from modular_simulation.connection.hydraulic_compile import (
     CompiledHydraulicGraph,
     CompiledValveHydraulicState,
     HydraulicCompileLifecycle,
-    apply_valve_commands_to_compiled_graph,
-    compile_hydraulic_graph,
     compile_valve_hydraulic_state,
     resolve_line_resistance,
 )
@@ -319,13 +319,8 @@ class ConnectionNetwork:
             hydraulic = self._compile_lifecycle.compile(
                 system=system_for_compile,
                 graph_revision=graph_revision,
+                valve_state_by_line=valve_state_by_line or None,
             )
-            if valve_state_by_line:
-                hydraulic = compile_hydraulic_graph(
-                    system=hydraulic.system,
-                    graph_revision=hydraulic.graph_revision,
-                    valve_state_by_line=valve_state_by_line,
-                )
 
         self._compiled = CompiledConnectionNetwork(
             graph_revision=graph_revision,
@@ -382,10 +377,7 @@ class ConnectionNetwork:
         if compiled is None or compiled.hydraulic is None:
             raise ValueError("cannot stage valve command without compiled hydraulic graph")
 
-        _ = apply_valve_commands_to_compiled_graph(
-            compiled=compiled.hydraulic,
-            valve_commands={line_id: open_fraction},
-        )
+        _ = compiled.hydraulic.with_valve_commands({line_id: open_fraction})
         self._pending_valve_open_fractions[line_id] = float(open_fraction)
 
     def consume_pending_valve_open_fraction_commands(self) -> Mapping[str, float]:

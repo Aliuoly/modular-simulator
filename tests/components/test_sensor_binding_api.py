@@ -7,10 +7,7 @@ import numpy as np
 import pytest
 
 from modular_simulation.components.sensors import SensorRuntimeBindingApi
-from modular_simulation.connection.hydraulic_compile import (
-    HydraulicCompileLifecycle,
-    solve_compiled_hydraulic_graph,
-)
+from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
 from modular_simulation.connection.hydraulic_solver import (
     HydraulicSolveResult,
     HydraulicSystemDefinition,
@@ -89,7 +86,7 @@ def _runtime_with_dispatcher(
         compiled = network.compiled
         if compiled is None or compiled.hydraulic is None:
             raise RuntimeError("compiled hydraulic graph is required")
-        result = solve_compiled_hydraulic_graph(compiled.hydraulic)
+        result = compiled.hydraulic.solve()
         if solve_observer is not None:
             solve_observer(result)
         return result

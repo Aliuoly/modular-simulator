@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+# pyright: reportMissingTypeStubs=false
+
 from collections.abc import Callable, Mapping
+import importlib
+from pathlib import Path
 import re
+import sys
 from typing import cast
 
 import numpy as np
@@ -16,7 +21,6 @@ from modular_simulation.components.control_system import (
 from modular_simulation.components.sensors import SampledDelayedSensor
 from modular_simulation.connection.hydraulic_compile import (
     HydraulicCompileLifecycle,
-    solve_compiled_hydraulic_graph,
 )
 from modular_simulation.connection.hydraulic_solver import (
     HydraulicSolveResult,
@@ -37,7 +41,15 @@ from modular_simulation.unit_processes import (
     HeaterCooler,
     ShortcutDistillation,
 )
-from tests.controller_contract_harness import build_scalar_cv_vector_mv_system
+
+try:
+    from tests.controller_contract_harness import build_scalar_cv_vector_mv_system
+except ModuleNotFoundError:
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    build_scalar_cv_vector_mv_system = cast(
+        Callable[[], System],
+        importlib.import_module("controller_contract_harness").build_scalar_cv_vector_mv_system,
+    )
 
 
 def _linear_equation(
@@ -104,7 +116,7 @@ def _runtime_with_dispatchers(
         compiled = network.compiled
         if compiled is None or compiled.hydraulic is None:
             raise RuntimeError("compiled hydraulic graph is required")
-        result = solve_compiled_hydraulic_graph(compiled.hydraulic)
+        result = compiled.hydraulic.solve()
         if solve_observer is not None:
             solve_observer(result)
         return result
@@ -138,6 +150,13 @@ def _build_system(process_model: ProcessModel) -> System:
         control_elements=[heater],
         show_progress=False,
     )
+
+
+def _require_float_attribute(instance: object, attribute_name: str) -> float:
+    value = getattr(instance, attribute_name, None)
+    if not isinstance(value, (int, float)):
+        raise AssertionError(f"attribute '{attribute_name}' must be numeric")
+    return float(value)
 
 
 def test_pid_controller_reference_wiring_drives_bound_actuator(
@@ -187,7 +206,7 @@ def test_pid_controller_reference_wiring_drives_bound_actuator(
 
     _ = system.extend_controller_reference_trajectory("temperature", value=320.0)
     system.step(duration=1.0)
-    assert float(getattr(thermal_process_model, "heater_power")) > 0.0
+    assert _require_float_attribute(thermal_process_model, "heater_power") > 0.0
 
 
 def test_controller_reference_activation_rejects_stale_public_sp_signal_tag(

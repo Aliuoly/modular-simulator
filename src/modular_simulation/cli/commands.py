@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+# pyright: reportMissingTypeStubs=false
+
 from collections.abc import Iterable, Mapping
+from math import isfinite
 from typing import Literal, Protocol, cast
 
 from modular_simulation.connection.error_catalog import (
@@ -19,7 +22,7 @@ from modular_simulation.connection.reconfiguration_api import (
 from modular_simulation.connection.domain_contracts import (
     validate_command_envelope,
 )
-from modular_simulation.cli.spec_workflow import apply_spec_delta, compile_spec_delta
+from . import spec_workflow
 
 
 class _CliNetworkLike(Protocol):
@@ -28,6 +31,14 @@ class _CliNetworkLike(Protocol):
     def save_runtime_snapshot(self) -> Mapping[str, object]: ...
 
     def resume_from_snapshot(self, *, snapshot: object) -> None: ...
+
+
+class _CompiledGraphLike(Protocol):
+    graph_revision: object
+
+
+class _CompiledCarrierLike(Protocol):
+    compiled: _CompiledGraphLike | None
 
 
 class ModularCli:
@@ -306,10 +317,15 @@ class ModularCli:
                 "load is not supported by the provided network in this test environment"
             )
 
+    def _active_graph_revision(self) -> str | None:
+        compiled = cast(_CompiledCarrierLike, cast(object, self._network)).compiled
+        graph_revision = None if compiled is None else compiled.graph_revision
+        return None if graph_revision is None else str(graph_revision)
+
     def spec_diff(self, *, spec_path: str) -> Mapping[str, object]:
         if not isinstance(self._network, ConnectionNetwork):
             raise TypeError("spec workflow requires ConnectionNetwork")
-        delta = compile_spec_delta(network=self._network, spec_path=spec_path)
+        delta = spec_workflow.compile_spec_delta(network=self._network, spec_path=spec_path)
         return delta.as_mapping()
 
     def spec_apply(
@@ -320,8 +336,53 @@ class ModularCli:
     ) -> Mapping[str, object]:
         if not isinstance(self._network, ConnectionNetwork):
             raise TypeError("spec workflow requires ConnectionNetwork")
-        return apply_spec_delta(
-            network=self._network,
-            spec_path=spec_path,
-            macro_step_time_s=macro_step_time_s,
-        )
+        if macro_step_time_s < 0.0 or not isfinite(macro_step_time_s):
+            raise ValueError("macro_step_time_s must be finite and non-negative")
+
+        delta = spec_workflow.compile_spec_delta(network=self._network, spec_path=spec_path)
+        diff_payload = delta.as_mapping()
+        if not delta.transaction_batches:
+            return {
+                "diff": diff_payload,
+                "queued_request_ids": (),
+                "applied_request_ids": (),
+                "skipped_request_ids": (),
+                "graph_revision": self._active_graph_revision(),
+            }
+
+        baseline_snapshot = self._network.capture_reconfiguration_state()
+        baseline_revision = self._active_graph_revision()
+        queued_request_ids: list[str] = []
+        try:
+            for batch_index, batch in enumerate(delta.transaction_batches, start=1):
+                payload: dict[str, object] = {
+                    "operation": "spec_apply_batch",
+                    "metadata": {
+                        "workflow": "spec_apply",
+                        "batch_name": batch.name,
+                        "batch_index": batch_index,
+                    },
+                    "mutations": [dict(mutation) for mutation in batch.mutations],
+                }
+                if baseline_revision is not None:
+                    payload["expected_revision"] = baseline_revision
+                queued_request_ids.append(self._network.queue_reconfiguration(payload))
+
+            step_result = self._network.step(macro_step_time_s=macro_step_time_s)
+        except Exception as error:
+            self._network.restore_reconfiguration_state(baseline_snapshot)
+            raise spec_workflow.SpecApplyError(
+                f"spec apply rollback: {error}",
+                diff=diff_payload,
+            ) from error
+
+        barrier = getattr(step_result, "barrier_reconfiguration", None)
+        applied_request_ids = tuple(getattr(barrier, "applied_request_ids", ()))
+        skipped_request_ids = tuple(getattr(barrier, "skipped_request_ids", ()))
+        return {
+            "diff": diff_payload,
+            "queued_request_ids": tuple(queued_request_ids),
+            "applied_request_ids": applied_request_ids,
+            "skipped_request_ids": skipped_request_ids,
+            "graph_revision": self._active_graph_revision(),
+        }

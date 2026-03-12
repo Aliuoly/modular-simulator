@@ -1,23 +1,18 @@
 from __future__ import annotations
 
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportAny=false
+# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownMemberType=false
 
-import importlib
 from math import isfinite
 
-import pytest
-
-topology = importlib.import_module("modular_simulation.connection.topology")
-transport = importlib.import_module("modular_simulation.connection.transport")
-transport_runtime = importlib.import_module("modular_simulation.connection.transport_runtime")
-
-BoundaryNode = topology.BoundaryNode
-ConnectionEdge = topology.ConnectionEdge
-LagTransportState = transport.LagTransportState
-PortReference = topology.PortReference
-TopologyGraph = topology.TopologyGraph
-update_lag_transport_state = transport.update_lag_transport_state
-update_transport_runtime_states = transport_runtime.update_transport_runtime_states
+import modular_simulation.connection.transport_runtime as transport_runtime
+from modular_simulation.connection.topology import (
+    BoundaryNode,
+    ConnectionEdge,
+    PortReference,
+    TopologyGraph,
+)
+from modular_simulation.connection.transport import LagTransportState, update_lag_transport_state
+from modular_simulation.connection.transport_runtime import TransportRuntime
 
 
 def _two_edge_graph_unsorted() -> TopologyGraph:
@@ -63,8 +58,9 @@ def _single_edge_graph() -> TopologyGraph:
     )
 
 
-def test_runtime_updates_each_edge_with_lag_parity_and_flow_tracking() -> None:
+def test_runtime_step_delegates_to_sanctioned_lag_kernel_with_flow_tracking() -> None:
     graph = _two_edge_graph_unsorted()
+    runtime = TransportRuntime(topology=graph, lag_time_constant_s=0.9)
     current_states = {
         "edge_a": LagTransportState(composition=(0.75, 0.25), temperature=305.0),
         "edge_b": LagTransportState(composition=(0.35, 0.65), temperature=315.0),
@@ -82,14 +78,12 @@ def test_runtime_updates_each_edge_with_lag_parity_and_flow_tracking() -> None:
         "edge_b": 0.3,
     }
 
-    runtime_result = update_transport_runtime_states(
-        topology=graph,
+    runtime_result = runtime.step(
         current_edge_states=current_states,
         advected_edge_states=advected_states,
         edge_flow_rates=edge_flow_rates,
         previous_edge_flow_rates=previous_edge_flow_rates,
         dt=0.1,
-        lag_time_constant_s=0.9,
     )
 
     assert tuple(runtime_result.edge_updates.keys()) == ("edge_a", "edge_b")
@@ -125,6 +119,11 @@ def test_runtime_updates_each_edge_with_lag_parity_and_flow_tracking() -> None:
 
 def test_runtime_reversal_and_near_zero_hold_sequence_is_deterministic() -> None:
     graph = _single_edge_graph()
+    runtime = TransportRuntime(
+        topology=graph,
+        lag_time_constant_s=0.8,
+        near_zero_flow_epsilon=1.0e-12,
+    )
     initial_state = LagTransportState(composition=(0.5, 0.5), temperature=320.0)
     forward_advected = LagTransportState(composition=(0.9, 0.1), temperature=390.0)
     reverse_advected = LagTransportState(composition=(0.1, 0.9), temperature=260.0)
@@ -139,15 +138,12 @@ def test_runtime_reversal_and_near_zero_hold_sequence_is_deterministic() -> None
             (reverse_advected, -1.0),
             (forward_advected, 1.0e-14),
         ):
-            runtime_result = update_transport_runtime_states(
-                topology=graph,
+            runtime_result = runtime.step(
                 current_edge_states={"edge_main": state},
                 advected_edge_states={"edge_main": advected},
                 edge_flow_rates={"edge_main": flow},
                 previous_edge_flow_rates=previous_edge_flow_rates,
                 dt=0.05,
-                lag_time_constant_s=0.8,
-                near_zero_flow_epsilon=1.0e-12,
             )
             update_result = runtime_result.edge_updates["edge_main"]
             state = runtime_result.edge_states["edge_main"]
@@ -174,11 +170,12 @@ def test_runtime_reversal_and_near_zero_hold_sequence_is_deterministic() -> None
     assert not first_trace[1][4]
     assert not first_trace[2][3]
     assert first_trace[2][4]
-    assert first_trace[2][2] == pytest.approx(0.0)
+    assert abs(first_trace[2][2]) <= 1.0e-12
 
 
 def test_runtime_outputs_remain_finite_with_normalized_composition() -> None:
     graph = _two_edge_graph_unsorted()
+    runtime = TransportRuntime(topology=graph, lag_time_constant_s=0.7)
     current_states = {
         "edge_a": LagTransportState(composition=(0.8, 0.2), temperature=300.0),
         "edge_b": LagTransportState(composition=(0.2, 0.8), temperature=330.0),
@@ -205,14 +202,12 @@ def test_runtime_outputs_remain_finite_with_normalized_composition() -> None:
             for edge_id in edge_flow_rates
         }
 
-        runtime_result = update_transport_runtime_states(
-            topology=graph,
+        runtime_result = runtime.step(
             current_edge_states=current_states,
             advected_edge_states=advected_states,
             edge_flow_rates=edge_flow_rates,
             previous_edge_flow_rates=previous_edge_flow_rates,
             dt=0.08,
-            lag_time_constant_s=0.7,
         )
         current_states = dict(runtime_result.edge_states)
         previous_edge_flow_rates = dict(runtime_result.previous_edge_flow_rates)
@@ -221,6 +216,12 @@ def test_runtime_outputs_remain_finite_with_normalized_composition() -> None:
             assert 0.0 <= update_result.update_fraction <= 1.0
             assert all(isfinite(value) for value in update_result.state.composition)
             assert all(0.0 <= value <= 1.0 for value in update_result.state.composition)
-            assert sum(update_result.state.composition) == pytest.approx(1.0, abs=1.0e-9)
+            assert abs(sum(update_result.state.composition) - 1.0) <= 1.0e-9
             assert isfinite(update_result.state.temperature)
             assert isfinite(runtime_result.previous_edge_flow_rates[edge_id])
+
+
+def test_runtime_module_exports_owner_led_api_only() -> None:
+    assert "TransportRuntime" in getattr(transport_runtime, "__all__", ())
+    assert hasattr(TransportRuntime, "step")
+    assert "update_transport_runtime_states" not in getattr(transport_runtime, "__all__", ())

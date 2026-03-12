@@ -2,50 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
 
-
-class _ElementParameterSpecLike(Protocol):
-    names: tuple[str, ...]
-
-
-class _ElementUnknownSpecLike(Protocol):
-    names: tuple[str, ...]
-
-
-class _ElementOutputSpecLike(Protocol):
-    residual_names: tuple[str, ...]
-
-
-class HydraulicElementLike(Protocol):
-    parameter_spec: _ElementParameterSpecLike
-    unknown_spec: _ElementUnknownSpecLike
-    output_spec: _ElementOutputSpecLike
-
-    def residuals(
-        self,
-        *,
-        inputs: Mapping[str, float],
-        unknowns: Mapping[str, float],
-        parameters: Mapping[str, float],
-    ) -> Mapping[str, float]: ...
-
-    def jacobian(
-        self,
-        *,
-        inputs: Mapping[str, float],
-        unknowns: Mapping[str, float],
-        parameters: Mapping[str, float],
-    ) -> Mapping[tuple[str, str], float]: ...
+from modular_simulation.connection.hydraulic_element import HydraulicElement
 
 
 @dataclass(frozen=True)
 class ElementEquation:
     name: str
-    element: HydraulicElementLike
+    element: HydraulicElement
     inputs: Mapping[str, float]
     parameters: Mapping[str, float]
     unknown_name_map: Mapping[str, str]
@@ -89,6 +57,42 @@ class HydraulicSystemDefinition:
     unknown_order: Sequence[str] | None = None
     residual_order: Sequence[str] | None = None
 
+    def build_index_maps(self) -> tuple[dict[str, int], dict[str, int]]:
+        return build_index_maps(self)
+
+    def assemble_unknown_vector(self, unknown_values: Mapping[str, float]) -> NDArray[np.float64]:
+        return assemble_unknown_vector(self, unknown_values)
+
+    def assemble_residual_vector(
+        self,
+        unknown_vector: NDArray[np.float64],
+    ) -> tuple[NDArray[np.float64], dict[str, int], dict[str, int]]:
+        return assemble_residual_vector(self, unknown_vector)
+
+    def assemble_sparse_jacobian_triplet(
+        self,
+        unknown_vector: NDArray[np.float64],
+    ) -> tuple[SparseJacobianTriplet, dict[str, int], dict[str, int]]:
+        return assemble_sparse_jacobian_triplet(self, unknown_vector)
+
+    def solve(
+        self,
+        *,
+        initial_unknowns: Mapping[str, float] | None = None,
+        warm_start: NDArray[np.float64] | None = None,
+        tolerance: float = 1.0e-8,
+        max_iterations: int = 25,
+        min_damping: float = 1.0e-6,
+    ) -> HydraulicSolveResult:
+        return solve_hydraulic_system(
+            self,
+            initial_unknowns=initial_unknowns,
+            warm_start=warm_start,
+            tolerance=tolerance,
+            max_iterations=max_iterations,
+            min_damping=min_damping,
+        )
+
 
 @dataclass(frozen=True)
 class SparseJacobianTriplet:
@@ -96,6 +100,9 @@ class SparseJacobianTriplet:
     cols: tuple[int, ...]
     data: tuple[float, ...]
     shape: tuple[int, int]
+
+    def to_dense(self) -> NDArray[np.float64]:
+        return triplet_to_dense(self)
 
 
 @dataclass(frozen=True)
@@ -529,10 +536,4 @@ __all__ = [
     "HydraulicSystemDefinition",
     "LinearResidualEquation",
     "SparseJacobianTriplet",
-    "assemble_residual_vector",
-    "assemble_sparse_jacobian_triplet",
-    "assemble_unknown_vector",
-    "build_index_maps",
-    "solve_hydraulic_system",
-    "triplet_to_dense",
 ]

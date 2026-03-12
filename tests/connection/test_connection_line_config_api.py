@@ -12,10 +12,9 @@ from modular_simulation.connection.hydraulic_compile import (
     HydraulicCompileLifecycle,
     calculate_effective_valve_resistance,
 )
-from modular_simulation.connection.hydraulic_element import ValveHydraulicElement
+from modular_simulation.connection.hydraulic_element import HydraulicElement, ValveHydraulicElement
 from modular_simulation.connection.hydraulic_solver import (
     ElementEquation,
-    HydraulicElementLike,
     HydraulicSystemDefinition,
 )
 from modular_simulation.connection.network import ConnectionNetwork
@@ -91,7 +90,7 @@ def _valve_system() -> HydraulicSystemDefinition:
             ElementEquation(
                 name="eq_line_feed",
                 element=cast(
-                    HydraulicElementLike,
+                    HydraulicElement,
                     cast(object, ValveHydraulicElement()),
                 ),
                 inputs=MappingProxyType(
