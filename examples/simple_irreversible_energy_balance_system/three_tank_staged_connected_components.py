@@ -25,10 +25,9 @@ from modular_simulation.components import (
     Trajectory,
 )
 from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_element import ValveHydraulicElement
+from modular_simulation.connection.hydraulic_element import HydraulicElement, ValveHydraulicElement
 from modular_simulation.connection.hydraulic_solver import (
     ElementEquation,
-    HydraulicElementLike,
     HydraulicSystemDefinition,
 )
 from modular_simulation.connection.network import ConnectionNetwork
@@ -205,7 +204,7 @@ def _hydraulic_system(topology: TopologyGraph) -> HydraulicSystemDefinition:
         equations.append(
             ElementEquation(
                 name=f"eq_{edge.edge_id}",
-                element=cast(HydraulicElementLike, cast(object, ValveHydraulicElement())),
+                element=cast(HydraulicElement, cast(object, ValveHydraulicElement())),
                 inputs=MappingProxyType(
                     {
                         "upstream_pressure": upstream_pressure,

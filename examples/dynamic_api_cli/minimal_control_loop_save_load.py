@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# pyright: reportMissingTypeStubs=false
+
 import json
 from collections.abc import Mapping
 from pathlib import Path
@@ -21,12 +23,10 @@ from modular_simulation.components.sensors import SampledDelayedSensor, SensorRu
 from modular_simulation.connection.domain_contracts import ValveConfig
 from modular_simulation.connection.hydraulic_compile import (
     HydraulicCompileLifecycle,
-    solve_compiled_hydraulic_graph,
 )
-from modular_simulation.connection.hydraulic_element import ValveHydraulicElement
+from modular_simulation.connection.hydraulic_element import HydraulicElement, ValveHydraulicElement
 from modular_simulation.connection.hydraulic_solver import (
     ElementEquation,
-    HydraulicElementLike,
     HydraulicSolveResult,
     HydraulicSystemDefinition,
 )
@@ -113,7 +113,7 @@ def _valve_system() -> HydraulicSystemDefinition:
             ElementEquation(
                 name="eq_line_feed",
                 element=cast(
-                    HydraulicElementLike,
+                    HydraulicElement,
                     cast(object, ValveHydraulicElement()),
                 ),
                 inputs=MappingProxyType(
@@ -189,7 +189,7 @@ def _runtime_with_dispatchers(system: System) -> ConnectionRuntimeOrchestrator:
         compiled = network.compiled
         if compiled is None or compiled.hydraulic is None:
             raise RuntimeError("compiled hydraulic graph is required")
-        return solve_compiled_hydraulic_graph(compiled.hydraulic)
+        return compiled.hydraulic.solve()
 
     return ConnectionRuntimeOrchestrator(
         hydraulic_solve_step=hydraulic_solve_step,

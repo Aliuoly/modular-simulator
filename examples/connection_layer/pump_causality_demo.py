@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportUnknownParameterType=false, reportImplicitStringConcatenation=false
+# pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnusedCallResult=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportUnknownParameterType=false, reportImplicitStringConcatenation=false
 
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -8,12 +8,10 @@ from typing import cast
 
 from modular_simulation.connection.hydraulic_compile import (
     HydraulicCompileLifecycle,
-    solve_compiled_hydraulic_graph,
 )
-from modular_simulation.connection.hydraulic_element import PumpHydraulicElement
+from modular_simulation.connection.hydraulic_element import HydraulicElement, PumpHydraulicElement
 from modular_simulation.connection.hydraulic_solver import (
     ElementEquation,
-    HydraulicElementLike,
     HydraulicSystemDefinition,
 )
 from modular_simulation.connection.network import ConnectionNetwork
@@ -42,7 +40,7 @@ def _build_pump_system(*, case: PumpCase, topology: TopologyGraph) -> HydraulicS
     pump_equation = ElementEquation(
         name="pump_head_balance",
         element=cast(
-            HydraulicElementLike,
+            HydraulicElement,
             cast(object, PumpHydraulicElement(dp_curve=_dp_curve, d_dp_d_mdot=_d_dp_d_mdot)),
         ),
         inputs=MappingProxyType(
@@ -105,8 +103,7 @@ def run_demo() -> list[tuple[PumpCase, float, int, float]]:
     warm_start = None
     rows: list[tuple[PumpCase, float, int, float]] = []
     for case in cases:
-        result = solve_compiled_hydraulic_graph(
-            _compile_pump_network(case),
+        result = _compile_pump_network(case).solve(
             warm_start=warm_start,
             tolerance=1.0e-12,
             max_iterations=25,
