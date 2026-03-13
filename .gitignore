@@ -2,6 +2,11 @@
 # scripts
 scripts/
 
+# opencode stuff
+opencode.*
+.opencode/
+.sisyphus/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
