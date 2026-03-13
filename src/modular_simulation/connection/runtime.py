@@ -20,6 +20,10 @@ from modular_simulation.connection.network import (
     ConnectionNetwork,
     QueuedReconfigurationTransaction,
 )
+from modular_simulation.connection.process_stream_io import ProcessStreamIO
+from modular_simulation.connection.runtime_snapshot_schema import (
+    validate_live_runtime_snapshot_payload,
+)
 from modular_simulation.connection.error_catalog import (
     IDEMPOTENCY_CONFLICT_CODE,
     REVISION_MISMATCH_CODE,
@@ -34,7 +38,7 @@ from modular_simulation.connection.state import PortCondition
 
 if TYPE_CHECKING:
     from modular_simulation.framework.system import System
-    from modular_simulation.thermodynamics.stream import StreamData, StreamPortIO
+    from modular_simulation.thermodynamics.stream import StreamData
     from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 
 CONNECTED_PLANT_PHASE_ORDER: tuple[str, ...] = (
@@ -291,7 +295,7 @@ class ConnectionRuntimeOrchestrator:
         )
         self._runtime_context: SimulationRuntimeContext | None = runtime_context
         self._use_context_boundary_propagation: bool = boundary_propagation_step is None
-        self._stream_port_io_by_node_id: dict[str, StreamPortIO] = {}
+        self._stream_port_io_by_node_id: dict[str, ProcessStreamIO] = {}
         self._feed_streams_by_boundary_id: dict[str, StreamData] = {}
         self._boundary_propagation_step: RuntimeBoundaryPropagationStep = (
             boundary_propagation_step
@@ -342,15 +346,15 @@ class ConnectionRuntimeOrchestrator:
         self._runtime_context = runtime_context
         self._refresh_boundary_propagation_step_from_context()
 
-    def bind_stream_port_io(self, *, node_id: str, stream_port_io: StreamPortIO) -> None:
+    def bind_stream_port_io(self, *, node_id: str, stream_port_io: ProcessStreamIO) -> None:
         normalized_node_id = node_id.strip()
         if not normalized_node_id:
             raise ValueError("node_id must be a non-empty string")
         self._stream_port_io_by_node_id[normalized_node_id] = stream_port_io
         self._refresh_boundary_propagation_step_from_context()
 
-    def bind_stream_port_ios(self, *, bindings: Mapping[str, StreamPortIO]) -> None:
-        normalized_bindings: dict[str, StreamPortIO] = {}
+    def bind_stream_port_ios(self, *, bindings: Mapping[str, ProcessStreamIO]) -> None:
+        normalized_bindings: dict[str, ProcessStreamIO] = {}
         for node_id, stream_port_io in bindings.items():
             normalized_node_id = node_id.strip()
             if not normalized_node_id:
@@ -583,53 +587,13 @@ class ConnectionRuntimeOrchestrator:
     def resume_from_snapshot(
         self, *, network: ConnectionNetwork, snapshot: Mapping[str, object]
     ) -> None:
-        schema = snapshot.get("schema")
-        if schema != "connection_runtime_v1":
-            raise ValueError(
-                "invalid runtime snapshot payload: expected field 'schema' == 'connection_runtime_v1'"
-            )
-
-        simulation_time = snapshot.get("simulation_time_s")
-        if not isinstance(simulation_time, (float, int)):
-            raise ValueError(
-                "invalid runtime snapshot payload: field 'simulation_time_s' must be finite number"
-            )
-        simulation_time_s = float(simulation_time)
-        if simulation_time_s < 0.0 or not isfinite(simulation_time_s):
-            raise ValueError(
-                "invalid runtime snapshot payload: field 'simulation_time_s' must be finite number"
-            )
-
-        macro_step_index = snapshot.get("macro_step_index")
-        if not isinstance(macro_step_index, int) or macro_step_index < 0:
-            raise ValueError(
-                "invalid runtime snapshot payload: field 'macro_step_index' must be non-negative integer"
-            )
-
-        macro_step_active = snapshot.get("macro_step_active")
-        if macro_step_active is not False:
-            raise ValueError(
-                "invalid runtime snapshot payload: field 'macro_step_active' must be false at barrier"
-            )
-
-        idempotency_keys = snapshot.get("committed_idempotency_keys", ())
-        if isinstance(idempotency_keys, str) or not isinstance(idempotency_keys, Sequence):
-            raise ValueError(
-                "invalid runtime snapshot payload: field 'committed_idempotency_keys' must be sequence of strings"
-            )
-        normalized_keys: set[str] = set()
-        for key in idempotency_keys:
-            if not isinstance(key, str) or not key.strip():
-                raise ValueError(
-                    "invalid runtime snapshot payload: field 'committed_idempotency_keys' must be sequence of strings"
-                )
-            normalized_keys.add(key.strip())
+        validated_snapshot = validate_live_runtime_snapshot_payload(snapshot=snapshot)
 
         del network
-        self._simulation_time_s = simulation_time_s
-        self._macro_step_index = macro_step_index
+        self._simulation_time_s = validated_snapshot.simulation_time_s
+        self._macro_step_index = validated_snapshot.macro_step_index
         self._macro_step_active = False
-        self._committed_idempotency_keys = normalized_keys
+        self._committed_idempotency_keys = set(validated_snapshot.committed_idempotency_keys)
 
     def _apply_reconfiguration_batch(
         self, *, network: ConnectionNetwork

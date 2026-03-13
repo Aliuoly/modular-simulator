@@ -8,6 +8,9 @@ from modular_simulation.connection.network import (
     ConnectionNetwork,
     QueuedReconfigurationTransaction,
 )
+from modular_simulation.connection.domain_contracts import (
+    validate_reconfiguration_request_metadata,
+)
 from modular_simulation.connection.error_catalog import (
     COMPATIBILITY_FAILURE_CODE,
     REVISION_MISMATCH_CODE,
@@ -16,6 +19,9 @@ from modular_simulation.connection.error_catalog import (
     revision_details,
 )
 from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
+from modular_simulation.connection.runtime_snapshot_schema import (
+    validate_runtime_checkpoint_envelope,
+)
 from modular_simulation.framework.system import (
     CHECKPOINT_INTEGRITY_MISMATCH_ERROR_CODE,
     CHECKPOINT_VERSION_MISMATCH_ERROR_CODE,
@@ -106,18 +112,10 @@ def save_runtime_snapshot_contract(
 
 
 def validate_runtime_snapshot_contract(snapshot: Mapping[str, object]) -> ValidatedRuntimeSnapshot:
-    normalized_snapshot = _require_mapping(snapshot, "snapshot payload")
-    _require_exact_keys(
-        "snapshot payload",
-        normalized_snapshot,
-        (
-            "schema_marker",
-            "schema_version",
-            "graph_revision",
-            "package_metadata",
-            "snapshot",
-            "pending_command_journal",
-            "integrity_checksum",
+    normalized_snapshot = cast(
+        dict[str, object],
+        validate_runtime_checkpoint_envelope(snapshot=snapshot).model_dump(
+            mode="python", by_alias=True
         ),
     )
     schema_marker = normalized_snapshot["schema_marker"]
@@ -271,7 +269,7 @@ def validate_runtime_snapshot_contract(snapshot: Mapping[str, object]) -> Valida
         "integrity_checksum",
     )
     checksum_payload = dict(normalized_snapshot)
-    _ = checksum_payload.pop("integrity_checksum", None)
+    checksum_payload.pop("integrity_checksum", None)
     expected_checksum = checkpoint_payload_checksum(checksum_payload)
     if provided_checksum != expected_checksum:
         raise ValueError(
@@ -337,7 +335,9 @@ def _validate_queued_requests(
             request_mapping["metadata"],
             field_name + f"[{request_index}].metadata",
         )
-        normalized_metadata = _normalize_mapping_payload(metadata)
+        normalized_metadata = validate_reconfiguration_request_metadata(
+            metadata=_normalize_mapping_payload(metadata)
+        ).as_mapping()
 
         mutations_value = request_mapping["mutations"]
         if isinstance(mutations_value, str) or not isinstance(mutations_value, Sequence):
