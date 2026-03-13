@@ -35,3 +35,18 @@ Why:
 
 - Task 17 is the cleanest convergence point between the recovered plan and the desired discoverability refactor.
 - Owner-led quickstart helpers are discoverability work and boundary-cleanup work at the same time.
+
+## 2026-03-13 — Reconciled completion boundary
+
+- All recoverable and discoverability-compatible tasks from the reconstructed sweep are now completed on current `main`.
+- The remaining unchecked items in the reconstructed plan are archival placeholders whose exact wording was never recoverable from session history.
+- Those placeholder items are intentionally left non-executable rather than guessed into existence.
+
+### Completed recoverable scope
+
+- Public query models and deterministic query APIs
+- Migration off private `ConnectionNetwork` reads
+- Typed ingress/schema validation for live/runtime/checkpoint/reconfiguration boundaries
+- Quickstart ergonomics and dynamic API example migration
+- Removal of `StreamPortIO` from production typing paths in connection/flowsheet code
+- Required hydraulic/demo example cleanup sufficient for compile verification

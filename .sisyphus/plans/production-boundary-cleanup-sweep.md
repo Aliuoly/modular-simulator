@@ -14,6 +14,14 @@
   - Completed/verified: `1, 2, 4, 6, 7, 8, 9, 10, 11, 12, 15, 16`
   - Pending/blocked: `3, 5, 13, 17, 18, 19, 14`
 
+## Current reconciled status (2026-03-13)
+
+- Recoverable and discoverability-compatible implementation scope is now complete and verified on current `main`.
+- Completed/verified on current `main`: `1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19`
+- No remaining actionable blockers for the recoverable scope.
+- Archival placeholders still unrecovered from session history: `5, 20, 21, 22, 23, F1, F2, F3, F4`.
+- Those placeholders are not safe to invent and therefore do not represent unfinished verified implementation work.
+
 ## Recovered execution structure
 
 - Wave 1: `{1-5, 15}`
@@ -31,14 +39,15 @@
 - [x] Task 2: Add deterministic `ConnectionNetwork` query methods
   - Recovered outputs: `list_process_specs`, `list_boundary_specs`, `list_connection_edges`, `list_line_hydraulic_configs`, `list_pending_valve_open_fractions`
 
-- [ ] Task 3: Migrate CLI spec workflow onto the public connection query surface
-  - Recovered last status: functionally complete, but blocked by a contradictory audit in the old plan.
+- [x] Task 3: Migrate CLI spec workflow onto the public connection query surface
+  - Reconciled status: completed on current `main`; the old blocking audit was contradictory and is treated as superseded.
 
 - [x] Task 4: Replace runtime/control wiring private `ConnectionNetwork` reads with the public query surface
 
 - [ ] Task 5: Exact original wording unrecovered from accessible session history
   - Recovered status: not started at the last checkpoint.
   - Recovered dependency signal: task 5 sat on the critical path between tasks 3 and 16.
+  - Current status: archival placeholder only; exact scope remains unrecoverable and is not safe to invent.
 
 - [x] Task 6: Broaden `ProcessModel` runtime I/O contract
 
@@ -55,27 +64,27 @@
 
 - [x] Task 12: Remove hydraulic `object` erasure from flowsheet and hydraulic producers
 
-- [ ] Task 13: Repair required downstream `HydraulicElementLike` cleanup files
-  - Recovered last status: blocked by corrupted required example files.
+- [x] Task 13: Repair required downstream `HydraulicElementLike` cleanup files
+  - Reconciled status: required examples/quickstarts compile cleanly and `HydraulicElementLike` is absent from current production/tests.
 
-- [ ] Task 14: Final verification wave
-  - Recovered dependency note: depends on all implementation tasks.
+- [x] Task 14: Final verification wave
+  - Reconciled status: completed with targeted pytest, example compilation, focused basedpyright, and package build verification.
 
 - [x] Task 15: Add schema layer for connection/runtime ingress boundaries
 
 - [x] Task 16: Wire typed schemas into runtime and CLI ingress paths
 
-- [ ] Task 17: Add quickstart ergonomics
+- [x] Task 17: Add quickstart ergonomics
   - Recovered outputs:
     - `ConnectionNetwork.from_single_process(...)`
     - `ConnectionRuntimeOrchestrator.for_system(...)`
-  - Recovered last status: active forward path.
+  - Reconciled status: completed on current `main`.
 
-- [ ] Task 18: Migrate target dynamic API quickstarts to the new ergonomics
-  - Recovered dependency note: depends on task 17.
+- [x] Task 18: Migrate target dynamic API quickstarts to the new ergonomics
+  - Reconciled status: completed on current `main`.
 
-- [ ] Task 19: Final quickstart scope/hygiene checks
-  - Recovered dependency note: depends on task 17.
+- [x] Task 19: Final quickstart scope/hygiene checks
+  - Reconciled status: completed on current `main`.
 
 - [ ] Task 20: Exact original wording unrecovered from accessible session history
 
@@ -98,6 +107,17 @@
 - Task 13 remained the main concrete code-fix blocker because required example files were malformed/corrupted.
 - Task 17 was the next intended implementation lane after tasks 15/16 and the hydraulic cleanup wave.
 - Task 10 had to be completed to properly verify task 16.
+
+## Reconciled completion notes
+
+- Typed ingress/schema validation is now present for reconfiguration request metadata/envelopes, live runtime snapshot payloads, and runtime checkpoint envelopes.
+- `StreamPortIO` has been removed from current production typing paths in connection runtime/thermo coupling/flowsheet code, while the legacy thermodynamics protocol definition remains as a non-production reference.
+- Required boundary-cleanup examples now compile successfully, including the previously blocked hydraulic/demo set.
+- Verification completed on current `main`:
+  - `PYTHONPATH=. uv run pytest tests/connection/test_runtime_mutation_contract.py tests/connection/test_runtime_persistence_contract.py tests/connection/test_network_api.py tests/connection/test_destructive_edit_policies.py tests/connection/test_domain_contracts.py tests/cli/test_cli_spec_diff_apply.py tests/integration/test_examples_smoke.py tests/unit_process/test_flowsheet_builder.py tests/unit_process/test_flowsheet_validation.py tests/unit_process/test_stream_port_io.py`
+  - `uv run python -m py_compile examples/connection_layer/pump_causality_demo.py examples/simple_irreversible_energy_balance_system/three_tank_staged_connected_components.py examples/simple_irreversible_energy_balance_system/three_tank_staged_connected_control.py examples/dynamic_simulation_demos/coupled_three_tank_edge_valve_demo.py examples/dynamic_simulation_demos/coupled_cstr_flash_physical_actuator_demo.py examples/dynamic_simulation_demos/flash_backpressure_valve_demo.py examples/dynamic_api_cli/minimal_command_quickstart.py examples/dynamic_api_cli/minimal_spec_quickstart.py examples/dynamic_api_cli/minimal_control_loop_save_load.py`
+  - `uv run basedpyright src/modular_simulation/connection/network.py src/modular_simulation/connection/runtime.py src/modular_simulation/connection/runtime_persistence.py src/modular_simulation/connection/domain_contracts.py src/modular_simulation/connection/runtime_snapshot_schema.py src/modular_simulation/connection/invariant_validator.py src/modular_simulation/connection/thermo_coupling.py src/modular_simulation/flowsheet/flowsheet.py src/modular_simulation/cli/commands.py src/modular_simulation/connection/process_stream_io.py`
+  - `uv run --with build python -m build`
 
 ## Non-goals of this recovered artifact
 

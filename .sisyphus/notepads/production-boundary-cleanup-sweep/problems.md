@@ -11,3 +11,10 @@
 - The recovered plan file is a faithful reconstruction from session evidence, not a byte-exact restoration.
 - `.sisyphus/boulder.json` still points to `control-surface-remediation`; this recovered plan is intentionally non-active.
 - If exact wording for the unrecovered tasks/approvals becomes important, continue recovery from OpenCode session history before editing those checklist items.
+
+## 2026-03-13 — Residual archival limitations after completion
+
+- Task 5 remains unrecoverable by wording/scope.
+- Tasks 20-23 remain unrecoverable by wording/scope.
+- Final approvals F1-F4 remain unrecoverable by wording/scope.
+- These are archival recovery gaps, not remaining verified implementation work on current `main`.
