@@ -37,18 +37,14 @@ def _valid_system() -> HydraulicSystemDefinition:
 
 
 def _network(runtime: ConnectionRuntimeOrchestrator) -> ConnectionNetwork:
-    network = ConnectionNetwork(
+    return ConnectionNetwork.from_single_process(
         compile_lifecycle=HydraulicCompileLifecycle(),
         hydraulic_system_builder=lambda topology: _valid_system(),
         runtime_orchestrator=runtime,
+        process_id="reactor",
+        inlet_ports=("feed",),
+        outlet_ports=("product",),
     )
-    network.add_process("reactor", inlet_ports=("feed",), outlet_ports=("product",))
-    network.add_boundary_source("feed_boundary")
-    network.add_boundary_sink("product_boundary")
-    _ = network.connect("feed_boundary", "reactor.feed")
-    _ = network.connect("reactor.product", "product_boundary")
-    _ = network.compile()
-    return network
 
 
 def run_demo() -> dict[str, object]:

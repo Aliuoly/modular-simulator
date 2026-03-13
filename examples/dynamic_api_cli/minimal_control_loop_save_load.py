@@ -3,7 +3,6 @@ from __future__ import annotations
 # pyright: reportMissingTypeStubs=false
 
 import json
-from collections.abc import Mapping
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import MappingProxyType, SimpleNamespace
@@ -162,24 +161,6 @@ def _build_system(process_model: ProcessModel) -> System:
 
 
 def _runtime_with_dispatchers(system: System) -> ConnectionRuntimeOrchestrator:
-    def sensor_dispatcher(
-        *, operation: str, mutation: Mapping[str, object], request_metadata: Mapping[str, object]
-    ) -> None:
-        system.apply_sensor_runtime_mutation(
-            operation=operation,
-            mutation=mutation,
-            request_metadata=request_metadata,
-        )
-
-    def controller_dispatcher(
-        *, operation: str, mutation: Mapping[str, object], request_metadata: Mapping[str, object]
-    ) -> None:
-        system.apply_controller_runtime_mutation(
-            operation=operation,
-            mutation=mutation,
-            request_metadata=request_metadata,
-        )
-
     def hydraulic_solve_step(
         *,
         network: ConnectionNetwork,
@@ -191,26 +172,21 @@ def _runtime_with_dispatchers(system: System) -> ConnectionRuntimeOrchestrator:
             raise RuntimeError("compiled hydraulic graph is required")
         return compiled.hydraulic.solve()
 
-    return ConnectionRuntimeOrchestrator(
+    return ConnectionRuntimeOrchestrator.for_system(
+        system=system,
         hydraulic_solve_step=hydraulic_solve_step,
-        sensor_mutation_dispatcher=sensor_dispatcher,
-        controller_mutation_dispatcher=controller_dispatcher,
     )
 
 
 def _network(runtime: ConnectionRuntimeOrchestrator) -> ConnectionNetwork:
-    network = ConnectionNetwork(
+    return ConnectionNetwork.from_single_process(
         compile_lifecycle=HydraulicCompileLifecycle(),
         hydraulic_system_builder=lambda topology: _valve_system(),
         runtime_orchestrator=runtime,
+        process_id="reactor",
+        inlet_ports=("feed",),
+        outlet_ports=("product",),
     )
-    network.add_process("reactor", inlet_ports=("feed",), outlet_ports=("product",))
-    network.add_boundary_source("feed_boundary")
-    network.add_boundary_sink("product_boundary")
-    _ = network.connect("feed_boundary", "reactor.feed")
-    _ = network.connect("reactor.product", "product_boundary")
-    _ = network.compile()
-    return network
 
 
 def _attached_model() -> ThermalProcessModel:
