@@ -23,7 +23,7 @@ from modular_simulation.connection.asymmetric_adapter import (
 from modular_simulation.connection.domain_contracts import (
     ResistanceConfig,
     ValveConfig,
-    validate_command_envelope,
+    validate_reconfiguration_command_envelope,
 )
 from modular_simulation.connection.error_catalog import (
     VALIDATION_FAILURE_CODE,
@@ -34,6 +34,9 @@ from modular_simulation.connection.hydraulic_solver import (
     HydraulicSystemDefinition,
 )
 from modular_simulation.connection.process_binding import ProcessBinding
+from modular_simulation.connection.runtime_snapshot_schema import (
+    validate_live_runtime_snapshot_payload,
+)
 from modular_simulation.connection.topology import (
     BoundaryNode,
     ConnectionEdge,
@@ -553,99 +556,30 @@ class ConnectionNetwork:
                 hint="provide a mapping request payload containing a non-empty string operation",
             )
         request_mapping = cast(Mapping[object, object], request)
-        operation = request_mapping.get("operation")
-        if not isinstance(operation, str) or not operation.strip():
+        try:
+            envelope = validate_reconfiguration_command_envelope(request=request_mapping)
+        except ValueError as error:
+            message = str(error)
+            path = "operation"
+            hint = "provide a mapping request payload containing a non-empty string operation"
+            if "idempotency_key" in message:
+                path = "idempotency_key"
+                hint = "remove idempotency_key or provide a non-empty string"
+            elif "expected_revision" in message:
+                path = "expected_revision"
+                hint = "remove expected_revision or provide a non-empty string"
+            elif "metadata" in message or "transaction metadata" in message:
+                path = "metadata"
+                hint = "provide metadata as a mapping of key/value pairs"
+            elif "mutations" in message:
+                path = "mutations"
+                hint = "provide at least one mutation mapping with a non-empty operation"
             raise diagnostic_value_error(
                 code=VALIDATION_FAILURE_CODE,
-                message="invalid reconfiguration request: expected mapping with non-empty string field 'operation'",
-                path="operation",
-                hint="provide a mapping request payload containing a non-empty string operation",
-            )
-
-        idempotency_key_raw = request_mapping.get("idempotency_key")
-        idempotency_key: str | None
-        if idempotency_key_raw is None:
-            idempotency_key = None
-        elif isinstance(idempotency_key_raw, str) and idempotency_key_raw.strip():
-            idempotency_key = idempotency_key_raw.strip()
-        else:
-            raise diagnostic_value_error(
-                code=VALIDATION_FAILURE_CODE,
-                message="invalid reconfiguration request: optional field 'idempotency_key' must be a non-empty string",
-                path="idempotency_key",
-                hint="remove idempotency_key or provide a non-empty string",
-            )
-
-        expected_revision_raw = request_mapping.get("expected_revision")
-        expected_revision: str | None
-        if expected_revision_raw is None:
-            expected_revision = None
-        elif isinstance(expected_revision_raw, str) and expected_revision_raw.strip():
-            expected_revision = expected_revision_raw.strip()
-        else:
-            raise diagnostic_value_error(
-                code=VALIDATION_FAILURE_CODE,
-                message="invalid reconfiguration request: optional field 'expected_revision' must be a non-empty string",
-                path="expected_revision",
-                hint="remove expected_revision or provide a non-empty string",
-            )
-
-        metadata_raw = request_mapping.get("metadata")
-        metadata: dict[str, object]
-        if metadata_raw is None:
-            metadata = {}
-        elif isinstance(metadata_raw, Mapping):
-            metadata_mapping = cast(Mapping[object, object], metadata_raw)
-            metadata = {str(key): value for key, value in metadata_mapping.items()}
-        else:
-            raise diagnostic_value_error(
-                code=VALIDATION_FAILURE_CODE,
-                message="invalid reconfiguration request: optional field 'metadata' must be a mapping",
-                path="metadata",
-                hint="provide metadata as a mapping of key/value pairs",
-            )
-
-        mutations_field = request_mapping.get("mutations")
-        mutations: tuple[dict[str, object], ...]
-        if mutations_field is None:
-            mutations = (self._normalize_reconfiguration_mutation(request_mapping),)
-        else:
-            if isinstance(mutations_field, str) or not isinstance(mutations_field, Sequence):
-                raise diagnostic_value_error(
-                    code=VALIDATION_FAILURE_CODE,
-                    message="invalid reconfiguration request: field 'mutations' must be a non-empty sequence of mapping objects",
-                    path="mutations",
-                    hint="provide at least one mutation mapping with a non-empty operation",
-                )
-            normalized_mutations: list[dict[str, object]] = []
-            for mutation in mutations_field:
-                if not isinstance(mutation, Mapping):
-                    raise diagnostic_value_error(
-                        code=VALIDATION_FAILURE_CODE,
-                        message="invalid reconfiguration request: each mutation must be a mapping with non-empty string field 'operation'",
-                        path="mutations",
-                        hint="each mutation must be a mapping object",
-                    )
-                normalized_mutations.append(
-                    self._normalize_reconfiguration_mutation(
-                        cast(Mapping[object, object], mutation)
-                    )
-                )
-            if not normalized_mutations:
-                raise diagnostic_value_error(
-                    code=VALIDATION_FAILURE_CODE,
-                    message="invalid reconfiguration request: field 'mutations' must be a non-empty sequence of mapping objects",
-                    path="mutations",
-                    hint="provide at least one mutation mapping with a non-empty operation",
-                )
-            mutations = tuple(normalized_mutations)
-
-        envelope = validate_command_envelope(
-            idempotency_key=idempotency_key,
-            expected_revision=expected_revision,
-            metadata=metadata,
-            mutations=mutations,
-        )
+                message=message,
+                path=path,
+                hint=hint,
+            ) from error
 
         request_id = f"rq_{self._next_reconfiguration_index:04d}"
         self._next_reconfiguration_index += 1
@@ -670,12 +604,15 @@ class ConnectionNetwork:
     def resume_from_snapshot(self, *, snapshot: object) -> None:
         if not isinstance(snapshot, Mapping):
             raise ValueError("invalid snapshot payload: expected mapping")
-        snapshot_mapping = cast(Mapping[str, object], snapshot)
         if self._runtime_orchestrator is None:
             raise RuntimeError(
                 "runtime resume is unavailable: runtime orchestrator not configured for ConnectionNetwork"
             )
-        self._runtime_orchestrator.resume_from_snapshot(network=self, snapshot=snapshot_mapping)
+        validated_snapshot = validate_live_runtime_snapshot_payload(snapshot=snapshot)
+        self._runtime_orchestrator.resume_from_snapshot(
+            network=self,
+            snapshot=validated_snapshot.model_dump(mode="python", by_alias=True),
+        )
 
     def remove_boundary(self, *, boundary_id: object) -> None:
         self._remove_boundary(boundary_id=boundary_id)

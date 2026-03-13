@@ -3,13 +3,17 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import json
-from typing import Literal, cast
+from typing import Literal
 
 from modular_simulation.connection.error_catalog import (
     INVARIANT_FAILURE_CODE,
     DiagnosticPayload,
     DiagnosticValueError,
     build_diagnostic_payload,
+)
+from modular_simulation.connection.domain_contracts import (
+    ReconfigurationRequestMetadata,
+    validate_reconfiguration_request_metadata,
 )
 from modular_simulation.connection.network import ConnectionNetwork
 
@@ -129,7 +133,8 @@ class ConnectionMutationInvariantValidator:
         if removal_class is None:
             return None
 
-        mode = self._resolve_mode(request_metadata)
+        validated_metadata = validate_reconfiguration_request_metadata(metadata=request_metadata)
+        mode = self._resolve_mode(validated_metadata)
         target_reference = self._resolve_target_reference(
             network=network,
             mutation=mutation,
@@ -145,7 +150,7 @@ class ConnectionMutationInvariantValidator:
             network=network,
             mutation=mutation,
             removal_class=removal_class,
-            request_metadata=request_metadata,
+            request_metadata=validated_metadata,
             topology_edge_ids=topology_edges,
         )
 
@@ -186,14 +191,10 @@ class ConnectionMutationInvariantValidator:
             edge_ids_to_detach=tuple(sorted(set(edge_ids_to_detach))),
         )
 
-    def _resolve_mode(self, request_metadata: Mapping[str, object]) -> DestructiveEditMode:
-        raw_mode = request_metadata.get("destructive_edit_mode", "hard_fail")
-        if not isinstance(raw_mode, str) or not raw_mode.strip():
-            raise ValueError(
-                "invalid transaction metadata: field 'destructive_edit_mode' "
-                + "must be 'hard_fail' or 'safe_detach'"
-            )
-        mode = raw_mode.strip()
+    def _resolve_mode(
+        self, request_metadata: ReconfigurationRequestMetadata
+    ) -> DestructiveEditMode:
+        mode = request_metadata.destructive_edit_mode
         if mode == "hard_fail":
             return "hard_fail"
         if mode == "safe_detach":
@@ -282,7 +283,7 @@ class ConnectionMutationInvariantValidator:
         network: ConnectionNetwork,
         mutation: Mapping[str, object],
         removal_class: RemovalClass,
-        request_metadata: Mapping[str, object],
+        request_metadata: ReconfigurationRequestMetadata,
         topology_edge_ids: Sequence[str],
     ) -> tuple[str, ...]:
         control_index = self._control_dependency_index(request_metadata)
@@ -327,57 +328,9 @@ class ConnectionMutationInvariantValidator:
         return tuple(sorted(normalized_dependents))
 
     def _control_dependency_index(
-        self, request_metadata: Mapping[str, object]
+        self, request_metadata: ReconfigurationRequestMetadata
     ) -> dict[str, tuple[str, ...]]:
-        raw_index = request_metadata.get("control_dependencies")
-        if raw_index is None:
-            return {}
-        if not isinstance(raw_index, Mapping):
-            raise ValueError(
-                "invalid transaction metadata: field 'control_dependencies' must be a mapping"
-            )
-
-        dependency_index: dict[str, tuple[str, ...]] = {}
-        for raw_target, raw_dependents in cast(Mapping[object, object], raw_index).items():
-            if not isinstance(raw_target, str) or not raw_target.strip():
-                raise ValueError(
-                    "invalid transaction metadata: control dependency keys must be non-empty strings"
-                )
-            if isinstance(raw_dependents, str) or not isinstance(raw_dependents, Sequence):
-                raise ValueError(
-                    "invalid transaction metadata: control dependency entries must be sequences"
-                )
-
-            normalized_items: set[str] = set()
-            for dependent in raw_dependents:
-                normalized_items.add(self._normalize_control_dependency(dependent))
-            dependency_index[raw_target.strip()] = tuple(sorted(normalized_items))
-        return dependency_index
-
-    def _normalize_control_dependency(self, value: object) -> str:
-        if isinstance(value, str) and value.strip():
-            token = value.strip()
-            return token if token.startswith("control:") else f"control:{token}"
-
-        if isinstance(value, Mapping):
-            mapping_value = cast(Mapping[object, object], value)
-            dependency_id = mapping_value.get("dependency_id", mapping_value.get("id"))
-            if not isinstance(dependency_id, str) or not dependency_id.strip():
-                raise ValueError(
-                    "invalid transaction metadata: control dependency mapping entries "
-                    + "must include non-empty string key 'dependency_id' or 'id'"
-                )
-            dependency_kind = mapping_value.get("kind", "dependency")
-            if not isinstance(dependency_kind, str) or not dependency_kind.strip():
-                raise ValueError(
-                    "invalid transaction metadata: control dependency mapping field 'kind' "
-                    + "must be non-empty string when provided"
-                )
-            return f"control:{dependency_kind.strip()}:{dependency_id.strip()}"
-
-        raise ValueError(
-            "invalid transaction metadata: control dependency entries must be strings or mappings"
-        )
+        return {key: tuple(values) for key, values in request_metadata.control_dependencies.items()}
 
     def _non_empty_string(self, value: object) -> str | None:
         if not isinstance(value, str) or not value.strip():

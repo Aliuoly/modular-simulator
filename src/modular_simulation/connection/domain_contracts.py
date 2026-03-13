@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Mapping
-from typing import ClassVar, Literal
+from collections.abc import Mapping, Sequence
+from typing import ClassVar, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from modular_simulation.connection.topology import (
     ConnectionEdge,
@@ -21,6 +29,13 @@ def _normalize_non_empty_token(value: str, *, field_name: str) -> str:
     if any(ch.isspace() for ch in normalized):
         raise ValueError(f"{field_name} must not contain whitespace")
     return normalized
+
+
+def _validation_error_message(error: ValidationError) -> str:
+    first_error = error.errors()[0]
+    message = str(first_error.get("msg", "invalid payload"))
+    prefix = "Value error, "
+    return message[len(prefix) :] if message.startswith(prefix) else message
 
 
 class Port(BaseModel):
@@ -355,6 +370,76 @@ class CommandEnvelope(BaseModel):
         return self
 
 
+class ReconfigurationRequestMetadata(BaseModel):
+    destructive_edit_mode: Literal["hard_fail", "safe_detach"] = "hard_fail"
+    control_dependencies: dict[str, tuple[str, ...]] = Field(default_factory=dict)
+
+    model_config: ClassVar[ConfigDict] = ConfigDict(extra="allow", arbitrary_types_allowed=True)
+
+    @field_validator("control_dependencies", mode="before")
+    @classmethod
+    def _validate_control_dependencies(
+        cls, value: object, info: ValidationInfo
+    ) -> dict[str, tuple[str, ...]]:
+        del info
+        if value is None:
+            return {}
+        if not isinstance(value, Mapping):
+            raise ValueError(
+                "invalid transaction metadata: field 'control_dependencies' must be a mapping"
+            )
+
+        normalized_index: dict[str, tuple[str, ...]] = {}
+        for raw_target, raw_dependents in cast(Mapping[object, object], value).items():
+            if not isinstance(raw_target, str) or not raw_target.strip():
+                raise ValueError(
+                    "invalid transaction metadata: control dependency keys must be non-empty strings"
+                )
+            if isinstance(raw_dependents, str) or not isinstance(raw_dependents, Sequence):
+                raise ValueError(
+                    "invalid transaction metadata: control dependency entries must be sequences"
+                )
+
+            normalized_dependents: set[str] = set()
+            for dependent in raw_dependents:
+                normalized_dependents.add(cls._normalize_control_dependency(dependent))
+            normalized_index[raw_target.strip()] = tuple(sorted(normalized_dependents))
+        return normalized_index
+
+    @classmethod
+    def _normalize_control_dependency(cls, value: object) -> str:
+        if isinstance(value, str) and value.strip():
+            token = value.strip()
+            return token if token.startswith("control:") else f"control:{token}"
+
+        if isinstance(value, Mapping):
+            mapping_value = cast(Mapping[object, object], value)
+            dependency_id = mapping_value.get("dependency_id", mapping_value.get("id"))
+            if not isinstance(dependency_id, str) or not dependency_id.strip():
+                raise ValueError(
+                    "invalid transaction metadata: control dependency mapping entries "
+                    + "must include non-empty string key 'dependency_id' or 'id'"
+                )
+            dependency_kind = mapping_value.get("kind", "dependency")
+            if not isinstance(dependency_kind, str) or not dependency_kind.strip():
+                raise ValueError(
+                    "invalid transaction metadata: control dependency mapping field 'kind' "
+                    + "must be non-empty string when provided"
+                )
+            return f"control:{dependency_kind.strip()}:{dependency_id.strip()}"
+
+        raise ValueError(
+            "invalid transaction metadata: control dependency entries must be strings or mappings"
+        )
+
+    def as_mapping(self) -> dict[str, object]:
+        payload = dict(self.model_dump(mode="python", by_alias=False))
+        payload["control_dependencies"] = {
+            target: tuple(dependents) for target, dependents in self.control_dependencies.items()
+        }
+        return payload
+
+
 def validate_command_envelope(
     *,
     idempotency_key: str | None,
@@ -370,6 +455,110 @@ def validate_command_envelope(
     )
 
 
+def validate_reconfiguration_request_metadata(
+    *, metadata: Mapping[str, object]
+) -> ReconfigurationRequestMetadata:
+    try:
+        return ReconfigurationRequestMetadata.model_validate(
+            {str(key): value for key, value in metadata.items()}
+        )
+    except ValidationError as error:
+        raise ValueError(_validation_error_message(error)) from error
+
+
+def validate_reconfiguration_command_envelope(
+    *, request: Mapping[object, object]
+) -> CommandEnvelope:
+    request_mapping = {str(key): value for key, value in request.items()}
+
+    idempotency_key_raw = request_mapping.get("idempotency_key")
+    if idempotency_key_raw is None:
+        idempotency_key = None
+    elif isinstance(idempotency_key_raw, str) and idempotency_key_raw.strip():
+        idempotency_key = idempotency_key_raw.strip()
+    else:
+        raise ValueError(
+            "invalid reconfiguration request: optional field 'idempotency_key' must be a non-empty string"
+        )
+
+    expected_revision_raw = request_mapping.get("expected_revision")
+    if expected_revision_raw is None:
+        expected_revision = None
+    elif isinstance(expected_revision_raw, str) and expected_revision_raw.strip():
+        expected_revision = expected_revision_raw.strip()
+    else:
+        raise ValueError(
+            "invalid reconfiguration request: optional field 'expected_revision' must be a non-empty string"
+        )
+
+    metadata_raw = request_mapping.get("metadata")
+    if metadata_raw is None:
+        metadata_mapping: dict[str, object] = {}
+    elif isinstance(metadata_raw, Mapping):
+        metadata_mapping = {
+            str(key): value for key, value in cast(Mapping[object, object], metadata_raw).items()
+        }
+    else:
+        raise ValueError(
+            "invalid reconfiguration request: optional field 'metadata' must be a mapping"
+        )
+    metadata_model = validate_reconfiguration_request_metadata(metadata=metadata_mapping)
+
+    mutations_field = request_mapping.get("mutations")
+    if mutations_field is None:
+        mutation_payload = {
+            key: value
+            for key, value in request_mapping.items()
+            if key not in {"idempotency_key", "expected_revision", "metadata", "mutations"}
+        }
+        if (
+            not isinstance(mutation_payload.get("operation"), str)
+            or not str(mutation_payload.get("operation")).strip()
+        ):
+            raise ValueError(
+                "invalid reconfiguration request: expected mapping with non-empty string field 'operation'"
+            )
+        raw_mutations = (mutation_payload,)
+    else:
+        if isinstance(mutations_field, str) or not isinstance(mutations_field, Sequence):
+            raise ValueError(
+                "invalid reconfiguration request: field 'mutations' must be a non-empty sequence of mapping objects"
+            )
+        normalized_mutations: list[dict[str, object]] = []
+        for mutation in mutations_field:
+            if not isinstance(mutation, Mapping):
+                raise ValueError(
+                    "invalid reconfiguration request: each mutation must be a mapping with non-empty string field 'operation'"
+                )
+            normalized_mutations.append(
+                {str(key): value for key, value in cast(Mapping[object, object], mutation).items()}
+            )
+        if not normalized_mutations:
+            raise ValueError(
+                "invalid reconfiguration request: field 'mutations' must be a non-empty sequence of mapping objects"
+            )
+        raw_mutations = tuple(normalized_mutations)
+
+    try:
+        mutations = tuple(
+            MutationCommand.model_validate(mutation).as_mapping() for mutation in raw_mutations
+        )
+    except ValidationError as error:
+        message = _validation_error_message(error)
+        if "operation" in message:
+            raise ValueError(
+                "invalid reconfiguration request: each mutation must be a mapping with non-empty string field 'operation'"
+            ) from error
+        raise ValueError(message) from error
+
+    return validate_command_envelope(
+        idempotency_key=idempotency_key,
+        expected_revision=expected_revision,
+        metadata=metadata_model.as_mapping(),
+        mutations=mutations,
+    )
+
+
 __all__ = [
     "CommandEnvelope",
     "ConnectionLine",
@@ -377,9 +566,12 @@ __all__ = [
     "JunctionProcess",
     "MutationCommand",
     "Port",
+    "ReconfigurationRequestMetadata",
     "ResistanceConfig",
     "SensorBinding",
     "UnitProcess",
     "ValveConfig",
     "validate_command_envelope",
+    "validate_reconfiguration_command_envelope",
+    "validate_reconfiguration_request_metadata",
 ]
