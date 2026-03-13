@@ -53,7 +53,7 @@ def second_validator(v: dict[str, float | str] | Quantity | float) -> float:
             val = v["value"]
             unit = v.get("unit", "s")
             v = Quantity(float(val), str(unit))
-        except Exception:
+        except (KeyError, ValueError, TypeError):
             raise ValueError(f"Invalid input dictionary v: {v}")
     # try to convert quantity, which was either parsed
     # from dict or passed directly, to seconds and return its magnitude
@@ -102,7 +102,7 @@ def per_second_validator(v: dict[str, float | str] | Quantity | float) -> float:
             val = v["value"]
             unit = v.get("unit", "1/s")
             v = Quantity(float(val), str(unit))
-        except Exception:
+        except (KeyError, ValueError, TypeError):
             raise ValueError(f"Invalid input dictionary v: {v}")
     # try to convert quantity, which was either parsed
     # from dict or passed directly, to 1/seconds and return its magnitude

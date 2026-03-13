@@ -4,7 +4,6 @@ import pytest
 
 from modular_simulation.measurables.control_surface_contract import (
     ControlSurfaceCategory,
-    ControlSurfaceContractError,
     get_control_surface_category,
     validate_controlled_view_has_only_physical_actuators,
     validate_no_banned_setpoint_names,

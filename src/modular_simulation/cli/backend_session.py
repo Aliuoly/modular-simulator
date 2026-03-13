@@ -43,13 +43,10 @@ from __future__ import annotations
 
 import dataclasses
 import uuid
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Mapping, Sequence
 
 from modular_simulation.connection.domain_contracts import (
     CommandEnvelope,
-    Port,
-    UnitProcess,
-    ValveConfig,
     validate_command_envelope,
 )
 from modular_simulation.connection.error_catalog import (

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass
 from math import isfinite
@@ -155,7 +156,13 @@ def mix_junction_state_with_enthalpy(
             H=mixed_enthalpy,
             z=linear_result.state.mole_fractions,
         )
-    except Exception:
+    except Exception as exc:
+        warnings.warn(
+            f"Flash calculation failed during junction mixing (P={linear_result.state.pressure}, "
+            f"H={mixed_enthalpy}): {exc!r}. Falling back to linear mixing.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return JunctionMixingResult(
             state=linear_result.state,
             total_incoming_flow_rate=linear_result.total_incoming_flow_rate,

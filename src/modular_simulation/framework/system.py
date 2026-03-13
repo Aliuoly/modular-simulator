@@ -159,7 +159,7 @@ class System(BaseModel):
             metadata = self.process_model.state_metadata_dict[raw_state_name]
             initial_value = getattr(self.process_model, raw_state_name)
             tag_info = Point(
-                tag=f"(raw, {metadata.type.name})_{raw_state_name}",
+                tag=self.raw_point_tag_for_state(raw_state_name) or raw_state_name,
                 unit=metadata.unit,
                 type="raw",
                 description=metadata.description,
@@ -232,12 +232,22 @@ class System(BaseModel):
             for raw_state_name in self.process_model.state_list:
                 # Need to find the point we already added
                 metadata = self.process_model.state_metadata_dict[raw_state_name]
-                tag = f"(raw, {metadata.type.name})_{raw_state_name}"
+                tag = self.raw_point_tag_for_state(raw_state_name) or raw_state_name
                 tag_info = self._point_registry.get(tag)
 
                 # Should not be None as we just added it
                 if tag_info:
                     self._history_updaters.append(make_history_updater(tag_info))
+
+    def raw_point_tag_for_state(self, raw_state_name: str) -> str | None:
+        """Return the canonical PointRegistry tag for a raw process-model state.
+
+        Returns ``None`` when *raw_state_name* is not a known state.
+        """
+        metadata = self.process_model.state_metadata_dict.get(raw_state_name)
+        if metadata is None:
+            return None
+        return f"(raw, {metadata.type.name})_{raw_state_name}"
 
     def _validate(self):
         exception_group: list[Exception] = []

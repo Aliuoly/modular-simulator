@@ -71,12 +71,9 @@ class ControlElement(AbstractComponent):
         # If it's a process state, System registers it with a specific prefix.
         mv_point = None
         if self.mv_tag in system.process_model.state_metadata_dict:
-            metadata = system.process_model.state_metadata_dict[self.mv_tag]
-            # Reconstruct the prefix used by System.py
-            # TODO: This coupling to System's naming convention is fragile.
-            # Ideally PointRegistry handles this or System provides a helper.
-            prefixed_tag = f"(raw, {metadata.type.name})_{self.mv_tag}"
-            mv_point = system.point_registry.get(prefixed_tag)
+            prefixed_tag = system.raw_point_tag_for_state(self.mv_tag)
+            if prefixed_tag is not None:
+                mv_point = system.point_registry.get(prefixed_tag)
 
         if mv_point is None:
             # Fallback 1: Direct lookup

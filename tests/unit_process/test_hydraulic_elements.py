@@ -10,7 +10,6 @@ import pytest
 from modular_simulation.connection.hydraulic_element import (
     PipeHydraulicElement,
     PumpHydraulicElement,
-    ValveHydraulicElement,
 )
 from modular_simulation.connection.hydraulic_solver import (
     ElementEquation,

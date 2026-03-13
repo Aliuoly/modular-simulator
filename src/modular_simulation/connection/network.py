@@ -402,7 +402,7 @@ class ConnectionNetwork:
         try:
             source_ref = self._parse_endpoint(normalized_source)
             target_ref = self._parse_endpoint(normalized_target)
-        except Exception:
+        except ValueError:
             return None
 
         edge_key = (
