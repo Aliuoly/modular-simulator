@@ -1,4 +1,4 @@
-include README.md
+include docs/README.md
 include pyproject.toml
 
 recursive-include src *.py py.typed
@@ -14,4 +14,4 @@ exclude checkpt.pkl
 exclude verify_serialization.py
 exclude opencode.json
 exclude opencode.json:Zone.Identifier
-exclude LLM_CONTEXT.md
+exclude docs/LLM_CONTEXT.md

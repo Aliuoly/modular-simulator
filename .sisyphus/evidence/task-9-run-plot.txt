@@ -1,1 +1,0 @@
-saved plot: examples/simple_irreversible_energy_balance_system/three_tank_staged_connected_control.png
