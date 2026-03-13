@@ -33,6 +33,7 @@ from modular_simulation.connection.error_catalog import (
 from modular_simulation.connection.state import PortCondition
 
 if TYPE_CHECKING:
+    from modular_simulation.framework.system import System
     from modular_simulation.thermodynamics.stream import StreamData, StreamPortIO
     from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 
@@ -378,6 +379,66 @@ class ConnectionRuntimeOrchestrator:
             normalized_feeds[normalized_boundary_id] = stream
         self._feed_streams_by_boundary_id = normalized_feeds
         self._refresh_boundary_propagation_step_from_context()
+
+    @classmethod
+    def for_system(
+        cls,
+        *,
+        system: "System",
+        runtime_context: SimulationRuntimeContext | None = None,
+        hydraulic_solve_step: RuntimeHydraulicSolveStep | None = None,
+        macro_step_hook: Callable[[ConnectionNetwork, int, float], None] | None = None,
+        transport_and_mixing_step: RuntimeTransportAndMixingStep | None = None,
+        boundary_propagation_step: RuntimeBoundaryPropagationStep | None = None,
+        picard_gate_config: PicardIterationGateConfig | None = None,
+    ) -> "ConnectionRuntimeOrchestrator":
+        def sensor_dispatcher(
+            *,
+            operation: str,
+            mutation: Mapping[str, object],
+            request_metadata: Mapping[str, object],
+        ) -> None:
+            system.apply_sensor_runtime_mutation(
+                operation=operation,
+                mutation=mutation,
+                request_metadata=request_metadata,
+            )
+
+        def controller_dispatcher(
+            *,
+            operation: str,
+            mutation: Mapping[str, object],
+            request_metadata: Mapping[str, object],
+        ) -> None:
+            system.apply_controller_runtime_mutation(
+                operation=operation,
+                mutation=mutation,
+                request_metadata=request_metadata,
+            )
+
+        def default_hydraulic_solve_step(
+            *, network: ConnectionNetwork, macro_step_time_s: float
+        ) -> HydraulicSolveResult:
+            del macro_step_time_s
+            compiled = network.compiled
+            if compiled is None or compiled.hydraulic is None:
+                raise RuntimeError("compiled hydraulic graph is required")
+            return compiled.hydraulic.solve()
+
+        return cls(
+            macro_step_hook=macro_step_hook,
+            hydraulic_solve_step=(
+                default_hydraulic_solve_step
+                if hydraulic_solve_step is None
+                else hydraulic_solve_step
+            ),
+            transport_and_mixing_step=transport_and_mixing_step,
+            boundary_propagation_step=boundary_propagation_step,
+            sensor_mutation_dispatcher=sensor_dispatcher,
+            controller_mutation_dispatcher=controller_dispatcher,
+            picard_gate_config=picard_gate_config,
+            runtime_context=runtime_context,
+        )
 
     def clear_feed_streams(self) -> None:
         self._feed_streams_by_boundary_id = {}
@@ -1107,19 +1168,19 @@ class ConnectionRuntimeOrchestrator:
     ) -> _HydraulicTopologyGuardSnapshot:
         process_specs = tuple(
             (
-                process_id,
+                process_spec.process_id,
                 process_spec.inlet_ports,
                 process_spec.outlet_ports,
             )
-            for process_id, process_spec in sorted(network._process_specs.items())
+            for process_spec in network.list_process_specs()
         )
         boundary_specs = tuple(
             (
-                boundary_id,
+                boundary_spec.boundary_id,
                 boundary_spec.direction,
                 boundary_spec.port_name,
             )
-            for boundary_id, boundary_spec in sorted(network._boundary_specs.items())
+            for boundary_spec in network.list_boundary_specs()
         )
         edge_specs = tuple(
             (
@@ -1129,7 +1190,7 @@ class ConnectionRuntimeOrchestrator:
                 edge.target.node_id,
                 edge.target.port_name,
             )
-            for edge in network._edges
+            for edge in network.list_connection_edges()
         )
 
         line_hydraulic_configs: list[
@@ -1147,25 +1208,24 @@ class ConnectionRuntimeOrchestrator:
                 float | None,
             ]
         ] = []
-        for line_id, config in sorted(network._line_hydraulic_configs.items()):
-            valve = config.valve
+        for config in network.list_line_hydraulic_configs():
             line_hydraulic_configs.append(
                 (
-                    line_id,
+                    config.line_id,
                     config.equation_name,
                     config.resistance_parameter_name,
-                    config.resistance.mode,
-                    config.resistance.radius_m,
-                    config.resistance.length_m,
-                    config.resistance.manual_value,
-                    None if valve is None else valve.valve_id,
-                    None if valve is None else valve.minimum_open_fraction,
-                    None if valve is None else valve.maximum_open_fraction,
-                    None if valve is None else valve.initial_open_fraction,
+                    config.resistance_mode,
+                    config.radius_m,
+                    config.length_m,
+                    config.manual_value,
+                    config.valve_id,
+                    config.minimum_open_fraction,
+                    config.maximum_open_fraction,
+                    config.initial_open_fraction,
                 )
             )
 
-        pending_valve_commands = tuple(sorted(network._pending_valve_open_fractions.items()))
+        pending_valve_commands = network.list_pending_valve_open_fractions()
         compiled = network.compiled
         compiled_graph_revision = None if compiled is None else str(compiled.graph_revision)
         compiled_hydraulic_graph_revision = (

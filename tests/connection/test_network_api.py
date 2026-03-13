@@ -12,6 +12,7 @@ from modular_simulation.connection.hydraulic_solver import (
     LinearResidualEquation,
 )
 from modular_simulation.connection.network import ConnectionNetwork
+from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
 from modular_simulation.connection.process_binding import ProcessBinding
 
 
@@ -46,8 +47,8 @@ def _network() -> ConnectionNetwork:
     network.add_process("reactor", inlet_ports=("feed",), outlet_ports=("product",))
     network.add_boundary_source("feed_boundary")
     network.add_boundary_sink("product_boundary")
-    network.connect("feed_boundary", "reactor.feed")
-    network.connect("reactor.product", "product_boundary")
+    _ = network.connect("feed_boundary", "reactor.feed")
+    _ = network.connect("reactor.product", "product_boundary")
     return network
 
 
@@ -63,6 +64,51 @@ def test_public_api_entry_points_exist() -> None:
     assert callable(network.queue_reconfiguration)
     assert callable(network.save_runtime_snapshot)
     assert callable(network.resume_from_snapshot)
+    assert callable(network.list_process_specs)
+    assert callable(network.list_boundary_specs)
+    assert callable(network.list_connection_edges)
+    assert callable(network.list_line_hydraulic_configs)
+    assert callable(network.list_pending_valve_open_fractions)
+    assert callable(network.from_single_process)
+    assert callable(ConnectionRuntimeOrchestrator.for_system)
+
+
+def test_query_surface_returns_deterministic_connection_views() -> None:
+    network = _network()
+    _ = network.compile()
+
+    process_specs = network.list_process_specs()
+    boundary_specs = network.list_boundary_specs()
+    edges = network.list_connection_edges()
+    line_configs = network.list_line_hydraulic_configs()
+
+    assert tuple(item.process_id for item in process_specs) == ("reactor",)
+    assert process_specs[0].inlet_ports == ("feed",)
+    assert process_specs[0].outlet_ports == ("product",)
+    assert tuple(item.boundary_id for item in boundary_specs) == (
+        "feed_boundary",
+        "product_boundary",
+    )
+    assert tuple(item.edge_id for item in edges) == ("edge_0001", "edge_0002")
+    assert line_configs == ()
+    assert network.list_pending_valve_open_fractions() == ()
+
+
+def test_from_single_process_bootstraps_compiled_network() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = ConnectionNetwork.from_single_process(
+        process_id="reactor",
+        inlet_ports=("feed",),
+        outlet_ports=("product",),
+        compile_lifecycle=HydraulicCompileLifecycle(),
+        hydraulic_system_builder=lambda topology: _valid_system(),
+        runtime_orchestrator=runtime,
+    )
+
+    compiled = network.compiled
+    assert compiled is not None
+    assert compiled.topology.node_ids == ("feed_boundary", "product_boundary", "reactor")
+    assert compiled.topology.edge_ids == ("edge_0001", "edge_0002")
 
 
 def test_compile_delegates_to_topology_process_bindings_and_compile_artifact() -> None:
@@ -81,7 +127,7 @@ def test_connect_rejects_malformed_endpoint_deterministically() -> None:
     network.add_boundary_sink("sink")
 
     with pytest.raises(ValueError) as error:
-        network.connect("reactor", "sink")
+        _ = network.connect("reactor", "sink")
 
     assert str(error.value) == (
         "invalid endpoint 'reactor': process endpoints must use '<process_id>.<port_name>' format"
@@ -93,10 +139,10 @@ def test_connect_duplicate_edge_has_actionable_error() -> None:
     network.add_process("reactor", inlet_ports=("feed",), outlet_ports=("product",))
     network.add_boundary_source("feed")
 
-    network.connect("feed", "reactor.feed")
+    _ = network.connect("feed", "reactor.feed")
 
     with pytest.raises(ValueError) as error:
-        network.connect("feed", "reactor.feed")
+        _ = network.connect("feed", "reactor.feed")
 
     assert str(error.value) == (
         "duplicate connection 'feed.outlet->reactor.feed' already exists as edge_id 'edge_0001'"
@@ -110,19 +156,19 @@ def test_queue_reconfiguration_and_runtime_placeholders_are_deterministic() -> N
     assert queued == "rq_0001"
 
     with pytest.raises(ValueError) as malformed_error:
-        network.queue_reconfiguration({})
+        _ = network.queue_reconfiguration({})
     assert str(malformed_error.value) == (
         "invalid reconfiguration request: expected mapping with non-empty string field 'operation'"
     )
 
     with pytest.raises(RuntimeError) as step_error:
-        network.step(macro_step_time_s=1.0)
+        _ = network.step(macro_step_time_s=1.0)
     assert str(step_error.value) == (
         "runtime step is unavailable: runtime orchestrator not configured for ConnectionNetwork"
     )
 
     with pytest.raises(RuntimeError) as snapshot_error:
-        network.save_runtime_snapshot()
+        _ = network.save_runtime_snapshot()
     assert str(snapshot_error.value) == (
         "runtime snapshot is unavailable: runtime orchestrator not configured for ConnectionNetwork"
     )
@@ -132,7 +178,7 @@ def test_queue_reconfiguration_and_runtime_placeholders_are_deterministic() -> N
     assert str(payload_error.value) == "invalid snapshot payload: expected mapping"
 
     with pytest.raises(RuntimeError) as resume_error:
-        network.resume_from_snapshot(snapshot={})
+        _ = network.resume_from_snapshot(snapshot={})
     assert str(resume_error.value) == (
         "runtime resume is unavailable: runtime orchestrator not configured for ConnectionNetwork"
     )

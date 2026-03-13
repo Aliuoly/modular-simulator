@@ -52,6 +52,35 @@ class CompiledConnectionNetwork:
 
 
 @dataclass(frozen=True)
+class NetworkProcessSpec:
+    process_id: str
+    inlet_ports: tuple[str, ...]
+    outlet_ports: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class NetworkBoundarySpec:
+    boundary_id: str
+    direction: Literal["source", "sink"]
+    port_name: str
+
+
+@dataclass(frozen=True)
+class NetworkLineHydraulicConfig:
+    line_id: str
+    equation_name: str
+    resistance_parameter_name: str
+    resistance_mode: Literal["derived", "manual_override"]
+    radius_m: float | None
+    length_m: float | None
+    manual_value: float | None
+    valve_id: str | None
+    minimum_open_fraction: float | None
+    maximum_open_fraction: float | None
+    initial_open_fraction: float | None
+
+
+@dataclass(frozen=True)
 class _BoundarySpec:
     boundary_id: str
     direction: Literal["source", "sink"]
@@ -116,6 +145,60 @@ class _RuntimeOrchestrator(Protocol):
 
 
 class ConnectionNetwork:
+    @classmethod
+    def from_single_process(
+        cls,
+        *,
+        process_id: str,
+        inlet_ports: Sequence[str],
+        outlet_ports: Sequence[str],
+        compile_lifecycle: HydraulicCompileLifecycle | None = None,
+        hydraulic_system_builder: _HydraulicSystemBuilder | None = None,
+        runtime_orchestrator: _RuntimeOrchestrator | None = None,
+        source_boundary_id: str = "feed_boundary",
+        sink_boundary_id: str = "product_boundary",
+        source_boundary_port_name: str = "outlet",
+        sink_boundary_port_name: str = "inlet",
+        source_process_port_name: str | None = None,
+        sink_process_port_name: str | None = None,
+        compile_network: bool = True,
+    ) -> "ConnectionNetwork":
+        network = cls(
+            compile_lifecycle=compile_lifecycle,
+            hydraulic_system_builder=hydraulic_system_builder,
+            runtime_orchestrator=runtime_orchestrator,
+        )
+        network.add_process(
+            process_id,
+            inlet_ports=inlet_ports,
+            outlet_ports=outlet_ports,
+        )
+        network.add_boundary_source(source_boundary_id, port_name=source_boundary_port_name)
+        network.add_boundary_sink(sink_boundary_id, port_name=sink_boundary_port_name)
+
+        process_spec = network._process_specs[process_id]
+        if not process_spec.inlet_ports:
+            raise ValueError("from_single_process requires at least one inlet port")
+        if not process_spec.outlet_ports:
+            raise ValueError("from_single_process requires at least one outlet port")
+
+        source_port_name = (
+            network._normalize_port_name(source_process_port_name)
+            if source_process_port_name is not None
+            else process_spec.inlet_ports[0]
+        )
+        sink_port_name = (
+            network._normalize_port_name(sink_process_port_name)
+            if sink_process_port_name is not None
+            else process_spec.outlet_ports[0]
+        )
+
+        _ = network.connect(source_boundary_id, f"{process_id}.{source_port_name}")
+        _ = network.connect(f"{process_id}.{sink_port_name}", sink_boundary_id)
+        if compile_network:
+            _ = network.compile()
+        return network
+
     def __init__(
         self,
         *,
@@ -213,6 +296,61 @@ class ConnectionNetwork:
         if spec is None:
             return None
         return (*spec.inlet_ports, *spec.outlet_ports)
+
+    def list_process_specs(self) -> tuple[NetworkProcessSpec, ...]:
+        return tuple(
+            NetworkProcessSpec(
+                process_id=spec.process_id,
+                inlet_ports=tuple(spec.inlet_ports),
+                outlet_ports=tuple(spec.outlet_ports),
+            )
+            for spec in sorted(self._process_specs.values(), key=lambda item: item.process_id)
+        )
+
+    def list_boundary_specs(self) -> tuple[NetworkBoundarySpec, ...]:
+        return tuple(
+            NetworkBoundarySpec(
+                boundary_id=spec.boundary_id,
+                direction=spec.direction,
+                port_name=spec.port_name,
+            )
+            for spec in sorted(self._boundary_specs.values(), key=lambda item: item.boundary_id)
+        )
+
+    def list_connection_edges(self) -> tuple[ConnectionEdge, ...]:
+        return tuple(sorted(self._edges, key=lambda item: item.edge_id))
+
+    def list_line_hydraulic_configs(self) -> tuple[NetworkLineHydraulicConfig, ...]:
+        return tuple(
+            NetworkLineHydraulicConfig(
+                line_id=config.line_id,
+                equation_name=config.equation_name,
+                resistance_parameter_name=config.resistance_parameter_name,
+                resistance_mode=config.resistance.mode,
+                radius_m=config.resistance.radius_m,
+                length_m=config.resistance.length_m,
+                manual_value=config.resistance.manual_value,
+                valve_id=None if config.valve is None else config.valve.valve_id,
+                minimum_open_fraction=(
+                    None if config.valve is None else config.valve.minimum_open_fraction
+                ),
+                maximum_open_fraction=(
+                    None if config.valve is None else config.valve.maximum_open_fraction
+                ),
+                initial_open_fraction=(
+                    None if config.valve is None else config.valve.initial_open_fraction
+                ),
+            )
+            for config in sorted(
+                self._line_hydraulic_configs.values(), key=lambda item: item.line_id
+            )
+        )
+
+    def list_pending_valve_open_fractions(self) -> tuple[tuple[str, float], ...]:
+        return tuple(
+            (line_id, self._pending_valve_open_fractions[line_id])
+            for line_id in sorted(self._pending_valve_open_fractions)
+        )
 
     def list_incident_edge_ids(
         self, *, node_id: str, port_name: str | None = None
@@ -1326,4 +1464,11 @@ class ConnectionNetwork:
         return port_name.strip()
 
 
-__all__ = ["CompiledConnectionNetwork", "ConnectionNetwork", "QueuedReconfigurationTransaction"]
+__all__ = [
+    "CompiledConnectionNetwork",
+    "ConnectionNetwork",
+    "NetworkBoundarySpec",
+    "NetworkLineHydraulicConfig",
+    "NetworkProcessSpec",
+    "QueuedReconfigurationTransaction",
+]

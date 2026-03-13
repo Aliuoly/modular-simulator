@@ -16,11 +16,18 @@ from .connected_plant_orchestrator import (
     ConnectedPlantPhaseHooks,
     ConnectedPlantStepResult,
 )
-from .network import CompiledConnectionNetwork, ConnectionNetwork
+from .network import (
+    CompiledConnectionNetwork,
+    ConnectionNetwork,
+    NetworkBoundarySpec,
+    NetworkLineHydraulicConfig,
+    NetworkProcessSpec,
+)
 from .reconfiguration_api import (
     DynamicConnectionLineReconfigurationApi,
     DynamicUnitPortReconfigurationApi,
 )
+from .runtime import ConnectionRuntimeOrchestrator
 from .process_binding import (
     BindingError,
     OutletBinding,
@@ -41,6 +48,10 @@ __all__ = [
     "ConnectedPlantPhaseHooks",
     "ConnectedPlantStepResult",
     "HydraulicCompileLifecycle",
+    "ConnectionRuntimeOrchestrator",
+    "NetworkBoundarySpec",
+    "NetworkLineHydraulicConfig",
+    "NetworkProcessSpec",
     "OutletBinding",
     "OutletRole",
     "ProcessBinding",
