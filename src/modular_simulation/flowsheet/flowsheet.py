@@ -26,6 +26,7 @@ from modular_simulation.connection.hydraulic_solver import (
     HydraulicSystemDefinition,
 )
 from modular_simulation.connection.network import ConnectionNetwork
+from modular_simulation.connection.process_stream_io import ProcessStreamIO
 from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
 from modular_simulation.connection.subsystem_descriptor import Subsystem
 from modular_simulation.connection.unit_process_wiring import create_subsystem_for_unit
@@ -43,7 +44,6 @@ if TYPE_CHECKING:
     from modular_simulation.framework.system import System
     from modular_simulation.connection.topology import TopologyGraph
     from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
-    from modular_simulation.thermodynamics.stream import StreamPortIO
 
 
 @dataclass(frozen=True)
@@ -229,7 +229,7 @@ class Flowsheet:
         self._validate_compile_configuration()
 
         runtime = ConnectionRuntimeOrchestrator(runtime_context=self._context)
-        runtime.bind_stream_port_ios(bindings=cast("Mapping[str, StreamPortIO]", self._units))
+        runtime.bind_stream_port_ios(bindings=cast("Mapping[str, ProcessStreamIO]", self._units))
         runtime.set_feed_streams(feed_streams=self._feeds)
 
         network = ConnectionNetwork(
@@ -611,7 +611,7 @@ class Flowsheet:
             return self._feeds[connection.source]
 
         source_node_id, source_port_name = self._split_explicit_endpoint(connection.source)
-        source_unit = cast("StreamPortIO", cast("object", self._units[source_node_id]))
+        source_unit = cast("ProcessStreamIO", cast("object", self._units[source_node_id]))
         return source_unit.get_outlet_stream(source_port_name)
 
     def _build_unit_results(
@@ -622,7 +622,9 @@ class Flowsheet:
         unit_results: dict[str, UnitResult] = {}
         for unit_id, unit in self._units.items():
             outlet_streams = {
-                port_name: cast("StreamPortIO", cast("object", unit)).get_outlet_stream(port_name)
+                port_name: cast("ProcessStreamIO", cast("object", unit)).get_outlet_stream(
+                    port_name
+                )
                 for port_name in self._available_unit_ports(unit_id=unit_id, role="source")
             }
             unit_results[unit_id] = UnitResult(

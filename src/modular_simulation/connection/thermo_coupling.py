@@ -17,6 +17,7 @@ from modular_simulation.connection.junction import (
     mix_junction_state_with_enthalpy,
 )
 from modular_simulation.connection.process_binding import BindingError
+from modular_simulation.connection.process_stream_io import ProcessStreamIO
 from modular_simulation.connection.state import MaterialState, PortCondition
 from modular_simulation.thermodynamics.stream import StreamData
 from modular_simulation.thermodynamics.species import SpeciesProjection
@@ -25,7 +26,6 @@ if TYPE_CHECKING:
     from modular_simulation.connection.network import ConnectionNetwork
     from modular_simulation.thermodynamics.property_package import PropertyPackage
     from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
-    from modular_simulation.thermodynamics.stream import StreamPortIO
 
 
 ManualOverrideHook = Callable[[Mapping[str, PortCondition]], Mapping[str, PortCondition]]
@@ -39,7 +39,7 @@ class ThermoBoundaryPropagationConfig:
     default_pressure_pa: float = 101325.0
     default_temperature_k: float = 298.15
     default_phase_hint: str | None = "liquid"
-    stream_port_io_by_node_id: Mapping[str, StreamPortIO] | None = None
+    stream_port_io_by_node_id: Mapping[str, ProcessStreamIO] | None = None
     feed_streams_by_boundary_id: Mapping[str, StreamData] | None = None
     manual_port_conditions: Mapping[str, PortCondition] | None = None
     manual_override_hook: ManualOverrideHook | None = None
@@ -111,7 +111,7 @@ class ThermoBoundaryPropagationStep:
         transport_results = transport_and_mixing_update.transport_results
         incoming_conditions_by_target: dict[str, list[PortCondition]] = {}
         target_bindings: dict[str, tuple[object, str]] = {}
-        target_stream_port_ios: dict[str, StreamPortIO] = {}
+        target_stream_port_ios: dict[str, ProcessStreamIO] = {}
 
         for edge in sorted(compiled.topology.edges, key=lambda item: item.edge_id):
             source_binding = compiled.process_bindings.get(edge.source.node_id)
@@ -298,15 +298,15 @@ class ThermoBoundaryPropagationStep:
         *,
         node_id: str,
         binding: object | None,
-    ) -> StreamPortIO | None:
+    ) -> ProcessStreamIO | None:
         configured_bindings = self._config.stream_port_io_by_node_id
         if configured_bindings is not None:
             configured_binding = configured_bindings.get(node_id)
             if self._is_stream_port_io(configured_binding):
-                return cast("StreamPortIO", configured_binding)
+                return cast("ProcessStreamIO", configured_binding)
 
         if self._is_stream_port_io(binding):
-            return cast("StreamPortIO", binding)
+            return cast("ProcessStreamIO", binding)
         return None
 
     def _is_stream_port_io(self, candidate: object | None) -> bool:
