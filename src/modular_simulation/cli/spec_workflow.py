@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 import json
 from math import isfinite
-from typing import Literal, Protocol, cast
+from typing import Literal, cast
 
 from modular_simulation.connection.network import ConnectionNetwork
 
@@ -58,55 +58,6 @@ class _LineShape:
     geometry: _LineGeometryShape | None
     resistance: _LineResistanceShape | None
     valve: _ValveShape | None
-
-
-class _ProcessSpecLike(Protocol):
-    inlet_ports: tuple[str, ...]
-    outlet_ports: tuple[str, ...]
-
-
-class _BoundarySpecLike(Protocol):
-    direction: Literal["source", "sink"]
-    port_name: str
-
-
-class _PortReferenceLike(Protocol):
-    node_id: str
-    port_name: str
-
-
-class _ConnectionEdgeLike(Protocol):
-    edge_id: str
-    source: _PortReferenceLike
-    target: _PortReferenceLike
-
-
-class _ResistanceConfigLike(Protocol):
-    mode: Literal["derived", "manual_override"]
-    radius_m: float
-    length_m: float
-    manual_value: float | None
-
-
-class _ValveConfigLike(Protocol):
-    valve_id: str
-    minimum_open_fraction: float
-    maximum_open_fraction: float
-    initial_open_fraction: float
-
-
-class _LineHydraulicConfigLike(Protocol):
-    equation_name: str
-    resistance_parameter_name: str
-    resistance: _ResistanceConfigLike
-    valve: _ValveConfigLike | None
-
-
-class _NetworkInternalsLike(Protocol):
-    _process_specs: Mapping[str, _ProcessSpecLike]
-    _boundary_specs: Mapping[str, _BoundarySpecLike]
-    _edges: Sequence[_ConnectionEdgeLike]
-    _line_hydraulic_configs: Mapping[str, _LineHydraulicConfigLike]
 
 
 @dataclass(frozen=True)
@@ -231,8 +182,8 @@ def _load_spec_payload(spec_path: str) -> Mapping[str, object]:
         payload = cast(object, json.load(stream))
     if not isinstance(payload, Mapping):
         raise ValueError("spec payload must be a mapping")
-    mapping_payload = cast(Mapping[object, object], payload)
-    return {str(key): value for key, value in mapping_payload.items()}
+    typed_payload = cast(Mapping[object, object], payload)
+    return {str(key): value for key, value in typed_payload.items()}
 
 
 def _parse_desired_processes(spec_payload: Mapping[str, object]) -> dict[str, _ProcessShape]:
@@ -407,11 +358,9 @@ def _parse_line_valve(value: object, *, line_index: int) -> _ValveShape | None:
 
 
 def _current_process_shapes(network: ConnectionNetwork) -> dict[str, _ProcessShape]:
-    network_view = cast(_NetworkInternalsLike, cast(object, network))
-    raw_mapping = network_view._process_specs
     shapes: dict[str, _ProcessShape] = {}
-    for process_id in sorted(raw_mapping.keys()):
-        spec = raw_mapping[process_id]
+    for spec in network.list_process_specs():
+        process_id = spec.process_id
         inlet_ports = tuple(spec.inlet_ports)
         outlet_ports = tuple(spec.outlet_ports)
         shapes[process_id] = _ProcessShape(
@@ -423,11 +372,9 @@ def _current_process_shapes(network: ConnectionNetwork) -> dict[str, _ProcessSha
 
 
 def _current_boundary_shapes(network: ConnectionNetwork) -> dict[str, _BoundaryShape]:
-    network_view = cast(_NetworkInternalsLike, cast(object, network))
-    raw_mapping = network_view._boundary_specs
     shapes: dict[str, _BoundaryShape] = {}
-    for boundary_id in sorted(raw_mapping.keys()):
-        spec = raw_mapping[boundary_id]
+    for spec in network.list_boundary_specs():
+        boundary_id = spec.boundary_id
         shapes[boundary_id] = _BoundaryShape(
             boundary_id=boundary_id,
             direction=spec.direction,
@@ -437,9 +384,8 @@ def _current_boundary_shapes(network: ConnectionNetwork) -> dict[str, _BoundaryS
 
 
 def _current_line_shapes(network: ConnectionNetwork) -> dict[str, _LineShape]:
-    network_view = cast(_NetworkInternalsLike, cast(object, network))
-    edges = network_view._edges
-    line_configs = network_view._line_hydraulic_configs
+    edges = network.list_connection_edges()
+    line_configs = {config.line_id: config for config in network.list_line_hydraulic_configs()}
 
     line_by_id: dict[str, _LineShape] = {}
     for edge in sorted(edges, key=lambda item: item.edge_id):
@@ -452,24 +398,35 @@ def _current_line_shapes(network: ConnectionNetwork) -> dict[str, _LineShape]:
         valve: _ValveShape | None = None
         config = line_configs.get(line_id)
         if config is not None:
-            resistance_config = config.resistance
-            geometry = _LineGeometryShape(
-                radius_m=resistance_config.radius_m,
-                length_m=resistance_config.length_m,
-                equation_name=config.equation_name,
-                resistance_parameter_name=config.resistance_parameter_name,
-            )
+            if config.radius_m is not None and config.length_m is not None:
+                geometry = _LineGeometryShape(
+                    radius_m=config.radius_m,
+                    length_m=config.length_m,
+                    equation_name=config.equation_name,
+                    resistance_parameter_name=config.resistance_parameter_name,
+                )
             resistance = _LineResistanceShape(
-                mode=resistance_config.mode,
-                manual_value=resistance_config.manual_value,
+                mode=config.resistance_mode,
+                manual_value=config.manual_value,
             )
-            valve_config = config.valve
-            if valve_config is not None:
+            if config.valve_id is not None:
                 valve = _ValveShape(
-                    valve_id=valve_config.valve_id,
-                    minimum_open_fraction=valve_config.minimum_open_fraction,
-                    maximum_open_fraction=valve_config.maximum_open_fraction,
-                    initial_open_fraction=valve_config.initial_open_fraction,
+                    valve_id=config.valve_id,
+                    minimum_open_fraction=(
+                        0.0
+                        if config.minimum_open_fraction is None
+                        else config.minimum_open_fraction
+                    ),
+                    maximum_open_fraction=(
+                        1.0
+                        if config.maximum_open_fraction is None
+                        else config.maximum_open_fraction
+                    ),
+                    initial_open_fraction=(
+                        1.0
+                        if config.initial_open_fraction is None
+                        else config.initial_open_fraction
+                    ),
                 )
 
         line_by_id[line_id] = _LineShape(
