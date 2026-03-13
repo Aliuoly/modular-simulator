@@ -11,15 +11,15 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [
-  "measurables.process_model",
-  "plotting.time_series",
+  "modular_simulation.measurables.process_model",
+  "modular_simulation.plotting.time_series",
 ]
 ignore_errors = true
 
 [project]
 name = "modular-simulation"
 version = "0.1.0"
-license = { text = "MIT" }
+license = "MIT"
 authors = [
   { name = "Alden Olyniec", email = "aldenliuolyniec@gmail.com" },
 ]
@@ -28,7 +28,6 @@ readme = "README.md"
 requires-python = ">=3.13,<3.14"
 classifiers = [
   "Programming Language :: Python :: 3",
-  "License :: OSI Approved :: MIT License",
 ]
 
 dependencies = [
@@ -40,7 +39,6 @@ dependencies = [
   "nicegui",
   "thermo>=0.3.0",
   "chemicals>=1.2.0",
-  "pytest",
 ]
 
 [tool.pytest.ini_options]
@@ -52,6 +50,7 @@ testpaths = [
 dev = [
   "basedpyright>=1.37.2",
   "ruff",
+  "pytest",
 ]
 
 [tool.ruff]
@@ -62,3 +61,12 @@ quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
+
+[tool.setuptools]
+exclude-package-data = { "*" = [".sisyphus/*", "checkpt.pkl", "*.Zone.Identifier"] }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+modular_simulation = ["py.typed"]

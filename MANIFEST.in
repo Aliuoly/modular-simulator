@@ -1,0 +1,17 @@
+include README.md
+include pyproject.toml
+
+recursive-include src *.py py.typed
+recursive-include tests *.py
+recursive-include examples *.py *.md *.json
+
+prune .sisyphus
+prune .github
+prune dist
+prune typings
+
+exclude checkpt.pkl
+exclude verify_serialization.py
+exclude opencode.json
+exclude opencode.json:Zone.Identifier
+exclude LLM_CONTEXT.md

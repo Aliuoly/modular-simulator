@@ -561,7 +561,6 @@ dependencies = [
     { name = "matplotlib" },
     { name = "nicegui" },
     { name = "pydantic" },
-    { name = "pytest" },
     { name = "scipy" },
     { name = "thermo" },
     { name = "tqdm" },
@@ -570,6 +569,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "basedpyright" },
+    { name = "pytest" },
     { name = "ruff" },
 ]
 
@@ -580,7 +580,6 @@ requires-dist = [
     { name = "matplotlib" },
     { name = "nicegui" },
     { name = "pydantic" },
-    { name = "pytest" },
     { name = "scipy" },
     { name = "thermo", specifier = ">=0.3.0" },
     { name = "tqdm" },
@@ -589,6 +588,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "basedpyright", specifier = ">=1.37.2" },
+    { name = "pytest" },
     { name = "ruff" },
 ]
 
