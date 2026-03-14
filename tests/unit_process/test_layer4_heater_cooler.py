@@ -8,6 +8,8 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
+from modular_simulation.components import ControlElement, ControllerMode, Trajectory
+from modular_simulation.framework.system import System
 from modular_simulation.thermodynamics.property_package import FlashResult
 from modular_simulation.unit_processes import HeaterCooler
 
@@ -176,13 +178,13 @@ def test_negative_inlet_flow_raises() -> None:
 def test_heater_cooler_uses_external_boundary_names_not_controller_proxies() -> None:
     heater = HeaterCooler(mode="temperature", n_species=2)
 
-    assert "pressure_drop" not in heater.controlled_view.state_list
-    assert "external_heat_duty" not in heater.controlled_view.state_list
-    assert "external_outlet_temperature" not in heater.controlled_view.state_list
+    assert "pressure_drop" not in heater.boundary_view.state_list
+    assert "external_heat_duty" in heater.boundary_view.state_list
+    assert "external_outlet_temperature" in heater.boundary_view.state_list
     assert "duty_setpoint" not in heater.state_list
     assert "target_temperature_setpoint" not in heater.state_list
-    assert "external_heat_duty" in heater.constant_view.state_list
-    assert "external_outlet_temperature" in heater.constant_view.state_list
+    assert "external_heat_duty" not in heater.constant_view.state_list
+    assert "external_outlet_temperature" not in heater.constant_view.state_list
 
 
 def test_legacy_setpoint_inputs_warn_and_normalize() -> None:
@@ -207,3 +209,39 @@ def test_legacy_setpoint_inputs_warn_and_normalize() -> None:
 
     assert heater.external_heat_duty == pytest.approx(123.0)
     assert heater.external_outlet_temperature == pytest.approx(345.0)
+
+
+def test_heater_cooler_well_mixed_external_boundaries_are_driven_via_heat_actuator_plane() -> None:
+    heater = HeaterCooler(
+        mode="duty",
+        n_species=2,
+        inlet_flow=2.0,
+        inlet_temperature=320.0,
+        inlet_pressure=101325.0,
+        inlet_composition=np.array([0.6, 0.4], dtype=np.float64),
+        external_heat_duty=250.0,
+        external_outlet_temperature=330.0,
+    )
+    system = System(
+        dt=0.1,
+        process_model=heater,
+        sensors=[],
+        calculations=[],
+        control_elements=[
+            ControlElement(
+                mv_tag="actuator/heat/heater_cooler_loop",
+                mv_range=(-20000.0, 20000.0),
+                mv_trajectory=Trajectory(y0=-1500.0),
+                mode=ControllerMode.MANUAL,
+            )
+        ],
+        show_progress=False,
+    )
+
+    system.step(duration=0.1)
+    pending_heat_commands = system.consume_pending_heat_actuator_rate_commands()
+
+    assert heater.external_heat_duty == pytest.approx(250.0)
+    assert heater.external_outlet_temperature == pytest.approx(330.0)
+    assert "actuator/heat/heater_cooler_loop" in pending_heat_commands
+    assert pending_heat_commands["actuator/heat/heater_cooler_loop"] == pytest.approx(-1500.0)

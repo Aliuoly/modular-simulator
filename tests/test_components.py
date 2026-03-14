@@ -107,7 +107,7 @@ def test_pid_controller_updates_manipulated_variable(
     )
 
     control_element = ControlElement(
-        mv_tag="heater_power",
+        mv_tag="actuator/heat/heater_power",
         mv_range=(0.0, 20.0),
         mv_trajectory=Trajectory(y0=0.0),
         controller=controller,
@@ -146,13 +146,14 @@ def test_pid_controller_updates_manipulated_variable(
     # At t=0 update: error=10.
     # If we step, integration happens.
 
-    # Let's just verify it MOVES in the right direction
-    # Heater power should increase because T(300) < SP(310)
+    assert thermal_process_model.heater_power == pytest.approx(0.0)
+    pending_heat_commands = system.consume_pending_heat_actuator_rate_commands()
+    assert "actuator/heat/heater_power" in pending_heat_commands
+    assert pending_heat_commands["actuator/heat/heater_power"] > 0.0
 
-    assert thermal_process_model.heater_power > 0.0
-
-    # Check that control element updated
-    assert control_element._mv_point.data.value == pytest.approx(thermal_process_model.heater_power)
+    assert control_element._mv_point.data.value == pytest.approx(
+        pending_heat_commands["actuator/heat/heater_power"]
+    )
 
     # Check controller internals (public access has changed to PrivateAttr for state)
     # We can check the point data in tag_store

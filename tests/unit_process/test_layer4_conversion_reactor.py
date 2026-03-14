@@ -158,5 +158,5 @@ def test_invalid_conversion_bounds_raise(invalid_conversion: float) -> None:
 def test_pressure_drop_remains_fixed_hydraulic_data() -> None:
     reactor = ConversionReactor(n_species=2, pressure_drop=750.0)
 
-    assert "pressure_drop" not in reactor.controlled_view.state_list
+    assert "pressure_drop" not in reactor.boundary_view.state_list
     assert "pressure_drop" in reactor.constant_view.state_list

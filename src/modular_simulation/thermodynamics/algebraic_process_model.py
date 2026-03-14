@@ -66,10 +66,10 @@ class AlgebraicProcessModel(ProcessModel, ABC):
 
         final_algebraic_values = self._params.algebraic_values_function(
             y=np.zeros(0, dtype=np.float64),
-            u=self.controlled_view.to_array(),
+            u=self.boundary_view.to_array(),
             k=self._params.k,
             y_map=self._params.y_map,
-            u_map=self._params.u_map,
+            u_map=self._params.boundary_map,
             k_map=self._params.k_map,
             algebraic_map=self._params.algebraic_map,
             algebraic_size=self._params.algebraic_size,

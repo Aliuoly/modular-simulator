@@ -132,7 +132,8 @@ def test_splitter_copies_state_without_internal_branch_allocation() -> None:
     assert np.asarray(splitter.outlet_compositions, dtype=np.float64) == pytest.approx(
         np.array([0.2, 0.8, 0.2, 0.8], dtype=np.float64)
     )
-    assert "split_ratios" not in splitter.controlled_view.state_list
+    assert "split_ratios" not in splitter.boundary_view.state_list
+    assert "inlet_flow" in splitter.boundary_view.state_list
     assert splitter.ports.inlets == ("inlet",)
     assert splitter.ports.outlets == ("outlet_1", "outlet_2")
 

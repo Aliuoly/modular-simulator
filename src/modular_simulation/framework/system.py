@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import warnings
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version as package_version
@@ -12,7 +13,9 @@ from pydantic import BaseModel, Field, PrivateAttr, ConfigDict
 from typing import Any, Callable, override, TYPE_CHECKING, cast
 from collections.abc import Mapping, Sequence
 from functools import cached_property
+from math import isfinite
 import numpy as np
+from astropy.units import UnitBase
 from modular_simulation.components.control_system.control_element import ControlElement
 from modular_simulation.components.control_system.mode_manager import ControlElementModeManager
 from modular_simulation.utils.typing import Seconds, StateValue, TimeQuantity
@@ -47,6 +50,15 @@ CHECKPOINT_SCHEMA_VERSION = 1
 CHECKPOINT_PACKAGE_NAME = "modular-simulation"
 CHECKPOINT_VERSION_MISMATCH_ERROR_CODE = "CHECKPOINT_VERSION_MISMATCH"
 CHECKPOINT_INTEGRITY_MISMATCH_ERROR_CODE = "CHECKPOINT_INTEGRITY_MISMATCH"
+
+_CANONICAL_RUNTIME_ACTUATOR_TAG_PATTERN = re.compile(
+    r"^actuator/(valve|pump|heat)/[A-Za-z0-9][A-Za-z0-9._-]*$"
+)
+
+_PLAIN_VALVE_PUMP_CONTROL_TAG_RULES: dict[tuple[str, str], str] = {
+    ("Pump", "pump_speed"): "actuator/pump/<id>",
+    ("Valve", "open_fraction"): "actuator/valve/<id>",
+}
 
 
 @dataclass(frozen=True)
@@ -145,6 +157,7 @@ class System(BaseModel):
     _controller_bindings_by_id: dict[str, RuntimeControllerBinding] = PrivateAttr(
         default_factory=dict
     )
+    _pending_heat_actuator_rates: dict[str, float] = PrivateAttr(default_factory=dict)
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
 
     @override
@@ -249,6 +262,55 @@ class System(BaseModel):
             return None
         return f"(raw, {metadata.type.name})_{raw_state_name}"
 
+    def make_actuator_data_setter(
+        self,
+        actuator_tag: str,
+        *,
+        source_unit: UnitBase | None = None,
+    ) -> Callable[[DataValue], None]:
+        point_tag = self.raw_point_tag_for_state(actuator_tag)
+        if point_tag is None:
+            point_tag = actuator_tag
+
+        point_setter = self.point_registry.make_converted_data_setter(point_tag, source_unit)
+
+        if actuator_tag.startswith("actuator/heat/"):
+
+            def set_external_heat_actuator_data(data_value: DataValue) -> None:
+                value = data_value.value
+                if not isinstance(value, (int, float, np.floating)):
+                    raise ValueError(
+                        f"heat actuator '{actuator_tag}' requires scalar numeric controller output"
+                    )
+                scalar_value = float(value)
+                if not isfinite(scalar_value):
+                    raise ValueError(
+                        f"heat actuator '{actuator_tag}' requires finite controller output"
+                    )
+                self._pending_heat_actuator_rates[actuator_tag] = scalar_value
+                point_setter(DataValue(time=data_value.time, value=scalar_value, ok=data_value.ok))
+
+            return set_external_heat_actuator_data
+
+        if actuator_tag not in self.process_model.state_metadata_dict:
+            return point_setter
+
+        state_setter = self.process_model.make_converted_setter(actuator_tag, source_unit)
+
+        def set_actuator_data(data_value: DataValue) -> None:
+            state_setter(data_value.value)
+            point_setter(data_value)
+
+        return set_actuator_data
+
+    def consume_pending_heat_actuator_rate_commands(self) -> Mapping[str, float]:
+        pending = {
+            actuator_tag: self._pending_heat_actuator_rates[actuator_tag]
+            for actuator_tag in sorted(self._pending_heat_actuator_rates)
+        }
+        self._pending_heat_actuator_rates = {}
+        return pending
+
     def _validate(self):
         exception_group: list[Exception] = []
         exception_group.extend(self._validate_sensors_resolvable())
@@ -280,9 +342,29 @@ class System(BaseModel):
 
     def _validate_controllers_resolvable(self) -> list[ControllerConfigurationError]:
         exception_group: list[ControllerConfigurationError] = []
-        available_ce_tags = self.process_model.controlled_view.state_list
+        available_ce_tags = self.process_model.boundary_view.state_list
+        forbidden_plain_ce_tags: list[str] = []
+
+        for control_element in self.control_elements:
+            try:
+                self.validate_static_control_element_mv_tag(control_element.mv_tag)
+            except ControllerConfigurationError:
+                forbidden_plain_ce_tags.append(control_element.mv_tag)
+
+        if len(forbidden_plain_ce_tags) > 0:
+            exception_group.append(
+                ControllerConfigurationError(
+                    "The following controlled variables are not controller-bindable plain valve/pump process tags; "
+                    + "use canonical actuator tags instead: "
+                    + ", ".join(forbidden_plain_ce_tags)
+                )
+            )
+
         improper_ce_tags = [
-            c.mv_tag for c in self.control_elements if c.mv_tag not in available_ce_tags
+            c.mv_tag
+            for c in self.control_elements
+            if c.mv_tag not in available_ce_tags
+            and _CANONICAL_RUNTIME_ACTUATOR_TAG_PATTERN.fullmatch(c.mv_tag) is None
         ]
 
         if len(improper_ce_tags) > 0:
@@ -293,6 +375,21 @@ class System(BaseModel):
                 )
             )
         return exception_group
+
+    def validate_static_control_element_mv_tag(self, mv_tag: str) -> None:
+        if _CANONICAL_RUNTIME_ACTUATOR_TAG_PATTERN.fullmatch(mv_tag) is not None:
+            return
+
+        expected_canonical_tag = _PLAIN_VALVE_PUMP_CONTROL_TAG_RULES.get(
+            (type(self.process_model).__name__, mv_tag)
+        )
+        if expected_canonical_tag is None:
+            return
+
+        raise ControllerConfigurationError(
+            f"control element mv_tag '{mv_tag}' is not controller-bindable; "
+            + f"use canonical actuator tag '{expected_canonical_tag}'"
+        )
 
     def _update_components(self) -> None:
         """
@@ -353,8 +450,6 @@ class System(BaseModel):
             else:
                 error = exceptions[0]
                 successful = False
-        else:
-            raise ValueError(f"Unknown component type: {type(component)}")  # pyright: ignore[reportUnreachable]
         return error, successful
 
     def step(self, duration: Seconds | TimeQuantity | None = None) -> None:
@@ -377,7 +472,7 @@ class System(BaseModel):
         # update sensors, calculations, and controllers
         # and then update the states with single_step()
         # raise RuntimeError(f"DEBUG: Pre-loop. nsteps={nsteps}")
-        for i in range(int(nsteps)):
+        for _ in range(int(nsteps)):
             self._update_components()
             self.process_model.step(self.dt)
             for updater in self._history_updaters:  # only populated if record history is True
@@ -825,10 +920,10 @@ class System(BaseModel):
             validate_runtime_actuator_binding,
         )
 
-        normalized_actuator_tag = self._normalize_runtime_actuator_tag(actuator_tag)
         try:
-            validate_runtime_actuator_binding(self.process_model, actuator_tag)
-        except ControlSurfaceContractError as error:
+            normalized_actuator_tag = self._normalize_runtime_actuator_tag(actuator_tag)
+            validate_runtime_actuator_binding(self.process_model, normalized_actuator_tag)
+        except (ControlSurfaceContractError, ValueError) as error:
             raise ControllerConfigurationError(
                 f"controller '{controller_id}' cannot bind actuator '{actuator_tag}': {error}"
             ) from error
@@ -881,20 +976,12 @@ class System(BaseModel):
         )
 
     def _normalize_runtime_actuator_tag(self, actuator_tag: str) -> str:
-        from modular_simulation.measurables.control_surface_contract import (
-            resolve_process_state_tag,
-        )
-
-        resolved_state_name = resolve_process_state_tag(self.process_model, actuator_tag)
-        if resolved_state_name is None:
-            return actuator_tag
-        if resolved_state_name != actuator_tag:
-            warnings.warn(
-                f"raw actuator tag '{actuator_tag}' is deprecated; use '{resolved_state_name}'",
-                DeprecationWarning,
-                stacklevel=3,
+        if _CANONICAL_RUNTIME_ACTUATOR_TAG_PATTERN.fullmatch(actuator_tag) is None:
+            raise ValueError(
+                f"actuator '{actuator_tag}' is not controller-bindable; expected canonical actuator namespace tag "
+                + "'actuator/valve/<id>', 'actuator/pump/<id>', or 'actuator/heat/<id>'"
             )
-        return resolved_state_name
+        return actuator_tag
 
     def _instantiate_runtime_controller(
         self,

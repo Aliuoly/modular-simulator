@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+import re
 from typing import TYPE_CHECKING
 
 from modular_simulation.measurables.process_model import StateType
@@ -50,6 +51,11 @@ _NON_PHYSICAL_OVERRIDES: dict[tuple[str, str], ControlSurfaceCategory] = {
 }
 
 
+_NAMESPACED_ACTUATOR_TAG_PATTERN = re.compile(
+    r"^actuator/[a-z0-9][a-z0-9_-]*/[A-Za-z0-9][A-Za-z0-9._/-]*$"
+)
+
+
 def get_control_surface_category(
     process_model: ProcessModel, state_name: str
 ) -> ControlSurfaceCategory:
@@ -58,20 +64,23 @@ def get_control_surface_category(
         return override
 
     state_type = process_model.state_metadata_dict[state_name].type
-    if state_type == StateType.CONTROLLED:
-        return ControlSurfaceCategory.PHYSICAL_ACTUATOR
+    if state_type == StateType.BOUNDARY:
+        return ControlSurfaceCategory.EXTERNAL_BOUNDARY_CONDITION
     if state_type in (StateType.DIFFERENTIAL, StateType.ALGEBRAIC):
         return ControlSurfaceCategory.MEASURED_STATE
+    if state_type == StateType.CONSTANT:
+        return ControlSurfaceCategory.CONFIGURED_ABSTRACT_SPECIFICATION
     return ControlSurfaceCategory.EXTERNAL_BOUNDARY_CONDITION
 
 
 def resolve_process_state_tag(process_model: ProcessModel, actuator_tag: str) -> str | None:
-    if actuator_tag in process_model.state_metadata_dict:
+    del process_model
+    if _NAMESPACED_ACTUATOR_TAG_PATTERN.fullmatch(actuator_tag):
         return actuator_tag
     if actuator_tag.startswith("(raw,") and ")_" in actuator_tag:
-        candidate_state_name = actuator_tag.split(")_", 1)[1]
-        if candidate_state_name in process_model.state_metadata_dict:
-            return candidate_state_name
+        candidate_tag = actuator_tag.split(")_", 1)[1]
+        if _NAMESPACED_ACTUATOR_TAG_PATTERN.fullmatch(candidate_tag):
+            return candidate_tag
     return None
 
 
@@ -86,16 +95,16 @@ def validate_no_banned_setpoint_names(process_model: ProcessModel) -> None:
         )
 
 
-def validate_controlled_view_has_only_physical_actuators(process_model: ProcessModel) -> None:
+def validate_boundary_view_has_no_physical_actuators(process_model: ProcessModel) -> None:
     violations: list[str] = []
-    for state_name in process_model.controlled_view.state_list:
+    for state_name in process_model.boundary_view.state_list:
         category = get_control_surface_category(process_model, state_name)
-        if category != ControlSurfaceCategory.PHYSICAL_ACTUATOR:
+        if category == ControlSurfaceCategory.PHYSICAL_ACTUATOR:
             violations.append(f"{state_name} ({category.value})")
 
     if violations:
         raise ControlSurfaceContractError(
-            "controller-facing controlled_view.state_list contains non-physical surfaces: "
+            "boundary_view.state_list contains physical actuator surfaces: "
             + ", ".join(sorted(violations))
         )
 
@@ -106,12 +115,8 @@ def validate_runtime_actuator_binding(process_model: ProcessModel, actuator_tag:
             f"actuator '{actuator_tag}' is banned by contract: names containing 'setpoint' are not controller-bindable"
         )
 
-    resolved_state_name = resolve_process_state_tag(process_model, actuator_tag)
-    if resolved_state_name is None:
-        return
-
-    category = get_control_surface_category(process_model, resolved_state_name)
-    if category != ControlSurfaceCategory.PHYSICAL_ACTUATOR:
+    resolved_actuator_tag = resolve_process_state_tag(process_model, actuator_tag)
+    if resolved_actuator_tag is None:
         raise ControlSurfaceContractError(
-            f"actuator '{actuator_tag}' is not controller-bindable; classified as {category.value}"
+            f"actuator '{actuator_tag}' is not controller-bindable; expected actuator namespace tag 'actuator/<family>/<id>'"
         )

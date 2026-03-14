@@ -22,7 +22,7 @@ from modular_simulation.validation.exceptions import MeasurableConfigurationErro
 
 
 class SignalPassThrough(AlgebraicProcessModel):
-    inlet_signal: Annotated[float, M(type=T.CONTROLLED, unit="", description="input signal")] = 1.0
+    inlet_signal: Annotated[float, M(type=T.BOUNDARY, unit="", description="input signal")] = 1.0
     gain: Annotated[float, M(type=T.CONSTANT, unit="", description="multiplicative gain")] = 2.0
     outlet_signal: Annotated[float, M(type=T.ALGEBRAIC, unit="", description="output signal")] = 0.0
 

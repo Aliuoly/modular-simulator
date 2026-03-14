@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Annotated, cast, override
 
 import numpy as np
@@ -33,8 +33,13 @@ from modular_simulation.measurables.process_model import (
     StateMetadata as M,
     StateType as T,
 )
+from modular_simulation.unit_processes import Pump
 from modular_simulation.utils.typing import ArrayIndex
 from modular_simulation.utils.typing import StateValue
+
+
+class _RawPumpHarnessModel(Pump):
+    pass
 
 
 class ArrayAgnosticController(AbstractController):
@@ -205,6 +210,28 @@ def assert_step_rolls_back(
     assert network.save_runtime_snapshot() == before_failure
 
 
+def assert_controller_activation_rolls_back(
+    network: ConnectionNetwork,
+    system: System,
+    *,
+    controller_id: str,
+    error_match: str,
+    macro_step_time_s: float = 0.25,
+    absent_reference_tags: Sequence[str] = (),
+    control_element_indexes: Sequence[int] = (0,),
+) -> None:
+    assert_step_rolls_back(
+        network,
+        error_match=error_match,
+        macro_step_time_s=macro_step_time_s,
+    )
+    assert controller_id not in system.controller_bindings
+    for point_tag in absent_reference_tags:
+        assert point_tag not in system.point_registry
+    for index in control_element_indexes:
+        assert system.control_elements[index].controller is None
+
+
 def build_scalar_thermal_system(process_model: ProcessModel) -> System:
     temperature_sensor = SampledDelayedSensor(
         name="temperature_sensor",
@@ -215,7 +242,7 @@ def build_scalar_thermal_system(process_model: ProcessModel) -> System:
         deadtime=0.0,
     )
     heater = ControlElement(
-        mv_tag="heater_power",
+        mv_tag="actuator/heat/heater_power",
         mv_trajectory=Trajectory(y0=0.0, t0=0.0),
         mv_range=(0.0, 20.0),
         mode=ControllerMode.MANUAL,
@@ -230,13 +257,87 @@ def build_scalar_thermal_system(process_model: ProcessModel) -> System:
     )
 
 
+def build_pressure_pump_system() -> System:
+    pressure_sensor = SampledDelayedSensor(
+        name="pump_pressure_sensor",
+        measurement_tag="outlet_pressure",
+        alias_tag="pressure",
+        unit="Pa",
+        sampling_period=0.0,
+        deadtime=0.0,
+    )
+    pump_speed_element = ControlElement(
+        mv_tag="pump_speed",
+        mv_trajectory=Trajectory(y0=20000.0, t0=0.0),
+        mv_range=(0.0, 220000.0),
+        mode=ControllerMode.MANUAL,
+    )
+    return System(
+        dt=1.0,
+        process_model=_RawPumpHarnessModel(
+            n_species=2,
+            inlet_flow=0.01,
+            inlet_temperature=300.0,
+            inlet_pressure=101325.0,
+            inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
+            pump_speed=20000.0,
+            efficiency=0.75,
+        ),
+        sensors=[pressure_sensor],
+        calculations=[],
+        control_elements=[pump_speed_element],
+        show_progress=False,
+    )
+
+
+def build_canonical_pressure_pump_system() -> System:
+    pressure_sensor = SampledDelayedSensor(
+        name="pump_pressure_sensor",
+        measurement_tag="outlet_pressure",
+        alias_tag="pressure",
+        unit="Pa",
+        sampling_period=0.0,
+        deadtime=0.0,
+    )
+    actuator_sensor = SampledDelayedSensor(
+        name="pump_speed_alias_sensor",
+        measurement_tag="pump_speed",
+        alias_tag="actuator/pump/recycle_pump",
+        unit="Pa",
+        sampling_period=0.0,
+        deadtime=0.0,
+    )
+    pump_speed_element = ControlElement(
+        mv_tag="actuator/pump/recycle_pump",
+        mv_trajectory=Trajectory(y0=20000.0, t0=0.0),
+        mv_range=(0.0, 220000.0),
+        mode=ControllerMode.MANUAL,
+    )
+    return System(
+        dt=1.0,
+        process_model=Pump(
+            n_species=2,
+            inlet_flow=0.01,
+            inlet_temperature=300.0,
+            inlet_pressure=101325.0,
+            inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
+            pump_speed=20000.0,
+            efficiency=0.75,
+        ),
+        sensors=[pressure_sensor, actuator_sensor],
+        calculations=[],
+        control_elements=[pump_speed_element],
+        show_progress=False,
+    )
+
+
 class ScalarCvVectorMvProcessModel(ProcessModel):
     temperature: Annotated[
         float, M(type=T.DIFFERENTIAL, unit="K", description="process temperature")
     ] = 300.0
     heater_power_vector: Annotated[
         NDArray[np.float64],
-        M(type=T.CONTROLLED, unit="K/s", description="vectorized heating input"),
+        M(type=T.BOUNDARY, unit="K/s", description="vectorized heating input"),
     ] = Field(default_factory=lambda: np.array([0.0, 0.0], dtype=np.float64))
     ambient_temperature: Annotated[
         float, M(type=T.CONSTANT, unit="K", description="ambient temperature")
@@ -287,7 +388,7 @@ def build_scalar_cv_vector_mv_system() -> System:
         deadtime=0.0,
     )
     vector_heater = ControlElement(
-        mv_tag="heater_power_vector",
+        mv_tag="actuator/heat/heater_power_vector",
         mv_trajectory=Trajectory(y0=np.zeros(2, dtype=np.float64), t0=0.0),
         mv_range=(
             np.zeros(2, dtype=np.float64),

@@ -50,7 +50,7 @@ class RHSCallable(Protocol):
 
 class ProcessModelParams(NamedTuple):
     y_map: dict[str, ArrayIndex]
-    u_map: dict[str, ArrayIndex]
+    boundary_map: dict[str, ArrayIndex]
     k_map: dict[str, ArrayIndex]
     algebraic_map: dict[str, ArrayIndex]
     k: NDArray[np.float64]
@@ -62,7 +62,7 @@ class ProcessModelParams(NamedTuple):
 class StateType(IntEnum):
     DIFFERENTIAL = 0
     ALGEBRAIC = 1
-    CONTROLLED = 2
+    BOUNDARY = 2
     CONSTANT = 3
 
 
@@ -70,7 +70,7 @@ class StateMetadata:
     """
     Represents information about a model state, including its type, unit, and description
 
-    :var type: The type of the state (e.g., differential, algebraic, controlled, constant)
+    :var type: The type of the state (e.g., differential, algebraic, boundary, constant)
     :vartype type: StateType
     :var unit: The unit associated with the state value. Defaults to unitless ("").
     :vartype unit: UnitBase
@@ -84,8 +84,6 @@ class StateMetadata:
     description: str = ""
 
     def __init__(self, type: StateType, unit: UnitBase | str, description: str = ""):
-        if not isinstance(type, StateType):  # pyright: ignore[reportUnnecessaryIsInstance]
-            raise ValueError(f"type must be a StateType, not {type}")  # pyright: ignore[reportUnreachable]
         if not isinstance(unit, UnitBase):
             unit = Unit(unit)
         self.type = type
@@ -190,13 +188,13 @@ class ProcessModel(BaseModel, ABC):  # pyright: ignore[reportUnsafeMultipleInher
         self._construct_params()
 
         # pre-calculate the algebraic values once to refresh them with current states
-        # and control elements and constants
+        # and boundary states and constants
         initial_algebraic_array = self._params.algebraic_values_function(
             y=self.differential_view.to_array(),
-            u=self.controlled_view.to_array(),
+            u=self.boundary_view.to_array(),
             k=self._params.k,
             y_map=self._params.y_map,
-            u_map=self._params.u_map,
+            u_map=self._params.boundary_map,
             k_map=self._params.k_map,
             algebraic_map=self._params.algebraic_map,
             algebraic_size=self._params.algebraic_size,
@@ -244,7 +242,7 @@ class ProcessModel(BaseModel, ABC):  # pyright: ignore[reportUnsafeMultipleInher
     #             member = slice(member, member + 1)
     #         y_map[name] = member
     #     u_map = NDict.empty(key_type=types.unicode_type, value_type=types.slice2_type)
-    #     index_map = model.controlled_view.index_map
+    #     index_map = model.boundary_view.index_map
     #     for name, member in index_map.items():
     #         if isinstance(member, int):
     #             member = slice(member, member + 1)
@@ -279,7 +277,7 @@ class ProcessModel(BaseModel, ABC):  # pyright: ignore[reportUnsafeMultipleInher
         algebraic_size = model.algebraic_view.array_size
         self._params = ProcessModelParams(
             y_map=model.differential_view.index_map,
-            u_map=model.controlled_view.index_map,
+            boundary_map=model.boundary_view.index_map,
             k_map=model.constant_view.index_map,
             algebraic_size=algebraic_size,
             algebraic_map=model.algebraic_view.index_map,
@@ -366,7 +364,7 @@ class ProcessModel(BaseModel, ABC):  # pyright: ignore[reportUnsafeMultipleInher
             u=u,
             k=params.k,
             y_map=params.y_map,
-            u_map=params.u_map,
+            u_map=params.boundary_map,
             k_map=params.k_map,
             algebraic_map=params.algebraic_map,
             algebraic_size=params.algebraic_size,
@@ -379,7 +377,7 @@ class ProcessModel(BaseModel, ABC):  # pyright: ignore[reportUnsafeMultipleInher
             params.k,
             algebraic,
             params.y_map,
-            params.u_map,
+            params.boundary_map,
             params.k_map,
             params.algebraic_map,
         )
@@ -387,14 +385,14 @@ class ProcessModel(BaseModel, ABC):  # pyright: ignore[reportUnsafeMultipleInher
     # ------ public methods ------
     def step(self, dt: Seconds) -> None:
         y0 = self.differential_view.to_array()
-        u = self.controlled_view.to_array()
+        boundary = self.boundary_view.to_array()
         end_t = self.t + dt
         final_y = y0
         result = solve_ivp(
             fun=self._rhs_wrapper,
             t_span=(self.t, end_t),
             y0=y0,
-            args=(u, self._params),
+            args=(boundary, self._params),
             dense_output=True,
             **self._solver_options,  # pyright: ignore[reportAny]
         )
@@ -404,10 +402,10 @@ class ProcessModel(BaseModel, ABC):  # pyright: ignore[reportUnsafeMultipleInher
         # After the final SUCCESSFUL step, update the actual algebraic_states object.
         final_algebraic_values = self._params.algebraic_values_function(
             final_y,
-            u,
+            boundary,
             self._params.k,
             self._params.y_map,
-            self._params.u_map,
+            self._params.boundary_map,
             self._params.k_map,
             self._params.algebraic_map,
             self._params.algebraic_size,
@@ -479,8 +477,8 @@ class ProcessModel(BaseModel, ABC):  # pyright: ignore[reportUnsafeMultipleInher
         return CategorizedStateView(self, StateType.ALGEBRAIC)
 
     @cached_property
-    def controlled_view(self) -> CategorizedStateView:
-        return CategorizedStateView(self, StateType.CONTROLLED)
+    def boundary_view(self) -> CategorizedStateView:
+        return CategorizedStateView(self, StateType.BOUNDARY)
 
     @cached_property
     def constant_view(self) -> CategorizedStateView:

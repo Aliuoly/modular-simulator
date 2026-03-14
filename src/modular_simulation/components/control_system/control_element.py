@@ -4,9 +4,10 @@ from __future__ import annotations
 import warnings
 from typing import TYPE_CHECKING, Any, override
 import numpy as np
+from astropy.units import Unit
 from dataclasses import asdict
 from pydantic import PrivateAttr, ConfigDict, Field
-from modular_simulation.components.point import Point, DataValue
+from modular_simulation.components.point import DataValue, Point
 from modular_simulation.validation.exceptions import (
     ControlElementConfigurationError,
     ControllerConfigurationError,
@@ -67,6 +68,12 @@ class ControlElement(AbstractComponent):
     def _install(self, system: System) -> list[Exception]:
         """Bind the control element to the system and wire its controller."""
         exceptions: list[Exception] = []
+        try:
+            system.validate_static_control_element_mv_tag(self.mv_tag)
+        except ControllerConfigurationError as error:
+            exceptions.append(ControlElementConfigurationError(str(error)))
+            return exceptions
+
         # Try to find the point in PointRegistry.
         # If it's a process state, System registers it with a specific prefix.
         mv_point = None
@@ -90,6 +97,21 @@ class ControlElement(AbstractComponent):
             if len(possible_matches) == 1:
                 mv_point = system.point_registry.get(possible_matches[0])
 
+        if mv_point is None and self.mv_tag.startswith("actuator/heat/"):
+            actuator_id = self.mv_tag.split("/", 2)[2]
+            source_state = system.process_model.state_metadata_dict.get(actuator_id)
+            inferred_unit = source_state.unit if source_state is not None else Unit("1")
+            mv_point = Point(
+                tag=self.mv_tag,
+                unit=inferred_unit,
+                type="raw",
+                description=f"runtime heat actuator command '{self.mv_tag}'",
+                _raw_tag=self.mv_tag,
+            )
+            initial_value = self.mv_trajectory(0.0)
+            mv_point.data = DataValue(time=system.time, value=initial_value, ok=True)
+            system.point_registry.add(mv_point)
+
         if mv_point is None:
             exceptions.append(
                 ControlElementConfigurationError(
@@ -100,27 +122,11 @@ class ControlElement(AbstractComponent):
 
         self._mv_point = mv_point
 
-        # Determine if MV maps to a process model state (direct control)
-        # or just a registry point (e.g. calculation input)
         try:
-            if self.mv_tag in system.process_model.state_metadata_dict:
-                metadata = system.process_model.state_metadata_dict[self.mv_tag]
-                target_unit = metadata.unit
-                source_unit = self._mv_point.unit if self._mv_point.unit else target_unit
-
-                converter = source_unit.get_converter(target_unit)
-
-                def setter(data: DataValue) -> None:
-                    # Write directly to process model
-                    val = float(converter(data.value))
-                    setattr(system.process_model, self.mv_tag, val)
-                    # Also update the point for history/visibility
-                    self._mv_point.data = data
-
-                self._mv_setter = setter
-            else:
-                self._mv_setter = system.point_registry.make_converted_data_setter(self.mv_tag)
-
+            self._mv_setter = system.make_actuator_data_setter(
+                self.mv_tag,
+                source_unit=self._mv_point.unit,
+            )
         except Exception as e:
             exceptions.append(ControlElementConfigurationError(f"Failed to bind MV setter: {e}"))
             return exceptions

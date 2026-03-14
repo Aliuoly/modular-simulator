@@ -100,7 +100,7 @@ def _controller_system() -> System:
         Td=0.0,
     )
     heater = ControlElement(
-        mv_tag="heater_power",
+        mv_tag="actuator/heat/heater_power",
         mv_trajectory=Trajectory(y0=0.0, t0=0.0),
         mv_range=(0.0, 20.0),
         controller=controller,
@@ -167,6 +167,10 @@ def test_controller_constructor_sp_trajectory_alias_warns() -> None:
     assert controller.reference_trajectory is not None
     assert controller.reference_trajectory(0.0) == pytest.approx(315.0)
 
+    saved = controller.save()
+    assert "reference_trajectory" in saved["config"]
+    assert "sp_trajectory" not in saved["config"]
+
 
 def test_system_load_accepts_legacy_controller_aliases_with_deterministic_warnings() -> None:
     system = _controller_system()
@@ -201,6 +205,15 @@ def test_system_load_accepts_legacy_controller_aliases_with_deterministic_warnin
     assert restored_controller is not None
     assert restored_controller.reference_trajectory is not None
     assert restored_controller.reference_trajectory(restored.time) == pytest.approx(315.0)
+    restored_controller_payload = restored.save()["snapshot"]["control_elements"][0]["config"][
+        "controller"
+    ]
+    restored_controller_config = restored_controller_payload["config"]
+    restored_controller_state = restored_controller_payload["state"]
+    assert "reference_trajectory" in restored_controller_config
+    assert "sp_trajectory" not in restored_controller_config
+    assert "reference" in restored_controller_state
+    assert "sp" not in restored_controller_state
 
 
 def test_process_model_load_accepts_legacy_pump_pressure_rise_alias_with_warning() -> None:
@@ -224,3 +237,7 @@ def test_process_model_load_accepts_legacy_pump_pressure_rise_alias_with_warning
 
     restored_pump = cast(Pump, restored)
     assert restored_pump.pump_speed == pytest.approx(120000.0)
+    restored_payload = restored_pump.save()
+    restored_states = cast(dict[str, object], restored_payload["states"])
+    assert "pump_speed" in restored_states
+    assert "pressure_rise" not in restored_states

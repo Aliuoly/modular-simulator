@@ -196,3 +196,42 @@ def test_external_controller_drives_cstr_volume_via_outlet_flow_actuator() -> No
 
     assert reactor.outlet_flow != pytest.approx(1.2, abs=1.0e-9)
     assert reactor.volume == pytest.approx(8.0, rel=0.06, abs=0.2)
+
+
+def test_cstr_well_mixed_jacket_boundary_is_driven_via_external_heat_actuator_plane() -> None:
+    reactor = CSTR(
+        n_species=2,
+        species_names=("A", "B"),
+        reaction_set=ReactionSet(reactions=()),
+        species_moles=np.array([5.0, 0.0], dtype=np.float64),
+        temperature=305.0,
+        volume=5.0,
+        inlet_flow=1.0,
+        outlet_flow=1.0,
+        inlet_temperature=305.0,
+        inlet_pressure=101325.0,
+        inlet_composition=np.array([1.0, 0.0], dtype=np.float64),
+        jacket_temperature=290.0,
+    )
+    system = System(
+        dt=0.1,
+        process_model=reactor,
+        sensors=[],
+        calculations=[],
+        control_elements=[
+            ControlElement(
+                mv_tag="actuator/heat/cstr_jacket_loop",
+                mv_range=(-20000.0, 20000.0),
+                mv_trajectory=Trajectory(y0=1200.0),
+                mode=ControllerMode.MANUAL,
+            )
+        ],
+        show_progress=False,
+    )
+
+    system.step(duration=0.1)
+    pending_heat_commands = system.consume_pending_heat_actuator_rate_commands()
+
+    assert reactor.jacket_temperature == pytest.approx(290.0)
+    assert "actuator/heat/cstr_jacket_loop" in pending_heat_commands
+    assert pending_heat_commands["actuator/heat/cstr_jacket_loop"] == pytest.approx(1200.0)

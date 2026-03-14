@@ -25,7 +25,7 @@ def _make_pid_controller(setpoint: float = 310.0):
     return PIDController(
         cv_tag="temperature",
         cv_range=(200.0, 400.0),
-        sp_trajectory=Trajectory(y0=setpoint),
+        reference_trajectory=Trajectory(y0=setpoint),
         Kp=1.5,
         Ti=4.0,
         period=0.0,
@@ -37,7 +37,7 @@ def test_system_step_updates_measurements_and_state(thermal_process_model):
     mv_sensor = SampledDelayedSensor(measurement_tag="heater_power", unit="K/s")
     controller = _make_pid_controller(315.0)
     control_element = ControlElement(
-        mv_tag="heater_power",
+        mv_tag="actuator/heat/heater_power",
         mv_range=(0.0, 25.0),
         mv_trajectory=Trajectory(y0=0.0),
         controller=controller,
@@ -56,7 +56,10 @@ def test_system_step_updates_measurements_and_state(thermal_process_model):
     thermal_process_model.t = system.dt
     system.step()
 
-    assert thermal_process_model.temperature > 300.0
+    assert thermal_process_model.heater_power == pytest.approx(0.0)
+    pending_heat_commands = system.consume_pending_heat_actuator_rate_commands()
+    assert "actuator/heat/heater_power" in pending_heat_commands
+    assert pending_heat_commands["actuator/heat/heater_power"] > 0.0
     # PointRegistry.history is a dict of lists of DataValue
     assert system.history != {}
     history = system.history
@@ -85,7 +88,7 @@ def test_system_validation_catches_bad_controller(thermal_process_model):
     bad_controller = PIDController(
         cv_tag="temperature",
         cv_range=(200.0, 400.0),
-        sp_trajectory=Trajectory(y0=310.0),
+        reference_trajectory=Trajectory(y0=310.0),
         Kp=1.0,
         Ti=3.0,
     )
