@@ -3,10 +3,17 @@ from __future__ import annotations
 # pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportPrivateUsage=false, reportUnusedCallResult=false
 
 import pytest
+from types import MappingProxyType
 from typing import cast
 
 from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulic_element import (
+    HydraulicElement,
+    PumpHydraulicElement,
+    ValveHydraulicElement,
+)
 from modular_simulation.connection.hydraulic_solver import (
+    ElementEquation,
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )
@@ -40,6 +47,69 @@ def _valid_system() -> HydraulicSystemDefinition:
     )
 
 
+def _valve_system() -> HydraulicSystemDefinition:
+    return HydraulicSystemDefinition(
+        equations=(
+            ElementEquation(
+                name="eq_purge_line",
+                element=cast(
+                    HydraulicElement,
+                    cast(object, ValveHydraulicElement()),
+                ),
+                inputs=MappingProxyType(
+                    {
+                        "upstream_pressure": 120_000.0,
+                        "downstream_pressure": 100_000.0,
+                    }
+                ),
+                parameters=MappingProxyType(
+                    {
+                        "valve_resistance": 1.0,
+                        "delta": 1.0e-3,
+                    }
+                ),
+                unknown_name_map=MappingProxyType({"flow_rate": "flow_purge_line"}),
+                residual_name_map=MappingProxyType({"head_balance": "head_balance_purge_line"}),
+            ),
+        ),
+        linear_residual_equations=(),
+    )
+
+
+def _pump_system() -> HydraulicSystemDefinition:
+    return HydraulicSystemDefinition(
+        equations=(
+            ElementEquation(
+                name="eq_pump_line",
+                element=cast(
+                    HydraulicElement,
+                    cast(
+                        object,
+                        PumpHydraulicElement(
+                            dp_curve=lambda flow_rate, pump_speed: pump_speed - flow_rate,
+                            d_dp_d_mdot=lambda flow_rate, pump_speed: -1.0,
+                        ),
+                    ),
+                ),
+                inputs=MappingProxyType(
+                    {
+                        "upstream_pressure": 100_000.0,
+                        "downstream_pressure": 120_000.0,
+                    }
+                ),
+                parameters=MappingProxyType(
+                    {
+                        "pump_speed": 25_000.0,
+                    }
+                ),
+                unknown_name_map=MappingProxyType({"flow_rate": "flow_pump_line"}),
+                residual_name_map=MappingProxyType({"head_balance": "head_balance_pump_line"}),
+            ),
+        ),
+        linear_residual_equations=(),
+    )
+
+
 def _network(runtime: ConnectionRuntimeOrchestrator | None = None) -> ConnectionNetwork:
     network = ConnectionNetwork(
         compile_lifecycle=HydraulicCompileLifecycle(),
@@ -52,6 +122,78 @@ def _network(runtime: ConnectionRuntimeOrchestrator | None = None) -> Connection
     network.connect("feed_boundary", "reactor.feed")
     network.connect("reactor.product", "product_boundary")
     _ = network.compile()
+    return network
+
+
+def _network_with_attached_valve(runtime: ConnectionRuntimeOrchestrator) -> ConnectionNetwork:
+    network = ConnectionNetwork(
+        compile_lifecycle=HydraulicCompileLifecycle(),
+        hydraulic_system_builder=lambda topology: _valve_system(),
+        runtime_orchestrator=runtime,
+    )
+    network.add_process("reactor", inlet_ports=("feed",), outlet_ports=("product", "purge"))
+    network.add_boundary_source("feed_boundary")
+    network.add_boundary_sink("product_boundary")
+    network.add_boundary_sink("purge_boundary")
+    network.connect("feed_boundary", "reactor.feed")
+    network.connect("reactor.product", "product_boundary")
+    network.connect("reactor.purge", "purge_boundary", edge_id="purge_line")
+    network.configure_line_geometry(
+        line_id="purge_line",
+        radius_m=0.05,
+        length_m=2.0,
+        equation_name="eq_purge_line",
+        resistance_parameter_name="valve_resistance",
+    )
+    network.attach_line_valve(
+        line_id="purge_line",
+        valve_id="purge_valve",
+        minimum_open_fraction=0.1,
+        maximum_open_fraction=1.0,
+        initial_open_fraction=0.6,
+    )
+    _ = network.compile()
+    return network
+
+
+def _network_with_attached_pump(runtime: ConnectionRuntimeOrchestrator) -> ConnectionNetwork:
+    network = ConnectionNetwork(
+        compile_lifecycle=HydraulicCompileLifecycle(),
+        hydraulic_system_builder=lambda topology: _pump_system(),
+        runtime_orchestrator=runtime,
+    )
+    network.add_process("reactor", inlet_ports=("feed",), outlet_ports=("product", "recycle"))
+    network.add_boundary_source("feed_boundary")
+    network.add_boundary_sink("product_boundary")
+    network.add_boundary_sink("recycle_boundary")
+    network.connect("feed_boundary", "reactor.feed")
+    network.connect("reactor.product", "product_boundary")
+    network.connect("reactor.recycle", "recycle_boundary", edge_id="pump_line")
+    network.configure_line_geometry(
+        line_id="pump_line",
+        radius_m=0.05,
+        length_m=2.0,
+        equation_name="eq_pump_line",
+        resistance_parameter_name="pump_speed",
+    )
+    network.attach_line_pump(
+        line_id="pump_line",
+        pump_id="recycle_pump",
+        initial_pump_speed=25_000.0,
+    )
+    _ = network.compile()
+    return network
+
+
+def _network_with_attached_heat_actuator(
+    runtime: ConnectionRuntimeOrchestrator,
+) -> ConnectionNetwork:
+    network = _network(runtime)
+    network.attach_line_heat_actuator(
+        line_id="edge_0001",
+        heat_actuator_id="feed_heater",
+        initial_heat_rate=0.0,
+    )
     return network
 
 
@@ -351,3 +493,132 @@ def test_poison_request_at_queue_head_strictly_blocks_following_requests() -> No
         "rq_0002",
     )
     assert network.save_runtime_snapshot() == queued_snapshot
+
+
+def test_valve_open_fraction_mutation_accepts_actuator_namespace_without_recompile() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network_with_attached_valve(runtime)
+
+    _ = network.queue_reconfiguration(
+        {
+            "operation": "set_valve_open_fraction",
+            "actuator_tag": "actuator/valve/purge_valve",
+            "open_fraction": 0.8,
+        }
+    )
+
+    result = cast(ConnectionRuntimeStepResult, network.step(macro_step_time_s=0.5))
+
+    assert result.barrier_reconfiguration.applied_request_ids == ("rq_0001",)
+    assert result.graph_revision == "graph_rev_0001"
+    compiled = network.compiled
+    assert compiled is not None and compiled.hydraulic is not None
+    assert compiled.hydraulic.valve_state_by_line["purge_line"].current_open_fraction == 0.8
+
+
+def test_valve_open_fraction_mutation_rejects_noncanonical_actuator_namespace() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network_with_attached_valve(runtime)
+
+    _ = network.queue_reconfiguration(
+        {
+            "operation": "set_valve_open_fraction",
+            "actuator_tag": "purge_valve",
+            "open_fraction": 0.8,
+        }
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "set_valve_open_fraction field 'actuator_tag' must match canonical "
+            + "valve actuator tag 'actuator/valve/<id>'"
+        ),
+    ):
+        _ = network.step(macro_step_time_s=0.5)
+
+
+def test_pump_speed_mutation_accepts_actuator_namespace_without_recompile() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network_with_attached_pump(runtime)
+
+    _ = network.queue_reconfiguration(
+        {
+            "operation": "set_pump_speed",
+            "actuator_tag": "actuator/pump/recycle_pump",
+            "pump_speed": 40_000.0,
+        }
+    )
+
+    result = cast(ConnectionRuntimeStepResult, network.step(macro_step_time_s=0.5))
+
+    assert result.barrier_reconfiguration.applied_request_ids == ("rq_0001",)
+    assert result.graph_revision == "graph_rev_0001"
+    compiled = network.compiled
+    assert compiled is not None and compiled.hydraulic is not None
+    equation = compiled.hydraulic.system.equations[0]
+    assert equation.parameters["pump_speed"] == pytest.approx(40_000.0)
+
+
+def test_pump_speed_mutation_rejects_noncanonical_actuator_namespace() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network_with_attached_pump(runtime)
+
+    _ = network.queue_reconfiguration(
+        {
+            "operation": "set_pump_speed",
+            "actuator_tag": "recycle_pump",
+            "pump_speed": 40_000.0,
+        }
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "set_pump_speed field 'actuator_tag' must match canonical "
+            + "pump actuator tag 'actuator/pump/<id>'"
+        ),
+    ):
+        _ = network.step(macro_step_time_s=0.5)
+
+
+def test_heat_actuator_rate_mutation_accepts_actuator_namespace_without_recompile() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network_with_attached_heat_actuator(runtime)
+
+    _ = network.queue_reconfiguration(
+        {
+            "operation": "set_heat_actuator_rate",
+            "actuator_tag": "actuator/heat/feed_heater",
+            "heat_rate": 12.5,
+        }
+    )
+
+    result = cast(ConnectionRuntimeStepResult, network.step(macro_step_time_s=0.5))
+
+    assert result.barrier_reconfiguration.applied_request_ids == ("rq_0001",)
+    assert result.graph_revision == "graph_rev_0001"
+    assert network.list_heat_actuator_rates() == (("edge_0001", 12.5),)
+    assert network.list_pending_heat_actuator_rates() == ()
+
+
+def test_heat_actuator_rate_mutation_rejects_noncanonical_actuator_namespace() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network_with_attached_heat_actuator(runtime)
+
+    _ = network.queue_reconfiguration(
+        {
+            "operation": "set_heat_actuator_rate",
+            "actuator_tag": "feed_heater",
+            "heat_rate": 12.5,
+        }
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "set_heat_actuator_rate field 'actuator_tag' must match canonical "
+            + "heat actuator tag 'actuator/heat/<id>'"
+        ),
+    ):
+        _ = network.step(macro_step_time_s=0.5)

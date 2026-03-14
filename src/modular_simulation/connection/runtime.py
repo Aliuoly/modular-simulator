@@ -97,6 +97,12 @@ SENSOR_MUTATION_FORBIDDEN_FIELDS: frozenset[str] = frozenset(
         "maximum_open_fraction",
         "initial_open_fraction",
         "valve_id",
+        "pump_id",
+        "pump_speed",
+        "initial_pump_speed",
+        "pump_parameter_name",
+        "heat_actuator_id",
+        "heat_rate",
     }
 )
 
@@ -119,6 +125,12 @@ CONTROLLER_MUTATION_FORBIDDEN_FIELDS: frozenset[str] = frozenset(
         "initial_open_fraction",
         "line_id",
         "valve_id",
+        "pump_id",
+        "pump_speed",
+        "initial_pump_speed",
+        "pump_parameter_name",
+        "heat_actuator_id",
+        "heat_rate",
     }
 )
 
@@ -176,10 +188,17 @@ class _HydraulicTopologyGuardSnapshot:
             float | None,
             float | None,
             float | None,
+            str | None,
+            float | None,
+            str | None,
         ],
         ...,
     ]
     pending_valve_commands: tuple[tuple[str, float], ...]
+    pending_pump_commands: tuple[tuple[str, float], ...]
+    line_heat_actuator_ids: tuple[tuple[str, str], ...]
+    heat_actuator_rates: tuple[tuple[str, float], ...]
+    pending_heat_commands: tuple[tuple[str, float], ...]
     compiled_graph_revision: str | None
     compiled_hydraulic_graph_revision: str | None
 
@@ -234,6 +253,10 @@ class RuntimeControllerMutationDispatcher(Protocol):
     ) -> None: ...
 
 
+class RuntimeHeatActuatorCommandProvider(Protocol):
+    def __call__(self) -> Mapping[str, float]: ...
+
+
 class _DestructiveEditPlanLike(Protocol):
     edge_ids_to_detach: tuple[str, ...]
 
@@ -277,6 +300,7 @@ class ConnectionRuntimeOrchestrator:
         boundary_propagation_step: RuntimeBoundaryPropagationStep | None = None,
         sensor_mutation_dispatcher: RuntimeSensorMutationDispatcher | None = None,
         controller_mutation_dispatcher: RuntimeControllerMutationDispatcher | None = None,
+        heat_actuator_command_provider: RuntimeHeatActuatorCommandProvider | None = None,
         picard_gate_config: PicardIterationGateConfig | None = None,
         runtime_context: SimulationRuntimeContext | None = None,
     ) -> None:
@@ -308,6 +332,9 @@ class ConnectionRuntimeOrchestrator:
         )
         self._controller_mutation_dispatcher: RuntimeControllerMutationDispatcher | None = (
             controller_mutation_dispatcher
+        )
+        self._heat_actuator_command_provider: RuntimeHeatActuatorCommandProvider | None = (
+            heat_actuator_command_provider
         )
         self._picard_gate_config: PicardIterationGateConfig | None = picard_gate_config
         self._simulation_time_s: float = 0.0
@@ -440,6 +467,7 @@ class ConnectionRuntimeOrchestrator:
             boundary_propagation_step=boundary_propagation_step,
             sensor_mutation_dispatcher=sensor_dispatcher,
             controller_mutation_dispatcher=controller_dispatcher,
+            heat_actuator_command_provider=system.consume_pending_heat_actuator_rate_commands,
             picard_gate_config=picard_gate_config,
             runtime_context=runtime_context,
         )
@@ -501,6 +529,7 @@ class ConnectionRuntimeOrchestrator:
                     self._macro_step_index + 1,
                     self._simulation_time_s + macro_step_time_s,
                 )
+            self._stage_controller_heat_actuator_commands(network=network)
 
             def _hydraulic_solve(*, macro_step_time_s: float) -> HydraulicSolveResult:
                 return self._hydraulic_solve_step(
@@ -836,6 +865,12 @@ class ConnectionRuntimeOrchestrator:
     def _mutation_requires_compile(self, operation: str) -> bool:
         if operation == "set_valve_open_fraction":
             return False
+        if operation == "set_pump_speed":
+            return False
+        if operation == "set_heat_actuator_rate":
+            return False
+        if operation == "attach_line_heat_actuator":
+            return False
         if operation in SENSOR_ONLY_MUTATION_OPERATIONS:
             return False
         if operation in CONTROLLER_ONLY_MUTATION_OPERATIONS:
@@ -1032,11 +1067,22 @@ class ConnectionRuntimeOrchestrator:
             return
 
         if operation == "set_valve_open_fraction":
-            line_id = self._require_non_empty_string(mutation, "line_id", operation)
             open_fraction = self._require_finite_float(mutation, "open_fraction", operation)
             network.stage_valve_open_fraction_command(
-                line_id=line_id,
                 open_fraction=open_fraction,
+                line_id=self._optional_non_empty_string(mutation, "line_id", operation),
+                valve_id=self._optional_non_empty_string(mutation, "valve_id", operation),
+                actuator_tag=self._optional_non_empty_string(mutation, "actuator_tag", operation),
+            )
+            return
+
+        if operation == "set_pump_speed":
+            pump_speed = self._require_finite_float(mutation, "pump_speed", operation)
+            network.stage_pump_speed_command(
+                pump_speed=pump_speed,
+                line_id=self._optional_non_empty_string(mutation, "line_id", operation),
+                pump_id=self._optional_non_empty_string(mutation, "pump_id", operation),
+                actuator_tag=self._optional_non_empty_string(mutation, "actuator_tag", operation),
             )
             return
 
@@ -1089,6 +1135,56 @@ class ConnectionRuntimeOrchestrator:
                 ),
                 equation_name=mutation.get("equation_name"),
                 resistance_parameter_name=mutation.get("resistance_parameter_name"),
+            )
+            return
+
+        if operation == "attach_line_pump":
+            line_id = self._require_non_empty_string(mutation, "line_id", operation)
+            pump_id = self._require_non_empty_string(mutation, "pump_id", operation)
+            network.attach_line_pump(
+                line_id=line_id,
+                pump_id=pump_id,
+                initial_pump_speed=self._optional_finite_float(
+                    mutation=mutation,
+                    field_name="initial_pump_speed",
+                    operation=operation,
+                    default=0.0,
+                ),
+                equation_name=mutation.get("equation_name"),
+                pump_parameter_name=mutation.get("pump_parameter_name"),
+            )
+            return
+
+        if operation == "attach_line_heat_actuator":
+            line_id = self._require_non_empty_string(mutation, "line_id", operation)
+            heat_actuator_id = self._require_non_empty_string(
+                mutation,
+                "heat_actuator_id",
+                operation,
+            )
+            network.attach_line_heat_actuator(
+                line_id=line_id,
+                heat_actuator_id=heat_actuator_id,
+                initial_heat_rate=self._optional_finite_float(
+                    mutation=mutation,
+                    field_name="initial_heat_rate",
+                    operation=operation,
+                    default=0.0,
+                ),
+            )
+            return
+
+        if operation == "set_heat_actuator_rate":
+            heat_rate = self._require_finite_float(mutation, "heat_rate", operation)
+            network.stage_heat_actuator_rate_command(
+                heat_rate=heat_rate,
+                line_id=self._optional_non_empty_string(mutation, "line_id", operation),
+                heat_actuator_id=self._optional_non_empty_string(
+                    mutation,
+                    "heat_actuator_id",
+                    operation,
+                ),
+                actuator_tag=self._optional_non_empty_string(mutation, "actuator_tag", operation),
             )
             return
 
@@ -1170,6 +1266,9 @@ class ConnectionRuntimeOrchestrator:
                 float | None,
                 float | None,
                 float | None,
+                str | None,
+                float | None,
+                str | None,
             ]
         ] = []
         for config in network.list_line_hydraulic_configs():
@@ -1186,10 +1285,17 @@ class ConnectionRuntimeOrchestrator:
                     config.minimum_open_fraction,
                     config.maximum_open_fraction,
                     config.initial_open_fraction,
+                    config.pump_id,
+                    config.initial_pump_speed,
+                    config.pump_parameter_name,
                 )
             )
 
         pending_valve_commands = network.list_pending_valve_open_fractions()
+        pending_pump_commands = network.list_pending_pump_speeds()
+        line_heat_actuator_ids = network.list_line_heat_actuator_ids()
+        heat_actuator_rates = network.list_heat_actuator_rates()
+        pending_heat_commands = network.list_pending_heat_actuator_rates()
         compiled = network.compiled
         compiled_graph_revision = None if compiled is None else str(compiled.graph_revision)
         compiled_hydraulic_graph_revision = (
@@ -1204,6 +1310,10 @@ class ConnectionRuntimeOrchestrator:
             edge_specs=edge_specs,
             line_hydraulic_configs=tuple(line_hydraulic_configs),
             pending_valve_commands=pending_valve_commands,
+            pending_pump_commands=pending_pump_commands,
+            line_heat_actuator_ids=line_heat_actuator_ids,
+            heat_actuator_rates=heat_actuator_rates,
+            pending_heat_commands=pending_heat_commands,
             compiled_graph_revision=compiled_graph_revision,
             compiled_hydraulic_graph_revision=compiled_hydraulic_graph_revision,
         )
@@ -1226,6 +1336,16 @@ class ConnectionRuntimeOrchestrator:
                     sorted(forbidden_fields),
                 )
                 + "controller operations are zero-resistance instrumentation updates"
+            )
+
+    def _stage_controller_heat_actuator_commands(self, *, network: ConnectionNetwork) -> None:
+        if self._heat_actuator_command_provider is None:
+            return
+        staged_commands = self._heat_actuator_command_provider()
+        for actuator_tag in sorted(staged_commands):
+            network.stage_heat_actuator_rate_command(
+                heat_rate=float(staged_commands[actuator_tag]),
+                actuator_tag=actuator_tag,
             )
 
     def _require_non_empty_string(
@@ -1299,6 +1419,21 @@ class ConnectionRuntimeOrchestrator:
             )
         return scalar
 
+    def _optional_non_empty_string(
+        self,
+        mutation: Mapping[str, object],
+        field_name: str,
+        operation: str,
+    ) -> str | None:
+        value = mutation.get(field_name)
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(
+                f"operation '{operation}' optional field '{field_name}' must be non-empty string"
+            )
+        return value.strip()
+
     def _default_hydraulic_solve_step(
         self,
         *,
@@ -1317,6 +1452,15 @@ class ConnectionRuntimeOrchestrator:
         if pending_valve_commands:
             hydraulic_graph = hydraulic_graph.with_valve_commands(pending_valve_commands)
             network.replace_compiled_hydraulic(hydraulic=hydraulic_graph)
+
+        pending_pump_commands = network.consume_pending_pump_speed_commands()
+        if pending_pump_commands:
+            hydraulic_graph = network.with_pump_speed_commands(pending_pump_commands)
+            network.replace_compiled_hydraulic(hydraulic=hydraulic_graph)
+
+        pending_heat_commands = network.consume_pending_heat_actuator_rate_commands()
+        if pending_heat_commands:
+            network.apply_heat_actuator_rate_commands(pending_heat_commands)
 
         return hydraulic_graph.solve()
 

@@ -42,9 +42,11 @@ def test_junction_as_unit_and_valve_sensor_controller_loop_smoke() -> None:
 
     control_result = run_control_and_checkpoint_demo()
     heater_power = cast(float, control_result["heater_power"])
+    heat_actuator_rate = cast(float, control_result["heat_actuator_rate"])
     applied_request_ids = cast(tuple[str, ...], control_result["applied_request_ids"])
-    assert heater_power > 0.0
-    assert len(applied_request_ids) == 13
+    assert heater_power == 0.0
+    assert heat_actuator_rate > 0.0
+    assert len(applied_request_ids) == 14
 
 
 def test_save_load_continue_api_and_cli_smoke() -> None:

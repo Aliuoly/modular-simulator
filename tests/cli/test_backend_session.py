@@ -88,6 +88,7 @@ class _FakeNetwork:
         return f"rq_{self._call_count:04d}"
 
     def step(self, *, macro_step_time_s: float) -> _FakeStepResult:
+        del macro_step_time_s
         if self._step_raises is not None:
             raise self._step_raises
         # The first queued request id goes into applied_request_ids
@@ -306,7 +307,10 @@ class TestTxMutations:
 
     def test_bind_controller_output(self, session: PlantBackendSession) -> None:
         tx = session.begin_tx()
-        tx.bind_controller_output(controller_id="PID_1", actuator_tag="heater")
+        tx.bind_controller_output(
+            controller_id="PID_1",
+            actuator_tag="actuator/heat/heater",
+        )
         assert tx.pending_count == 1
 
     def test_configure_controller_mode(self, session: PlantBackendSession) -> None:

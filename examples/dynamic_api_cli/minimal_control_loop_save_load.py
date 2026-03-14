@@ -55,9 +55,9 @@ class ThermalProcessModel(ProcessModel):
         float, M(type=T.DIFFERENTIAL, unit="K", description="process temperature")
     ] = 300.0
     heat_flux: Annotated[float, M(type=T.ALGEBRAIC, unit="K/s", description="cooling rate")] = 0.0
-    heater_power: Annotated[
-        float, M(type=T.CONTROLLED, unit="K/s", description="heating input")
-    ] = 0.0
+    heater_power: Annotated[float, M(type=T.BOUNDARY, unit="K/s", description="heating input")] = (
+        0.0
+    )
     ambient_temperature: Annotated[
         float, M(type=T.CONSTANT, unit="K", description="ambient temperature")
     ] = 295.0
@@ -145,7 +145,7 @@ def _build_system(process_model: ProcessModel) -> System:
         deadtime=0.0,
     )
     heater = ControlElement(
-        mv_tag="heater_power",
+        mv_tag="actuator/heat/purge_heater",
         mv_trajectory=Trajectory(y0=0.0, t0=0.0),
         mv_range=(0.0, 20.0),
         mode=ControllerMode.MANUAL,
@@ -170,7 +170,15 @@ def _runtime_with_dispatchers(system: System) -> ConnectionRuntimeOrchestrator:
         compiled = network.compiled
         if compiled is None or compiled.hydraulic is None:
             raise RuntimeError("compiled hydraulic graph is required")
-        return compiled.hydraulic.solve()
+        pending_valve_commands = network.consume_pending_valve_open_fraction_commands()
+        hydraulic = compiled.hydraulic
+        if pending_valve_commands:
+            hydraulic = hydraulic.with_valve_commands(pending_valve_commands)
+            network.replace_compiled_hydraulic(hydraulic=hydraulic)
+        pending_heat_commands = network.consume_pending_heat_actuator_rate_commands()
+        if pending_heat_commands:
+            network.apply_heat_actuator_rate_commands(pending_heat_commands)
+        return hydraulic.solve()
 
     return ConnectionRuntimeOrchestrator.for_system(
         system=system,
@@ -242,6 +250,11 @@ def run_demo() -> dict[str, object]:
                 initial_open_fraction=0.6,
             ),
         ),
+        line_api.attach_line_heat_actuator(
+            line_id="purge_line",
+            heat_actuator_id="purge_heater",
+            initial_heat_rate=0.0,
+        ),
         sensor_api.create_sensor(
             sensor_id="runtime_temp_probe",
             signal_key="temperature",
@@ -267,7 +280,7 @@ def run_demo() -> dict[str, object]:
         ),
         controller_api.bind_controller_output(
             controller_id="heater_pid",
-            actuator_tag="heater_power",
+            actuator_tag="actuator/heat/purge_heater",
         ),
         controller_api.configure_controller_mode(
             controller_id="heater_pid",
@@ -280,9 +293,14 @@ def run_demo() -> dict[str, object]:
 
     _ = system.extend_controller_reference_trajectory("temperature", value=320.0)
     system.step(duration=1.0)
+    _ = network.step(macro_step_time_s=0.25)
     heater_power = float(process_model.heater_power)
-    if heater_power <= 0.0:
-        raise RuntimeError("controller loop failed to move heater_power above zero")
+    if heater_power != 0.0:
+        raise RuntimeError("controller loop must not directly mutate process-model heater_power")
+    heat_actuator_rates = network.list_heat_actuator_rates()
+    heat_actuator_rate = float(dict(heat_actuator_rates).get("purge_line", 0.0))
+    if heat_actuator_rate <= 0.0:
+        raise RuntimeError("controller loop failed to stage/apply external heat actuator command")
 
     api_checkpoint = network.save_runtime_snapshot()
     _ = network.queue_reconfiguration(
@@ -334,6 +352,7 @@ def run_demo() -> dict[str, object]:
     return {
         "applied_request_ids": tuple(apply_result.barrier_reconfiguration.applied_request_ids),
         "heater_power": heater_power,
+        "heat_actuator_rate": heat_actuator_rate,
         "api_round_trip_ok": api_round_trip_ok,
         "cli_round_trip_ok": cli_round_trip_ok,
     }

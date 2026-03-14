@@ -450,6 +450,117 @@ class DynamicConnectionLineReconfigurationApi:
             metadata=metadata,
         )
 
+    def set_valve_open_fraction(
+        self,
+        *,
+        actuator_tag: str,
+        open_fraction: float,
+        idempotency_key: str | None = None,
+        expected_revision: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> str:
+        return self._queue_request(
+            payload={
+                "operation": "set_valve_open_fraction",
+                "actuator_tag": actuator_tag,
+                "open_fraction": open_fraction,
+            },
+            idempotency_key=idempotency_key,
+            expected_revision=expected_revision,
+            metadata=metadata,
+        )
+
+    def attach_line_pump(
+        self,
+        *,
+        line_id: str,
+        pump_id: str,
+        initial_pump_speed: float = 0.0,
+        equation_name: str | None = None,
+        pump_parameter_name: str | None = None,
+        idempotency_key: str | None = None,
+        expected_revision: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> str:
+        payload: dict[str, object] = {
+            "operation": "attach_line_pump",
+            "line_id": line_id,
+            "pump_id": pump_id,
+            "initial_pump_speed": initial_pump_speed,
+        }
+        if equation_name is not None:
+            payload["equation_name"] = equation_name
+        if pump_parameter_name is not None:
+            payload["pump_parameter_name"] = pump_parameter_name
+        return self._queue_request(
+            payload=payload,
+            idempotency_key=idempotency_key,
+            expected_revision=expected_revision,
+            metadata=metadata,
+        )
+
+    def set_pump_speed(
+        self,
+        *,
+        actuator_tag: str,
+        pump_speed: float,
+        idempotency_key: str | None = None,
+        expected_revision: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> str:
+        return self._queue_request(
+            payload={
+                "operation": "set_pump_speed",
+                "actuator_tag": actuator_tag,
+                "pump_speed": pump_speed,
+            },
+            idempotency_key=idempotency_key,
+            expected_revision=expected_revision,
+            metadata=metadata,
+        )
+
+    def attach_line_heat_actuator(
+        self,
+        *,
+        line_id: str,
+        heat_actuator_id: str,
+        initial_heat_rate: float = 0.0,
+        idempotency_key: str | None = None,
+        expected_revision: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> str:
+        return self._queue_request(
+            payload={
+                "operation": "attach_line_heat_actuator",
+                "line_id": line_id,
+                "heat_actuator_id": heat_actuator_id,
+                "initial_heat_rate": initial_heat_rate,
+            },
+            idempotency_key=idempotency_key,
+            expected_revision=expected_revision,
+            metadata=metadata,
+        )
+
+    def set_heat_actuator_rate(
+        self,
+        *,
+        actuator_tag: str,
+        heat_rate: float,
+        idempotency_key: str | None = None,
+        expected_revision: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> str:
+        return self._queue_request(
+            payload={
+                "operation": "set_heat_actuator_rate",
+                "actuator_tag": actuator_tag,
+                "heat_rate": heat_rate,
+            },
+            idempotency_key=idempotency_key,
+            expected_revision=expected_revision,
+            metadata=metadata,
+        )
+
     def _queue_request(
         self,
         *,

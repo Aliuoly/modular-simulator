@@ -69,6 +69,11 @@ def test_public_api_entry_points_exist() -> None:
     assert callable(network.list_connection_edges)
     assert callable(network.list_line_hydraulic_configs)
     assert callable(network.list_pending_valve_open_fractions)
+    assert callable(network.list_pending_pump_speeds)
+    assert callable(network.attach_line_valve)
+    assert callable(network.attach_line_pump)
+    assert callable(network.stage_valve_open_fraction_command)
+    assert callable(network.stage_pump_speed_command)
     assert callable(network.from_single_process)
     assert callable(ConnectionRuntimeOrchestrator.for_system)
 
@@ -92,6 +97,7 @@ def test_query_surface_returns_deterministic_connection_views() -> None:
     assert tuple(item.edge_id for item in edges) == ("edge_0001", "edge_0002")
     assert line_configs == ()
     assert network.list_pending_valve_open_fractions() == ()
+    assert network.list_pending_pump_speeds() == ()
 
 
 def test_from_single_process_bootstraps_compiled_network() -> None:
