@@ -1,5 +1,6 @@
 from pathlib import Path
 from collections.abc import Iterable
+import re
 
 BANNED_TOKENS = [
     "_input_streams",
@@ -7,6 +8,14 @@ BANNED_TOKENS = [
     "write_port_conditions",
     "map_port_conditions_to_balance_terms",
 ]
+
+ATTRIBUTE_ACCESS_PATTERN = re.compile(r"\.(?:inlet|outlet)_(?![A-Za-z0-9_]*port)[A-Za-z0-9_]+")
+EXEMPT_ATTRIBUTE_MATCHES = {".outlet_streams", ".inlet_streams"}
+EXEMPT_PATHS = {"process_binding.py"}
+DEFERRED_SCOPE_NOTICE = (
+    "Scope guard covers core connection + flowsheet/framework paths only; "
+    "unit_processes/* and examples/* migrations are deferred to later tranches."
+)
 
 
 def repo_root() -> Path:
@@ -60,9 +69,62 @@ def scan_paths(paths: Iterable[Path | str]) -> list[tuple[str, str]]:
     return findings
 
 
+def core_attribute_paths() -> list[Path]:
+    root = repo_root()
+    directories = [
+        root / "src" / "modular_simulation" / "connection",
+        root / "src" / "modular_simulation" / "flowsheet",
+        root / "src" / "modular_simulation" / "framework",
+    ]
+    paths: list[Path] = []
+    for directory in directories:
+        if not directory.exists():
+            continue
+        paths.extend(sorted(directory.rglob("*.py")))
+    return paths
+
+
+def scan_attribute_paths(paths: Iterable[Path | str]) -> list[tuple[str, str]]:
+    findings: list[tuple[str, str]] = []
+    for item in paths:
+        p = item if isinstance(item, Path) else Path(item)
+        if not p.exists():
+            continue
+        if p.name in EXEMPT_PATHS:
+            continue
+        try:
+            data = p.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        for match in ATTRIBUTE_ACCESS_PATTERN.findall(data):
+            if match in EXEMPT_ATTRIBUTE_MATCHES:
+                continue
+            findings.append((str(p), match))
+    return findings
+
+
 def test_clean_case_no_banned_tokens():
     findings = scan_paths(migrated_target_paths())
     assert findings == [], f"Found banned tokens in migrated targets: {findings}"
+
+
+def test_core_connection_does_not_add_direct_unit_inlet_outlet_field_access() -> None:
+    findings = scan_attribute_paths(core_attribute_paths())
+    assert findings == [], (
+        "Direct `.inlet_/ .outlet_` attribute access detected in core connection scope: "
+        f"{findings}. {DEFERRED_SCOPE_NOTICE}"
+    )
+
+
+def test_core_connection_detects_direct_unit_inlet_outlet_field_access(tmp_path: Path) -> None:
+    temp = tmp_path / "forbidden.py"
+    temp.write_text(
+        "final_value = some_unit.inlet_flow + some_unit.outlet_pressure", encoding="utf-8"
+    )
+    findings = scan_attribute_paths(core_attribute_paths() + [temp])
+    assert any(p == str(temp) and tok == ".inlet_flow" for (p, tok) in findings), (
+        f"Synthetic forbidden attribute access was not detected: {findings}"
+    )
 
 
 def test_detection_case_finds_banned_tokens(tmp_path: Path) -> None:

@@ -616,6 +616,12 @@ class Flowsheet:
             return self._feeds[connection.source]
 
         source_node_id, source_port_name = self._split_explicit_endpoint(connection.source)
+        runtime_stream = self._runtime_outlet_stream_snapshot(
+            node_id=source_node_id,
+            port_name=source_port_name,
+        )
+        if runtime_stream is not None:
+            return runtime_stream
         source_unit = cast("ProcessStreamIO", cast("object", self._units[source_node_id]))
         return source_unit.get_outlet_stream(source_port_name)
 
@@ -627,9 +633,10 @@ class Flowsheet:
         unit_results: dict[str, UnitResult] = {}
         for unit_id, unit in self._units.items():
             outlet_streams = {
-                port_name: cast("ProcessStreamIO", cast("object", unit)).get_outlet_stream(
-                    port_name
+                port_name: self._runtime_outlet_stream_snapshot(
+                    node_id=unit_id, port_name=port_name
                 )
+                or cast("ProcessStreamIO", cast("object", unit)).get_outlet_stream(port_name)
                 for port_name in self._available_unit_ports(unit_id=unit_id, role="source")
             }
             unit_results[unit_id] = UnitResult(
@@ -641,6 +648,19 @@ class Flowsheet:
                 ),
             )
         return unit_results
+
+    def _runtime_outlet_stream_snapshot(self, *, node_id: str, port_name: str) -> StreamData | None:
+        plant = self._compiled_plant
+        if plant is None:
+            return None
+
+        outlet_condition = plant.runtime_orchestrator.get_latest_outlet_condition(
+            node_id=node_id,
+            port_name=port_name,
+        )
+        if outlet_condition is None:
+            return None
+        return StreamData.from_port_condition(outlet_condition)
 
     def _extract_state_history(
         self,

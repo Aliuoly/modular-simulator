@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+# pyright: reportMissingImports=false
+
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from math import isfinite
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -17,7 +19,10 @@ from modular_simulation.connection.junction import (
     mix_junction_state_with_enthalpy,
 )
 from modular_simulation.connection.process_binding import BindingError
-from modular_simulation.connection.process_stream_io import ProcessStreamIO
+from modular_simulation.connection.process_stream_io import (
+    ProcessStreamIO,
+    resolve_process_outlet_condition,
+)
 from modular_simulation.connection.state import MaterialState, PortCondition
 from modular_simulation.thermodynamics.stream import StreamData
 from modular_simulation.thermodynamics.species import SpeciesProjection
@@ -31,6 +36,12 @@ if TYPE_CHECKING:
 ManualOverrideHook = Callable[[Mapping[str, PortCondition]], Mapping[str, PortCondition]]
 
 
+class RuntimePortSnapshotStore(Protocol):
+    def record_inlet(self, node_id: str, port_name: str, condition: PortCondition) -> None: ...
+
+    def record_outlet(self, node_id: str, port_name: str, condition: PortCondition) -> None: ...
+
+
 @dataclass(frozen=True)
 class ThermoBoundaryPropagationConfig:
     mode: Literal["auto", "manual", "hybrid"] = "auto"
@@ -41,6 +52,7 @@ class ThermoBoundaryPropagationConfig:
     default_phase_hint: str | None = "liquid"
     stream_port_io_by_node_id: Mapping[str, ProcessStreamIO] | None = None
     feed_streams_by_boundary_id: Mapping[str, StreamData] | None = None
+    runtime_port_snapshot_store: RuntimePortSnapshotStore | None = None
     manual_port_conditions: Mapping[str, PortCondition] | None = None
     manual_override_hook: ManualOverrideHook | None = None
 
@@ -110,7 +122,7 @@ class ThermoBoundaryPropagationStep:
         species_ids = self._runtime_context.species_registry.cas_list
         transport_results = transport_and_mixing_update.transport_results
         incoming_conditions_by_target: dict[str, list[PortCondition]] = {}
-        target_bindings: dict[str, tuple[object, str]] = {}
+        target_bindings: dict[str, tuple[str, object, str]] = {}
         target_stream_port_ios: dict[str, ProcessStreamIO] = {}
 
         for edge in sorted(compiled.topology.edges, key=lambda item: item.edge_id):
@@ -135,7 +147,11 @@ class ThermoBoundaryPropagationStep:
                 target_key = f"{edge.target.node_id}.{edge.target.port_name}"
                 incoming_conditions_by_target.setdefault(target_key, []).append(stream_condition)
                 if target_binding is not None:
-                    target_bindings[target_key] = (target_binding, edge.target.port_name)
+                    target_bindings[target_key] = (
+                        edge.target.node_id,
+                        target_binding,
+                        edge.target.port_name,
+                    )
                 target_stream_port_io = self._resolve_stream_port_io(
                     node_id=edge.target.node_id,
                     binding=target_binding,
@@ -187,7 +203,11 @@ class ThermoBoundaryPropagationStep:
             )
 
             incoming_conditions_by_target.setdefault(target_key, []).append(condition)
-            target_bindings[target_key] = (target_binding, edge.target.port_name)
+            target_bindings[target_key] = (
+                edge.target.node_id,
+                target_binding,
+                edge.target.port_name,
+            )
 
         for target_key in sorted(incoming_conditions_by_target):
             incoming_conditions = incoming_conditions_by_target[target_key]
@@ -206,15 +226,26 @@ class ThermoBoundaryPropagationStep:
                 macro_step_time_s=macro_step_time_s,
             )
 
-            target_binding, target_port_name = target_bindings[target_key]
-            set_inlet = getattr(target_binding, "set_inlet", None)
-            if not callable(set_inlet):
-                pass
-            else:
-                try:
-                    set_inlet(target_port_name, mixed_result.total_incoming_flow_rate)
-                except BindingError:
+            target_node_id, target_port_name = target_key.rsplit(".", maxsplit=1)
+            runtime_port_snapshot_store = self._config.runtime_port_snapshot_store
+            if runtime_port_snapshot_store is not None:
+                runtime_port_snapshot_store.record_inlet(
+                    node_id=target_node_id,
+                    port_name=target_port_name,
+                    condition=conditions[target_key],
+                )
+
+            target_binding_tuple = target_bindings.get(target_key)
+            if target_binding_tuple is not None:
+                _, target_binding, _ = target_binding_tuple
+                set_inlet = getattr(target_binding, "set_inlet", None)
+                if not callable(set_inlet):
                     pass
+                else:
+                    try:
+                        set_inlet(target_port_name, mixed_result.total_incoming_flow_rate)
+                    except BindingError:
+                        pass
 
             target_stream_port_io = target_stream_port_ios.get(target_key)
             if target_stream_port_io is None:
@@ -241,15 +272,15 @@ class ThermoBoundaryPropagationStep:
         target_projection: SpeciesProjection | None,
         global_species_ids: tuple[str, ...],
     ) -> PortCondition | None:
-        stream = self._resolve_stream_for_edge(
+        source_condition = self._resolve_source_outlet_condition(
             source_node_id=source_node_id,
             source_port_name=source_port_name,
             source_binding=source_binding,
         )
-        if stream is None:
+        if source_condition is None:
             return None
 
-        state = stream.to_material_state()
+        state = source_condition.state
         if self._config.auto_propagate_species:
             state = self._project_state_for_target(
                 edge_id=edge_id,
@@ -263,35 +294,56 @@ class ThermoBoundaryPropagationStep:
 
         flow_rate = self._resolve_hydraulic_flow(edge_id=edge_id, hydraulic_result=hydraulic_result)
         if flow_rate is None:
-            flow_rate = float(stream.molar_flow_rate)
+            flow_rate = float(source_condition.through_molar_flow_rate)
 
-        return PortCondition(
+        resolved_condition = PortCondition(
             state=state,
             species_ids=state.species_ids,
             through_molar_flow_rate=flow_rate,
             macro_step_time_s=macro_step_time_s,
         )
 
-    def _resolve_stream_for_edge(
+        runtime_port_snapshot_store = self._config.runtime_port_snapshot_store
+        if runtime_port_snapshot_store is not None:
+            runtime_port_snapshot_store.record_outlet(
+                node_id=source_node_id,
+                port_name=source_port_name,
+                condition=resolved_condition,
+            )
+
+        return resolved_condition
+
+    def _resolve_source_outlet_condition(
         self,
         *,
         source_node_id: str,
         source_port_name: str,
         source_binding: object | None,
-    ) -> StreamData | None:
+    ) -> PortCondition | None:
         feed_streams = self._config.feed_streams_by_boundary_id
         if feed_streams is not None:
             boundary_stream = feed_streams.get(source_node_id)
             if boundary_stream is not None:
-                return boundary_stream
+                return boundary_stream.to_port_condition()
 
-        source_stream_port_io = self._resolve_stream_port_io(
-            node_id=source_node_id,
-            binding=source_binding,
-        )
-        if source_stream_port_io is None:
-            return None
-        return source_stream_port_io.get_outlet_stream(source_port_name)
+        configured_bindings = self._config.stream_port_io_by_node_id
+        candidates: list[object | None] = []
+        if configured_bindings is not None:
+            candidates.append(configured_bindings.get(source_node_id))
+        candidates.append(source_binding)
+
+        seen_candidate_ids: set[int] = set()
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            candidate_id = id(candidate)
+            if candidate_id in seen_candidate_ids:
+                continue
+            seen_candidate_ids.add(candidate_id)
+            resolved_condition = resolve_process_outlet_condition(candidate, source_port_name)
+            if resolved_condition is not None:
+                return resolved_condition
+        return None
 
     def _resolve_stream_port_io(
         self,

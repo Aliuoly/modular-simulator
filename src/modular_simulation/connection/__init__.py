@@ -28,6 +28,7 @@ from .reconfiguration_api import (
     DynamicUnitPortReconfigurationApi,
 )
 from .runtime import ConnectionRuntimeOrchestrator
+from .process_stream_io import ProcessOutletConditionResolver
 from .process_binding import (
     BindingError,
     OutletBinding,
@@ -53,6 +54,7 @@ __all__ = [
     "NetworkLineHydraulicConfig",
     "NetworkProcessSpec",
     "OutletBinding",
+    "ProcessOutletConditionResolver",
     "OutletRole",
     "ProcessBinding",
     "Subsystem",

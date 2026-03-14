@@ -118,6 +118,10 @@ class ConnectedPlantOrchestrator:
     def runtime_context(self) -> SimulationRuntimeContext | None:
         return self._runtime_context
 
+    @property
+    def runtime_orchestrator(self) -> ConnectionRuntimeOrchestrator:
+        return self._runtime_orchestrator
+
     def add_calculation(
         self,
         *,

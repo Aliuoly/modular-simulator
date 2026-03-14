@@ -220,6 +220,7 @@ class _ConnectionRuntimeStatePayload(BaseModel):
 class _RuntimeCheckpointSnapshot(BaseModel):
     runtime: _RuntimeBarrierStatePayload
     process_runtime_state: dict[str, object]
+    port_condition_store: dict[str, object]
     connection_runtime_state: _ConnectionRuntimeStatePayload
 
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", arbitrary_types_allowed=True)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from math import isfinite
-from typing import cast
+from typing import Protocol, cast, runtime_checkable
 from modular_simulation.connection.network import (
     ConnectionNetwork,
     QueuedReconfigurationTransaction,
@@ -19,6 +19,10 @@ from modular_simulation.connection.error_catalog import (
     revision_details,
 )
 from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
+from modular_simulation.connection.runtime_port_snapshot_store import (
+    RuntimePortSnapshotPayload,
+    RuntimePortSnapshotStore,
+)
 from modular_simulation.connection.runtime_snapshot_schema import (
     validate_runtime_checkpoint_envelope,
 )
@@ -30,7 +34,7 @@ from modular_simulation.framework.system import (
 )
 
 RUNTIME_SNAPSHOT_SCHEMA_MARKER = "connection.runtime.snapshot"
-RUNTIME_SNAPSHOT_SCHEMA_VERSION = 1
+RUNTIME_SNAPSHOT_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -55,6 +59,14 @@ class ValidatedRuntimeSnapshot:
     queued_requests: tuple[_ValidatedQueuedRequest, ...]
     committed_idempotency_keys: tuple[str, ...]
     process_runtime_state: dict[str, object]
+    port_condition_store: RuntimePortSnapshotPayload
+
+
+@runtime_checkable
+class _RuntimePortSnapshotStorePersistenceLike(Protocol):
+    def snapshot_payload(self) -> RuntimePortSnapshotPayload: ...
+
+    def restore_from_payload(self, payload: Mapping[str, object]) -> None: ...
 
 
 def save_runtime_snapshot_contract(
@@ -86,6 +98,7 @@ def save_runtime_snapshot_contract(
             "macro_step_active": runtime.macro_step_active,
         },
         "process_runtime_state": _normalize_mapping_payload(process_runtime_state),
+        "port_condition_store": _runtime_port_condition_snapshot_payload(runtime),
         "connection_runtime_state": {
             "graph_revision": graph_revision,
             "next_edge_index": network.next_edge_index,
@@ -162,7 +175,12 @@ def validate_runtime_snapshot_contract(snapshot: Mapping[str, object]) -> Valida
     _require_exact_keys(
         "snapshot",
         snapshot_section,
-        ("runtime", "process_runtime_state", "connection_runtime_state"),
+        (
+            "runtime",
+            "process_runtime_state",
+            "port_condition_store",
+            "connection_runtime_state",
+        ),
     )
 
     runtime_section = _require_mapping(snapshot_section["runtime"], "runtime")
@@ -190,6 +208,10 @@ def validate_runtime_snapshot_contract(snapshot: Mapping[str, object]) -> Valida
         "process_runtime_state",
     )
     normalized_process_state = _normalize_mapping_payload(process_runtime_state)
+    normalized_port_condition_store = _normalize_port_condition_store_payload(
+        snapshot_section["port_condition_store"],
+        "port_condition_store",
+    )
 
     connection_section = _require_mapping(
         snapshot_section["connection_runtime_state"],
@@ -289,6 +311,7 @@ def validate_runtime_snapshot_contract(snapshot: Mapping[str, object]) -> Valida
         queued_requests=validated_requests,
         committed_idempotency_keys=committed_idempotency_keys,
         process_runtime_state=normalized_process_state,
+        port_condition_store=normalized_port_condition_store,
     )
 
 
@@ -433,6 +456,7 @@ def restore_runtime_snapshot_contract(
     reconfiguration_index_backup = network.next_reconfiguration_index
     revision_index_backup = network.next_revision_index
     process_state_backup = dict(process_runtime_state_sink)
+    port_condition_store_backup = _runtime_port_condition_snapshot_payload(runtime)
 
     staged_queue = [
         QueuedReconfigurationTransaction(
@@ -460,6 +484,11 @@ def restore_runtime_snapshot_contract(
         )
         network.replace_queued_reconfigurations(staged_queue)
 
+        _restore_runtime_port_condition_snapshot(
+            runtime=runtime,
+            payload=validated_snapshot.port_condition_store,
+        )
+
         process_runtime_state_sink.clear()
         process_runtime_state_sink.update(normalized_process_state)
     except Exception:
@@ -479,6 +508,10 @@ def restore_runtime_snapshot_contract(
 
         process_runtime_state_sink.clear()
         process_runtime_state_sink.update(process_state_backup)
+        _restore_runtime_port_condition_snapshot(
+            runtime=runtime,
+            payload=port_condition_store_backup,
+        )
         raise
 
 
@@ -611,7 +644,54 @@ def _runtime_replay_hash_payload(
             ],
         },
         "process_runtime_state": _normalize_mapping_payload(process_runtime_state),
+        "port_condition_store": _runtime_port_condition_snapshot_payload(runtime),
     }
+
+
+def _runtime_port_condition_snapshot_payload(
+    runtime: ConnectionRuntimeOrchestrator,
+) -> RuntimePortSnapshotPayload:
+    store = _runtime_port_snapshot_store(runtime)
+    return store.snapshot_payload()
+
+
+def _restore_runtime_port_condition_snapshot(
+    *,
+    runtime: ConnectionRuntimeOrchestrator,
+    payload: Mapping[str, object],
+) -> None:
+    store = _runtime_port_snapshot_store(runtime)
+    store.restore_from_payload(payload)
+
+
+def _normalize_port_condition_store_payload(
+    payload: object,
+    field_name: str,
+) -> RuntimePortSnapshotPayload:
+    payload_mapping = _require_mapping(payload, field_name)
+    store = RuntimePortSnapshotStore()
+    try:
+        store.restore_from_payload(payload_mapping)
+    except ValueError as error:
+        message = str(error).replace("runtime port snapshot", "runtime snapshot")
+        field_token = "invalid runtime snapshot payload: field '"
+        if message.startswith(field_token):
+            field_path, separator, remainder = message[len(field_token) :].partition("'")
+            if separator and not field_path.startswith(field_name + "."):
+                message = field_token + f"{field_name}.{field_path}'" + remainder
+        raise ValueError(message) from error
+    return store.snapshot_payload()
+
+
+def _runtime_port_snapshot_store(
+    runtime: ConnectionRuntimeOrchestrator,
+) -> _RuntimePortSnapshotStorePersistenceLike:
+    store = getattr(runtime, "_runtime_port_snapshot_store", None)
+    if not isinstance(store, _RuntimePortSnapshotStorePersistenceLike):
+        raise ValueError(
+            "invalid runtime snapshot payload: runtime port snapshot store is unavailable"
+        )
+    return store
 
 
 def _require_exact_keys(

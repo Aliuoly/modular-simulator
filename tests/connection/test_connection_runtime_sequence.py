@@ -219,6 +219,24 @@ def test_runtime_step_uses_fixed_macro_sequence_and_deterministic_bookkeeping() 
     assert result.barrier_reconfiguration.applied_request_ids == ()
     assert result.barrier_reconfiguration.skipped_request_ids == ()
 
+    probe_outlet = PortCondition(
+        state=_material_state(pressure=140000.0, temperature=325.0),
+        through_molar_flow_rate=1.1,
+    )
+    runtime.record_latest_outlet_condition(
+        node_id="reactor",
+        port_name="product",
+        condition=probe_outlet,
+    )
+    latest_outlet = runtime.get_latest_outlet_condition(node_id="reactor", port_name="product")
+    assert latest_outlet == probe_outlet
+    latest_outlet_stream = runtime.get_latest_outlet_stream(
+        node_id="reactor",
+        port_name="product",
+    )
+    assert latest_outlet_stream is not None
+    assert latest_outlet_stream.molar_flow_rate == pytest.approx(1.1)
+
 
 def test_runtime_step_preserves_picard_gate_metadata_deterministically() -> None:
     boundary_flows = iter((1.0, 0.40, 0.10, 0.1000000001))

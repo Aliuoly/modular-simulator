@@ -20,9 +20,12 @@ from modular_simulation.connection.runtime_persistence import (
     RUNTIME_SNAPSHOT_SCHEMA_MARKER,
     RUNTIME_SNAPSHOT_SCHEMA_VERSION,
     restore_runtime_snapshot_contract,
+    runtime_replay_state_hash,
     save_runtime_snapshot_contract,
     validate_runtime_snapshot_contract,
 )
+from modular_simulation.connection.state import MaterialState, PortCondition
+from modular_simulation.framework.system import checkpoint_payload_checksum
 
 
 def _linear_equation(
@@ -61,6 +64,33 @@ def _network(runtime: ConnectionRuntimeOrchestrator) -> ConnectionNetwork:
     network.connect("reactor.product", "product_boundary")
     _ = network.compile()
     return network
+
+
+def _port_condition(*, pressure: float, temperature: float, flow_rate: float) -> PortCondition:
+    return PortCondition(
+        state=MaterialState(
+            pressure=pressure,
+            temperature=temperature,
+            mole_fractions=(0.7, 0.3),
+            species_ids=("A", "B"),
+        ),
+        species_ids=("A", "B"),
+        through_molar_flow_rate=flow_rate,
+        macro_step_time_s=0.0,
+    )
+
+
+def _seed_port_condition_store(runtime: ConnectionRuntimeOrchestrator) -> None:
+    runtime.record_latest_inlet_condition(
+        node_id="reactor",
+        port_name="feed",
+        condition=_port_condition(pressure=120000.0, temperature=315.0, flow_rate=1.5),
+    )
+    runtime.record_latest_outlet_condition(
+        node_id="reactor",
+        port_name="product",
+        condition=_port_condition(pressure=119500.0, temperature=325.0, flow_rate=1.4),
+    )
 
 
 def test_runtime_snapshot_round_trip_restores_queue_order_and_indexes() -> None:
@@ -132,6 +162,45 @@ def test_runtime_snapshot_round_trip_restores_queue_order_and_indexes() -> None:
         "rq_0001",
         "rq_0002",
     )
+    assert process_runtime_state == {"reactor": {"conversion": 0.34, "temperature": 345.0}}
+
+
+def test_runtime_snapshot_round_trip_preserves_port_condition_store() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network(runtime)
+    process_runtime_state: dict[str, object] = {
+        "reactor": {"temperature": 345.0, "conversion": 0.34}
+    }
+    _seed_port_condition_store(runtime)
+
+    snapshot = save_runtime_snapshot_contract(
+        runtime=runtime,
+        network=network,
+        process_runtime_state=process_runtime_state,
+    )
+    validated = validate_runtime_snapshot_contract(snapshot)
+    assert validated.port_condition_store == snapshot["snapshot"]["port_condition_store"]
+
+    runtime.clear_latest_port_conditions()
+    process_runtime_state["reactor"] = {"temperature": 300.0, "conversion": 0.10}
+
+    restore_runtime_snapshot_contract(
+        runtime=runtime,
+        network=network,
+        process_runtime_state_sink=process_runtime_state,
+        snapshot=snapshot,
+    )
+
+    restored_inlet = runtime.get_latest_inlet_condition(node_id="reactor", port_name="feed")
+    assert restored_inlet is not None
+    assert restored_inlet.state.pressure == pytest.approx(120000.0)
+    assert restored_inlet.through_molar_flow_rate == pytest.approx(1.5)
+
+    restored_outlet = runtime.get_latest_outlet_condition(node_id="reactor", port_name="product")
+    assert restored_outlet is not None
+    assert restored_outlet.state.temperature == pytest.approx(325.0)
+    assert restored_outlet.through_molar_flow_rate == pytest.approx(1.4)
+
     assert process_runtime_state == {"reactor": {"conversion": 0.34, "temperature": 345.0}}
 
 
@@ -265,6 +334,66 @@ def test_restore_requires_barrier_inactive_and_is_atomic_when_process_validation
     assert after_restore == before_restore
 
 
+def test_restore_rejects_invalid_port_condition_payload_shape() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network(runtime)
+    process_runtime_state: dict[str, object] = {"reactor": {"temperature": 350.0}}
+    _seed_port_condition_store(runtime)
+
+    baseline_snapshot = save_runtime_snapshot_contract(
+        runtime=runtime,
+        network=network,
+        process_runtime_state=process_runtime_state,
+    )
+    invalid_snapshot = dict(baseline_snapshot)
+    invalid_snapshot_payload = dict(cast(dict[str, object], baseline_snapshot["snapshot"]))
+    invalid_snapshot_payload["port_condition_store"] = {
+        "inlets": {
+            "reactor": {
+                "feed": {
+                    "state": {
+                        "pressure": 120000.0,
+                        "temperature": 315.0,
+                        "mole_fractions": (0.7, 0.3),
+                        "species_ids": ("A", "B"),
+                    },
+                    "species_ids": ("A", "B"),
+                    "through_molar_flow_rate": "not-a-number",
+                    "macro_step_time_s": 0.0,
+                }
+            }
+        },
+        "outlets": {},
+    }
+    invalid_snapshot["snapshot"] = invalid_snapshot_payload
+    payload_without_checksum = dict(invalid_snapshot)
+    payload_without_checksum.pop("integrity_checksum", None)
+    invalid_snapshot["integrity_checksum"] = checkpoint_payload_checksum(payload_without_checksum)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            "invalid runtime snapshot payload: field "
+            "'port_condition_store.inlets.reactor.feed.through_molar_flow_rate' is invalid"
+        ),
+    ):
+        restore_runtime_snapshot_contract(
+            runtime=runtime,
+            network=network,
+            process_runtime_state_sink=process_runtime_state,
+            snapshot=invalid_snapshot,
+        )
+
+    assert (
+        save_runtime_snapshot_contract(
+            runtime=runtime,
+            network=network,
+            process_runtime_state=process_runtime_state,
+        )
+        == baseline_snapshot
+    )
+
+
 def test_restore_preserves_idempotency_conflict_rejection_when_payload_is_unavailable() -> None:
     runtime = ConnectionRuntimeOrchestrator()
     network = _network(runtime)
@@ -331,3 +460,56 @@ def test_schema_marker_and_version_are_explicit_and_stable() -> None:
 
     assert snapshot["schema_marker"] == RUNTIME_SNAPSHOT_SCHEMA_MARKER
     assert snapshot["schema_version"] == RUNTIME_SNAPSHOT_SCHEMA_VERSION
+    assert RUNTIME_SNAPSHOT_SCHEMA_VERSION == 2
+    assert set(cast(dict[str, object], snapshot["snapshot"]).keys()) == {
+        "runtime",
+        "process_runtime_state",
+        "port_condition_store",
+        "connection_runtime_state",
+    }
+
+
+def test_runtime_replay_hash_changes_with_port_condition_store_content() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network(runtime)
+    process_runtime_state: dict[str, object] = {}
+    _seed_port_condition_store(runtime)
+
+    baseline_hash = runtime_replay_state_hash(
+        tick=0,
+        runtime=runtime,
+        network=network,
+        process_runtime_state=process_runtime_state,
+    )
+
+    runtime.record_latest_outlet_condition(
+        node_id="reactor",
+        port_name="product",
+        condition=_port_condition(pressure=118000.0, temperature=325.0, flow_rate=1.4),
+    )
+    changed_hash = runtime_replay_state_hash(
+        tick=0,
+        runtime=runtime,
+        network=network,
+        process_runtime_state=process_runtime_state,
+    )
+    assert changed_hash != baseline_hash
+
+
+def test_live_runtime_snapshot_schema_and_fields_remain_connection_runtime_v1() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network(runtime)
+
+    live_snapshot = network.save_runtime_snapshot()
+    assert live_snapshot["schema"] == "connection_runtime_v1"
+    assert set(live_snapshot.keys()) == {
+        "schema",
+        "simulation_time_s",
+        "macro_step_index",
+        "macro_step_active",
+        "graph_revision",
+        "queued_request_ids",
+        "queued_request_count",
+        "committed_idempotency_keys",
+    }
+    assert "port_condition_store" not in live_snapshot

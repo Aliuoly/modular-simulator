@@ -275,6 +275,18 @@ class _InvariantValidatorFactory(Protocol):
     def __call__(self) -> _InvariantValidatorLike: ...
 
 
+class _RuntimePortSnapshotStoreLike(Protocol):
+    def record_inlet(self, node_id: str, port_name: str, condition: PortCondition) -> None: ...
+
+    def record_outlet(self, node_id: str, port_name: str, condition: PortCondition) -> None: ...
+
+    def get_inlet(self, node_id: str, port_name: str) -> PortCondition | None: ...
+
+    def get_outlet(self, node_id: str, port_name: str) -> PortCondition | None: ...
+
+    def clear(self) -> None: ...
+
+
 class ConnectionRuntimeOrchestrator:
     """Runtime coupling orchestrator with deterministic barrier-commit semantics.
 
@@ -317,8 +329,18 @@ class ConnectionRuntimeOrchestrator:
             if transport_and_mixing_step is not None
             else self._default_transport_and_mixing_step
         )
+        runtime_port_snapshot_store_module = import_module(
+            "modular_simulation.connection.runtime_port_snapshot_store"
+        )
+        runtime_port_snapshot_store_factory = cast(
+            type[_RuntimePortSnapshotStoreLike],
+            getattr(runtime_port_snapshot_store_module, "RuntimePortSnapshotStore"),
+        )
         self._runtime_context: SimulationRuntimeContext | None = runtime_context
         self._use_context_boundary_propagation: bool = boundary_propagation_step is None
+        self._runtime_port_snapshot_store: _RuntimePortSnapshotStoreLike = (
+            runtime_port_snapshot_store_factory()
+        )
         self._stream_port_io_by_node_id: dict[str, ProcessStreamIO] = {}
         self._feed_streams_by_boundary_id: dict[str, StreamData] = {}
         self._boundary_propagation_step: RuntimeBoundaryPropagationStep = (
@@ -411,6 +433,49 @@ class ConnectionRuntimeOrchestrator:
         self._feed_streams_by_boundary_id = normalized_feeds
         self._refresh_boundary_propagation_step_from_context()
 
+    def get_latest_inlet_condition(self, *, node_id: str, port_name: str) -> PortCondition | None:
+        return self._runtime_port_snapshot_store.get_inlet(node_id=node_id, port_name=port_name)
+
+    def get_latest_outlet_condition(self, *, node_id: str, port_name: str) -> PortCondition | None:
+        return self._runtime_port_snapshot_store.get_outlet(node_id=node_id, port_name=port_name)
+
+    def record_latest_inlet_condition(
+        self,
+        *,
+        node_id: str,
+        port_name: str,
+        condition: PortCondition,
+    ) -> None:
+        self._runtime_port_snapshot_store.record_inlet(
+            node_id=node_id,
+            port_name=port_name,
+            condition=condition,
+        )
+
+    def record_latest_outlet_condition(
+        self,
+        *,
+        node_id: str,
+        port_name: str,
+        condition: PortCondition,
+    ) -> None:
+        self._runtime_port_snapshot_store.record_outlet(
+            node_id=node_id,
+            port_name=port_name,
+            condition=condition,
+        )
+
+    def clear_latest_port_conditions(self) -> None:
+        self._runtime_port_snapshot_store.clear()
+
+    def get_latest_outlet_stream(self, *, node_id: str, port_name: str) -> StreamData | None:
+        from modular_simulation.thermodynamics.stream import StreamData
+
+        condition = self.get_latest_outlet_condition(node_id=node_id, port_name=port_name)
+        if condition is None:
+            return None
+        return StreamData.from_port_condition(condition)
+
     @classmethod
     def for_system(
         cls,
@@ -492,6 +557,7 @@ class ConnectionRuntimeOrchestrator:
             config=ThermoBoundaryPropagationConfig(
                 stream_port_io_by_node_id=dict(self._stream_port_io_by_node_id),
                 feed_streams_by_boundary_id=dict(self._feed_streams_by_boundary_id),
+                runtime_port_snapshot_store=self._runtime_port_snapshot_store,
             ),
         )
 
