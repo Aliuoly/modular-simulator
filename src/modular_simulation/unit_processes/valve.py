@@ -96,23 +96,23 @@ class Valve(AlgebraicProcessModel):
 
     inlet_flow: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="m^3/s", description="inlet volumetric flow rate"),
+        M(type=T.BOUNDARY, unit="m^3/s", description="inlet volumetric flow rate"),
     ] = 0.0
     inlet_temperature: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="K", description="inlet temperature"),
+        M(type=T.BOUNDARY, unit="K", description="inlet temperature"),
     ] = 298.15
     inlet_pressure: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="Pa", description="inlet pressure"),
+        M(type=T.BOUNDARY, unit="Pa", description="inlet pressure"),
     ] = 101325.0
     inlet_composition: Annotated[
         NDArray[np.float64],
-        M(type=T.CONTROLLED, unit="", description="inlet composition vector by species index"),
+        M(type=T.BOUNDARY, unit="", description="inlet composition vector by species index"),
     ] = np.zeros(0, dtype=np.float64)
     open_fraction: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="", description="instantaneous valve opening fraction"),
+        M(type=T.BOUNDARY, unit="", description="instantaneous valve opening fraction"),
     ] = 1.0
 
     outlet_flow: Annotated[

@@ -87,6 +87,10 @@ class HeaterCooler(AlgebraicProcessModel):
             composition="outlet_composition",
         )
     }
+    _WELL_MIXED_EXTERNAL_HEAT_BOUNDARIES: ClassVar[tuple[str, ...]] = (
+        "external_heat_duty",
+        "external_outlet_temperature",
+    )
 
     mode: Annotated[
         float | Literal["duty", "temperature"],
@@ -97,19 +101,19 @@ class HeaterCooler(AlgebraicProcessModel):
 
     inlet_flow: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="mol/s", description="inlet molar flow rate"),
+        M(type=T.BOUNDARY, unit="mol/s", description="inlet molar flow rate"),
     ] = 0.0
     inlet_temperature: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="K", description="inlet temperature"),
+        M(type=T.BOUNDARY, unit="K", description="inlet temperature"),
     ] = 298.15
     inlet_pressure: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="Pa", description="inlet pressure"),
+        M(type=T.BOUNDARY, unit="Pa", description="inlet pressure"),
     ] = 101325.0
     inlet_composition: Annotated[
         NDArray[np.float64],
-        M(type=T.CONTROLLED, unit="", description="inlet composition vector by species index"),
+        M(type=T.BOUNDARY, unit="", description="inlet composition vector by species index"),
     ] = np.zeros(0, dtype=np.float64)
     pressure_drop: Annotated[
         float,
@@ -118,17 +122,17 @@ class HeaterCooler(AlgebraicProcessModel):
     external_heat_duty: Annotated[
         float,
         M(
-            type=T.CONSTANT,
+            type=T.BOUNDARY,
             unit="W",
-            description="externally imposed heat-duty boundary used in duty mode",
+            description="well-mixed external heat-duty boundary used in direct-duty mode",
         ),
     ] = 0.0
     external_outlet_temperature: Annotated[
         float,
         M(
-            type=T.CONSTANT,
+            type=T.BOUNDARY,
             unit="K",
-            description="externally imposed outlet-temperature boundary used in temperature mode",
+            description="well-mixed external outlet-temperature boundary used in direct-temperature mode",
         ),
     ] = 298.15
 
@@ -303,8 +307,8 @@ class HeaterCooler(AlgebraicProcessModel):
         inlet_pressure = float(u[u_map["inlet_pressure"]])
         inlet_composition = _vector_from_state(u, u_map["inlet_composition"])
         pressure_drop = float(k[k_map["pressure_drop"]])
-        external_heat_duty = float(k[k_map["external_heat_duty"]])
-        external_outlet_temperature = float(k[k_map["external_outlet_temperature"]])
+        external_heat_duty = float(u[u_map["external_heat_duty"]])
+        external_outlet_temperature = float(u[u_map["external_outlet_temperature"]])
 
         if not isfinite(inlet_flow) or inlet_flow < 0.0:
             raise ValueError("inlet_flow must be finite and non-negative.")

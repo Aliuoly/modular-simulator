@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportAny=false, reportExplicitAny=false, reportUnknownMemberType=false
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false
 
 from types import SimpleNamespace
 from typing import Any, cast
@@ -165,3 +165,74 @@ def test_composition_preserved_on_both_streams() -> None:
 
     assert np.asarray(exchanger.hot_outlet_composition, dtype=np.float64) == pytest.approx(hot_z)
     assert np.asarray(exchanger.cold_outlet_composition, dtype=np.float64) == pytest.approx(cold_z)
+
+
+def test_flow_sensitivity_changes_capacity_rates_and_duty() -> None:
+    package = _ConstantCpPackage(cp_hot=100.0, cp_cold=100.0)
+    low_flow = HeatExchanger(
+        flow_arrangement="counter",
+        n_species=2,
+        ua=2000.0,
+        hot_inlet_flow=1.0,
+        hot_inlet_temperature=400.0,
+        hot_inlet_pressure=101325.0,
+        hot_inlet_composition=np.array([0.8, 0.2], dtype=np.float64),
+        cold_inlet_flow=1.0,
+        cold_inlet_temperature=300.0,
+        cold_inlet_pressure=101325.0,
+        cold_inlet_composition=np.array([0.2, 0.8], dtype=np.float64),
+    )
+    high_flow = HeatExchanger(
+        flow_arrangement="counter",
+        n_species=2,
+        ua=2000.0,
+        hot_inlet_flow=4.0,
+        hot_inlet_temperature=400.0,
+        hot_inlet_pressure=101325.0,
+        hot_inlet_composition=np.array([0.8, 0.2], dtype=np.float64),
+        cold_inlet_flow=4.0,
+        cold_inlet_temperature=300.0,
+        cold_inlet_pressure=101325.0,
+        cold_inlet_composition=np.array([0.2, 0.8], dtype=np.float64),
+    )
+
+    for unit in (low_flow, high_flow):
+        unit.set_property_package(cast(Any, package))
+        _attach(unit)
+        unit.step(0.1)
+
+    assert high_flow.c_hot > low_flow.c_hot
+    assert high_flow.c_cold > low_flow.c_cold
+    assert high_flow.ntu < low_flow.ntu
+    assert high_flow.effectiveness < low_flow.effectiveness
+    assert high_flow.heat_duty > low_flow.heat_duty
+
+
+def test_lmtd_and_ua_lmtd_are_diagnostic_outputs() -> None:
+    package = _ConstantCpPackage(cp_hot=105.0, cp_cold=95.0)
+    exchanger = HeatExchanger(
+        flow_arrangement="counter",
+        n_species=2,
+        ua=1800.0,
+        hot_inlet_flow=2.0,
+        hot_inlet_temperature=395.0,
+        hot_inlet_pressure=101325.0,
+        hot_inlet_composition=np.array([0.7, 0.3], dtype=np.float64),
+        cold_inlet_flow=2.5,
+        cold_inlet_temperature=305.0,
+        cold_inlet_pressure=101325.0,
+        cold_inlet_composition=np.array([0.3, 0.7], dtype=np.float64),
+    )
+    exchanger.set_property_package(cast(Any, package))
+    _attach(exchanger)
+
+    exchanger.ua_lmtd = 999999.0
+    exchanger.step(0.1)
+    first_duty = exchanger.heat_duty
+
+    exchanger.ua_lmtd = 1.0
+    exchanger.step(0.1)
+
+    assert exchanger.heat_duty == pytest.approx(first_duty)
+    if exchanger.lmtd > 1.0e-12:
+        assert exchanger.ua_lmtd == pytest.approx(exchanger.heat_duty / exchanger.lmtd)

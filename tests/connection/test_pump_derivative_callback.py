@@ -36,12 +36,13 @@ def test_pump_residual_and_jacobian_use_analytic_callbacks() -> None:
     assert residual == pytest.approx(180_000.0 - 220_000.0 + (15_000.0 + 8.0 * 1_000.0 - 2.0 * 3.0))
     assert jacobian == pytest.approx(-2.0)
     assert callback_args == [("dp", 3.0, 1_000.0), ("d", 3.0, 1_000.0)]
+    assert element.parameter_spec.names == ("pump_speed",)
 
 
 def test_jacobian_path_uses_derivative_callback_only() -> None:
     derivative_calls: list[tuple[float, float]] = []
 
-    def dp_curve(mdot: float, speed: float) -> float:
+    def dp_curve(_mdot: float, _speed: float) -> float:
         raise AssertionError("jacobian must not call dp_curve")
 
     def d_dp_d_mdot(mdot: float, speed: float) -> float:

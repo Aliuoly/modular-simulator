@@ -120,28 +120,28 @@ class FlashDrum(AlgebraicProcessModel):
 
     inlet_flow: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="mol/s", description="inlet molar flow rate"),
+        M(type=T.BOUNDARY, unit="mol/s", description="inlet molar flow rate"),
     ] = 0.0
     inlet_temperature: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="K", description="inlet temperature"),
+        M(type=T.BOUNDARY, unit="K", description="inlet temperature"),
     ] = 298.15
     inlet_pressure: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="Pa", description="inlet pressure"),
+        M(type=T.BOUNDARY, unit="Pa", description="inlet pressure"),
     ] = 101325.0
     inlet_composition: Annotated[
         NDArray[np.float64],
-        M(type=T.CONTROLLED, unit="", description="inlet composition vector by species index"),
+        M(type=T.BOUNDARY, unit="", description="inlet composition vector by species index"),
     ] = np.zeros(0, dtype=np.float64)
     imposed_pressure: Annotated[
         float,
-        M(type=T.CONSTANT, unit="Pa", description="externally imposed flash pressure boundary"),
+        M(type=T.BOUNDARY, unit="Pa", description="externally imposed flash pressure boundary"),
     ] = 101325.0
     imposed_temperature: Annotated[
         float,
         M(
-            type=T.CONSTANT,
+            type=T.BOUNDARY,
             unit="K",
             description="externally imposed isothermal flash temperature boundary",
         ),
@@ -309,8 +309,8 @@ class FlashDrum(AlgebraicProcessModel):
         inlet_temperature = float(u[u_map["inlet_temperature"]])
         inlet_pressure = float(u[u_map["inlet_pressure"]])
         inlet_composition = _vector_from_state(u, u_map["inlet_composition"])
-        flash_pressure = float(k[k_map["imposed_pressure"]])
-        flash_temperature = float(k[k_map["imposed_temperature"]])
+        flash_pressure = float(u[u_map["imposed_pressure"]])
+        flash_temperature = float(u[u_map["imposed_temperature"]])
 
         if not isfinite(inlet_flow) or inlet_flow < 0.0:
             raise ValueError("inlet_flow must be finite and non-negative.")

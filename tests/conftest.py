@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from types import SimpleNamespace
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 from modular_simulation.measurables.process_model import (
     ProcessModel,
@@ -18,9 +18,9 @@ class ThermalProcessModel(ProcessModel):
         float, M(type=T.DIFFERENTIAL, unit="K", description="process temperature")
     ] = 300.0
     heat_flux: Annotated[float, M(type=T.ALGEBRAIC, unit="K/s", description="cooling rate")] = 0.0
-    heater_power: Annotated[
-        float, M(type=T.CONTROLLED, unit="K/s", description="heating input")
-    ] = 0.0
+    heater_power: Annotated[float, M(type=T.BOUNDARY, unit="K/s", description="heating input")] = (
+        0.0
+    )
     ambient_temperature: Annotated[
         float, M(type=T.CONSTANT, unit="K", description="ambient temperature")
     ] = 295.0
@@ -88,5 +88,5 @@ def attached_process_model(thermal_process_model: ThermalProcessModel) -> Therma
         use_numba=False,
         numba_options={},
     )
-    thermal_process_model.attach_system(dummy_system)
+    thermal_process_model.attach_system(cast(Any, dummy_system))
     return thermal_process_model

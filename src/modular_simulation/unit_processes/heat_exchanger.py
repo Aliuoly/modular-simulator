@@ -96,6 +96,12 @@ def _lmtd(delta_t1: float, delta_t2: float) -> float:
     return max((delta_t1 - delta_t2) / log(ratio), 0.0)
 
 
+def _diagnostic_ua_from_lmtd(*, duty_transfer: float, lmtd: float) -> float:
+    if lmtd <= _DELTA_T_EPS:
+        return 0.0
+    return duty_transfer / lmtd
+
+
 def _effectiveness(ntu: float, c_r: float, arrangement: Literal["counter", "co", "cross"]) -> float:
     ntu_safe = max(float(ntu), 0.0)
     c_r_safe = min(max(float(c_r), 0.0), 1.0)
@@ -245,7 +251,7 @@ def _solve_exchanger(
         delta_t2 = max(hot_outlet_temperature - cold_outlet_temperature, 0.0)
 
     lmtd = _lmtd(delta_t1, delta_t2)
-    ua_from_lmtd = duty_balanced / lmtd if lmtd > _DELTA_T_EPS else 0.0
+    ua_from_lmtd = _diagnostic_ua_from_lmtd(duty_transfer=duty_balanced, lmtd=lmtd)
 
     return _HeatExchangerResult(
         hot_outlet_temperature=hot_outlet_temperature,
@@ -310,36 +316,36 @@ class HeatExchanger(AlgebraicProcessModel):
 
     hot_inlet_flow: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="mol/s", description="hot-side inlet molar flow rate"),
+        M(type=T.BOUNDARY, unit="mol/s", description="hot-side inlet molar flow rate"),
     ] = 0.0
     hot_inlet_temperature: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="K", description="hot-side inlet temperature"),
+        M(type=T.BOUNDARY, unit="K", description="hot-side inlet temperature"),
     ] = 350.0
     hot_inlet_pressure: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="Pa", description="hot-side inlet pressure"),
+        M(type=T.BOUNDARY, unit="Pa", description="hot-side inlet pressure"),
     ] = 101325.0
     hot_inlet_composition: Annotated[
         NDArray[np.float64],
-        M(type=T.CONTROLLED, unit="", description="hot-side inlet composition vector"),
+        M(type=T.BOUNDARY, unit="", description="hot-side inlet composition vector"),
     ] = np.zeros(0, dtype=np.float64)
 
     cold_inlet_flow: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="mol/s", description="cold-side inlet molar flow rate"),
+        M(type=T.BOUNDARY, unit="mol/s", description="cold-side inlet molar flow rate"),
     ] = 0.0
     cold_inlet_temperature: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="K", description="cold-side inlet temperature"),
+        M(type=T.BOUNDARY, unit="K", description="cold-side inlet temperature"),
     ] = 300.0
     cold_inlet_pressure: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="Pa", description="cold-side inlet pressure"),
+        M(type=T.BOUNDARY, unit="Pa", description="cold-side inlet pressure"),
     ] = 101325.0
     cold_inlet_composition: Annotated[
         NDArray[np.float64],
-        M(type=T.CONTROLLED, unit="", description="cold-side inlet composition vector"),
+        M(type=T.BOUNDARY, unit="", description="cold-side inlet composition vector"),
     ] = np.zeros(0, dtype=np.float64)
 
     hot_outlet_flow: Annotated[

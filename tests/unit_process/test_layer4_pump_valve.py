@@ -252,6 +252,22 @@ def test_pump_constructor_accepts_legacy_pressure_rise_alias_with_warning() -> N
     assert pump.pump_speed == pytest.approx(50000.0)
 
 
+def test_pump_exposes_hydraulic_parameters_for_port_with_pump_speed_authority() -> None:
+    pump = Pump(
+        n_species=2,
+        inlet_flow=0.01,
+        inlet_temperature=300.0,
+        inlet_pressure=100000.0,
+        inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
+        pump_speed=75000.0,
+        efficiency=0.75,
+    )
+
+    parameters = pump.hydraulic_parameters_for_port("outlet")
+
+    assert parameters["pump_speed"] == pytest.approx(75000.0)
+
+
 @pytest.mark.parametrize(
     ("kwargs", "error_match"),
     [

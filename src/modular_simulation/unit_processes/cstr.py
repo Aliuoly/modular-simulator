@@ -71,6 +71,7 @@ class CSTR(ProcessModel):
             composition="outlet_composition",
         )
     }
+    _WELL_MIXED_EXTERNAL_HEAT_BOUNDARIES: ClassVar[tuple[str, ...]] = ("jacket_temperature",)
 
     species_moles: Annotated[
         NDArray[np.float64],
@@ -87,23 +88,23 @@ class CSTR(ProcessModel):
 
     inlet_flow: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="L/s", description="inlet volumetric flow rate"),
+        M(type=T.BOUNDARY, unit="L/s", description="inlet volumetric flow rate"),
     ] = 0.0
     inlet_temperature: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="K", description="inlet temperature"),
+        M(type=T.BOUNDARY, unit="K", description="inlet temperature"),
     ] = 298.15
     inlet_pressure: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="Pa", description="inlet pressure"),
+        M(type=T.BOUNDARY, unit="Pa", description="inlet pressure"),
     ] = 101325.0
     inlet_composition: Annotated[
         NDArray[np.float64],
-        M(type=T.CONTROLLED, unit="", description="inlet mole fractions by species index"),
+        M(type=T.BOUNDARY, unit="", description="inlet mole fractions by species index"),
     ] = np.zeros(0, dtype=np.float64)
     outlet_flow: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="L/s", description="outlet volumetric flow rate"),
+        M(type=T.BOUNDARY, unit="L/s", description="outlet volumetric flow rate"),
     ] = 0.0
 
     n_species: Annotated[int, M(type=T.CONSTANT, unit="", description="number of species")] = 2
@@ -125,7 +126,11 @@ class CSTR(ProcessModel):
     ] = 0.0
     jacket_temperature: Annotated[
         float,
-        M(type=T.CONSTANT, unit="K", description="jacket temperature"),
+        M(
+            type=T.BOUNDARY,
+            unit="K",
+            description="well-mixed jacket-temperature boundary for lumped UA*DeltaT heat exchange",
+        ),
     ] = 298.15
     reaction_heat_coeffs: Annotated[
         NDArray[np.float64],
@@ -521,7 +526,7 @@ class CSTR(ProcessModel):
         ua = max(0.0, float(k[k_map["heat_transfer_coeff"]])) * max(
             0.0, float(k[k_map["jacket_area"]])
         )
-        jacket_temperature = float(k[k_map["jacket_temperature"]])
+        jacket_temperature = float(u[u_map["jacket_temperature"]])
         jacket_heat = ua * (jacket_temperature - temperature)
 
         denominator = heat_capacity * volume

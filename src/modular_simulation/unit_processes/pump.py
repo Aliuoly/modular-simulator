@@ -2,8 +2,10 @@ from __future__ import annotations
 
 # pyright: reportMissingTypeStubs=false
 
+from collections.abc import Mapping
 from math import isfinite
 import warnings
+from types import MappingProxyType
 from typing import Annotated, ClassVar, cast, override
 
 import numpy as np
@@ -18,7 +20,10 @@ from modular_simulation.thermodynamics.algebraic_process_model import (
     SINGLE_IO,
     UnitProcessPorts,
 )
-from modular_simulation.thermodynamics.hydraulic_adapters import validate_outlet_port
+from modular_simulation.thermodynamics.hydraulic_adapters import (
+    default_pump_hydraulic_parameters,
+    validate_outlet_port,
+)
 from modular_simulation.thermodynamics.property_package import PropertyPackage
 from modular_simulation.thermodynamics.stream import PortAttributeMap, StreamData
 from modular_simulation.utils.typing import ArrayIndex, Seconds
@@ -84,7 +89,7 @@ class Pump(AlgebraicProcessModel):
     n_species: Annotated[int, M(type=T.CONSTANT, unit="", description="number of species")] = 2
     pump_speed: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="Pa", description="pump speed proxy used by pump head curve"),
+        M(type=T.BOUNDARY, unit="Pa", description="pump speed proxy used by pump head curve"),
     ] = 0.0
     efficiency: Annotated[
         float,
@@ -93,19 +98,19 @@ class Pump(AlgebraicProcessModel):
 
     inlet_flow: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="m^3/s", description="inlet volumetric flow rate"),
+        M(type=T.BOUNDARY, unit="m^3/s", description="inlet volumetric flow rate"),
     ] = 0.0
     inlet_temperature: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="K", description="inlet temperature"),
+        M(type=T.BOUNDARY, unit="K", description="inlet temperature"),
     ] = 298.15
     inlet_pressure: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="Pa", description="inlet pressure"),
+        M(type=T.BOUNDARY, unit="Pa", description="inlet pressure"),
     ] = 101325.0
     inlet_composition: Annotated[
         NDArray[np.float64],
-        M(type=T.CONTROLLED, unit="", description="inlet composition vector by species index"),
+        M(type=T.BOUNDARY, unit="", description="inlet composition vector by species index"),
     ] = np.zeros(0, dtype=np.float64)
 
     outlet_flow: Annotated[
@@ -310,6 +315,14 @@ class Pump(AlgebraicProcessModel):
             dp_curve=_pressure_rise_curve,
             d_dp_d_mdot=_d_pressure_rise_d_flow_rate,
         )
+
+    def hydraulic_parameters_for_port(self, port_name: str) -> Mapping[str, float]:
+        validate_outlet_port(
+            unit_name=type(self).__name__,
+            port_name=port_name,
+            allowed_outlet_ports=self.ports.outlets,
+        )
+        return MappingProxyType(default_pump_hydraulic_parameters(pump_speed=self.pump_speed))
 
     @staticmethod
     @override

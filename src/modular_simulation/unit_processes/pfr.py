@@ -23,6 +23,7 @@ from modular_simulation.utils.typing import ArrayIndex
 _MIN_VOLUME = 1.0e-9
 _MIN_COMPOSITION_SUM = 1.0e-12
 _COMPOSITION_TOL = 1.0e-8
+_MIN_UTILITY_HEAT_CAPACITY_RATE = 1.0e-12
 
 
 def _coerce_vector(
@@ -83,20 +84,36 @@ class PFR(ProcessModel):
 
     inlet_flow: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="L/s", description="inlet volumetric flow rate"),
+        M(type=T.BOUNDARY, unit="L/s", description="inlet volumetric flow rate"),
     ] = 0.0
     inlet_temperature: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="K", description="inlet temperature"),
+        M(type=T.BOUNDARY, unit="K", description="inlet temperature"),
     ] = 298.15
     inlet_pressure: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="Pa", description="inlet pressure"),
+        M(type=T.BOUNDARY, unit="Pa", description="inlet pressure"),
     ] = 101325.0
     inlet_composition: Annotated[
         NDArray[np.float64],
-        M(type=T.CONTROLLED, unit="", description="inlet mole fractions by species index"),
+        M(type=T.BOUNDARY, unit="", description="inlet mole fractions by species index"),
     ] = np.zeros(0, dtype=np.float64)
+    utility_inlet_temperature: Annotated[
+        float,
+        M(
+            type=T.BOUNDARY,
+            unit="K",
+            description="utility-side inlet temperature for distributed external thermal coupling",
+        ),
+    ] = 298.15
+    utility_flow: Annotated[
+        float,
+        M(
+            type=T.BOUNDARY,
+            unit="L/s",
+            description="utility-side volumetric flow controlling distributed external thermal coupling",
+        ),
+    ] = 0.0
 
     n_species: Annotated[int, M(type=T.CONSTANT, unit="", description="number of species")] = 2
     n_cells: Annotated[int, M(type=T.CONSTANT, unit="", description="number of axial cells")] = 20
@@ -124,10 +141,14 @@ class PFR(ProcessModel):
         float,
         M(type=T.CONSTANT, unit="m^2", description="total jacket heat transfer area"),
     ] = 0.0
-    imposed_jacket_temperature: Annotated[
+    utility_volumetric_heat_capacity: Annotated[
         float,
-        M(type=T.CONSTANT, unit="K", description="externally imposed jacket temperature boundary"),
-    ] = 298.15
+        M(
+            type=T.CONSTANT,
+            unit="J/(L*K)",
+            description="utility-side volumetric heat capacity for distributed external coupling",
+        ),
+    ] = 4180.0
     reaction_heat_coeffs: Annotated[
         NDArray[np.float64],
         M(
@@ -198,6 +219,11 @@ class PFR(ProcessModel):
             raise ValueError("heat_transfer_coeff must be finite and non-negative.")
         if not isfinite(self.jacket_area) or self.jacket_area < 0.0:
             raise ValueError("jacket_area must be finite and non-negative.")
+        if (
+            not isfinite(self.utility_volumetric_heat_capacity)
+            or self.utility_volumetric_heat_capacity <= 0.0
+        ):
+            raise ValueError("utility_volumetric_heat_capacity must be finite and positive.")
 
         self.cell_species_moles = _coerce_vector(
             self.cell_species_moles,
@@ -527,7 +553,10 @@ class PFR(ProcessModel):
             0.0, float(k[k_map["jacket_area"]])
         )
         ua_cell = ua_total / float(n_cells)
-        jacket_temperature = float(k[k_map["imposed_jacket_temperature"]])
+        utility_temperature = float(u[u_map["utility_inlet_temperature"]])
+        utility_flow = max(0.0, float(u[u_map["utility_flow"]]))
+        utility_heat_capacity = max(1.0e-12, float(k[k_map["utility_volumetric_heat_capacity"]]))
+        utility_heat_capacity_rate = utility_flow * utility_heat_capacity
 
         model_instance_id = int(round(float(k[k_map["model_instance_id"]])))
         kinetics = _KINETICS_REGISTRY.get(model_instance_id)
@@ -565,7 +594,11 @@ class PFR(ProcessModel):
                 inlet_temperature if cell_index == 0 else float(cell_temperatures[cell_index - 1])
             )
             reaction_heat = -cell_volume * float(np.dot(reaction_heat_coeffs, net_rates))
-            jacket_heat = ua_cell * (jacket_temperature - temperature)
+            if utility_heat_capacity_rate > _MIN_UTILITY_HEAT_CAPACITY_RATE and ua_cell > 0.0:
+                jacket_heat = ua_cell * (utility_temperature - temperature)
+                utility_temperature -= jacket_heat / utility_heat_capacity_rate
+            else:
+                jacket_heat = 0.0
             denominator = max(1.0e-12, heat_capacity * cell_volume)
             dT_dt[cell_index] = (
                 inlet_flow * heat_capacity * (upstream_temperature - temperature)

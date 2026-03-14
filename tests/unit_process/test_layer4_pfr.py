@@ -9,6 +9,7 @@ from typing import Any, cast
 import numpy as np
 import pytest
 from numpy.typing import NDArray
+from pydantic import ValidationError
 
 from modular_simulation.thermodynamics.kinetics import PowerLawRateLaw, Reaction, ReactionSet
 from modular_simulation.unit_processes import CSTR, PFR
@@ -69,6 +70,35 @@ def _run_pfr_outlet_a(
     return float(np.asarray(reactor.outlet_composition, dtype=np.float64)[0])
 
 
+def _run_pfr_outlet_temperature_with_utility(
+    *, utility_flow: float, utility_inlet_temperature: float = 360.0
+) -> float:
+    n_cells = 60
+    reactor = PFR(
+        n_species=2,
+        n_cells=n_cells,
+        species_names=("A", "B"),
+        reaction_set=ReactionSet(reactions=()),
+        cell_species_moles=_initial_cell_moles(n_cells=n_cells, reactor_volume=6.0),
+        cell_temperatures=np.full(n_cells, 300.0, dtype=np.float64),
+        inlet_flow=2.0,
+        inlet_temperature=300.0,
+        inlet_pressure=101325.0,
+        inlet_composition=np.array([1.0, 0.0], dtype=np.float64),
+        utility_inlet_temperature=utility_inlet_temperature,
+        utility_flow=utility_flow,
+        total_volume=6.0,
+        pressure=101325.0,
+        volumetric_heat_capacity=4200.0,
+        heat_transfer_coeff=400.0,
+        jacket_area=8.0,
+        utility_volumetric_heat_capacity=4200.0,
+    )
+    _attach(reactor)
+    _run_to_steady_state(reactor, dt=0.15, steps=500)
+    return float(reactor.outlet_temperature)
+
+
 def test_first_order_matches_analytical() -> None:
     k_value = 0.8
     reactor_volume = 10.0
@@ -126,3 +156,20 @@ def test_pfr_higher_conversion_than_cstr() -> None:
     cstr_outlet_a = float(np.asarray(cstr.outlet_composition, dtype=np.float64)[0])
 
     assert pfr_outlet_a < cstr_outlet_a
+
+
+def test_pfr_distributed_external_coupling_is_flow_sensitive() -> None:
+    no_utility_flow_temperature = _run_pfr_outlet_temperature_with_utility(utility_flow=0.0)
+    low_utility_flow_temperature = _run_pfr_outlet_temperature_with_utility(utility_flow=0.2)
+    high_utility_flow_temperature = _run_pfr_outlet_temperature_with_utility(utility_flow=8.0)
+
+    assert no_utility_flow_temperature == pytest.approx(300.0, abs=2.0e-2)
+    assert low_utility_flow_temperature > no_utility_flow_temperature + 1.0
+    assert high_utility_flow_temperature > low_utility_flow_temperature + 8.0
+
+
+def test_pfr_rejects_legacy_imposed_jacket_temperature_field() -> None:
+    assert "imposed_jacket_temperature" not in PFR.model_fields
+
+    with pytest.raises(ValidationError):
+        PFR(imposed_jacket_temperature=330.0)

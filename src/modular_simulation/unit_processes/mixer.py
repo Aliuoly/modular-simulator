@@ -95,20 +95,20 @@ class Mixer(AlgebraicProcessModel):
 
     inlet_flows: Annotated[
         NDArray[np.float64],
-        M(type=T.CONTROLLED, unit="mol/s", description="inlet molar flow rates by inlet index"),
+        M(type=T.BOUNDARY, unit="mol/s", description="inlet molar flow rates by inlet index"),
     ] = np.zeros(0, dtype=np.float64)
     inlet_temperatures: Annotated[
         NDArray[np.float64],
-        M(type=T.CONTROLLED, unit="K", description="inlet temperatures by inlet index"),
+        M(type=T.BOUNDARY, unit="K", description="inlet temperatures by inlet index"),
     ] = np.zeros(0, dtype=np.float64)
     inlet_pressures: Annotated[
         NDArray[np.float64],
-        M(type=T.CONTROLLED, unit="Pa", description="inlet pressures by inlet index"),
+        M(type=T.BOUNDARY, unit="Pa", description="inlet pressures by inlet index"),
     ] = np.zeros(0, dtype=np.float64)
     inlet_compositions: Annotated[
         NDArray[np.float64],
         M(
-            type=T.CONTROLLED,
+            type=T.BOUNDARY,
             unit="",
             description="flattened inlet composition matrix with shape (n_inlets, n_species)",
         ),
