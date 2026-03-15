@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from math import exp, pow
-from typing import Literal, Protocol
+from typing import Literal
 
 _MIN_TEMPERATURE_K = 1.0e-9
 _MIN_EQUILIBRIUM_CONSTANT = 1.0e-12
 _EXPONENT_ARGUMENT_LIMIT = 700.0
 
 
-class RateLaw(Protocol):
-    def rate(self, concentrations: Mapping[str, float], temperature: float) -> dict[str, float]: ...
+class RateLaw(ABC):
+    """Nominal scalar rate law for a single reaction."""
+
+    @abstractmethod
+    def rate(self, concentrations: Mapping[str, float], temperature: float) -> float:
+        pass
 
 
 def _bounded_exponential(exponent_argument: float) -> float:
@@ -48,11 +53,34 @@ class Reaction:
     name: str
     stoichiometry: Mapping[str, float]
     rate_law: RateLaw
+    reverse_rate_law: RateLaw | None = None
+    equilibrium_constant: Callable[[float], float] | None = None
     basis: Literal["concentration", "partial_pressure"] = "concentration"
 
     def __post_init__(self) -> None:
         if not self.stoichiometry:
             raise ValueError("Reaction stoichiometry cannot be empty.")
+
+        if self.reverse_rate_law is not None and self.equilibrium_constant is not None:
+            raise ValueError(
+                "Reaction reversible configuration is ambiguous; provide only one of reverse_rate_law or equilibrium_constant."
+            )
+
+    def rate(self, concentrations: Mapping[str, float], temperature: float) -> float:
+        forward_rate = self.rate_law.rate(concentrations, temperature)
+
+        if self.reverse_rate_law is not None:
+            return forward_rate - self.reverse_rate_law.rate(concentrations, temperature)
+
+        if self.equilibrium_constant is not None:
+            equilibrium_constant = max(
+                _MIN_EQUILIBRIUM_CONSTANT,
+                self.equilibrium_constant(temperature),
+            )
+            reverse_rate = forward_rate / equilibrium_constant
+            return forward_rate - reverse_rate
+
+        return forward_rate
 
 
 @dataclass(frozen=True)
@@ -62,33 +90,25 @@ class ReactionSet:
     def net_rates(
         self, concentrations: Mapping[str, float], temperature: float
     ) -> dict[str, float]:
+        """Aggregate scalar per-reaction rates into net species rates."""
         net_species_rates: dict[str, float] = {}
         for reaction in self.reactions:
-            reaction_rate_terms = reaction.rate_law.rate(concentrations, temperature)
-            if not reaction_rate_terms:
-                raise ValueError(f"Reaction '{reaction.name}' returned no rate terms.")
-            if len(reaction_rate_terms) != 1:
-                raise ValueError(
-                    f"Reaction '{reaction.name}' must return exactly one rate term for stoichiometric aggregation."
-                )
-
-            reaction_rate = next(iter(reaction_rate_terms.values()))
+            reaction_rate = reaction.rate(concentrations, temperature)
             for species_name, coefficient in reaction.stoichiometry.items():
-                contribution = coefficient * reaction_rate
-                if species_name in net_species_rates:
-                    net_species_rates[species_name] += contribution
-                else:
-                    net_species_rates[species_name] = contribution
+                net_species_rates[species_name] = net_species_rates.get(species_name, 0.0) + (
+                    coefficient * reaction_rate
+                )
 
         return net_species_rates
 
 
 @dataclass(frozen=True)
-class ArrheniusRateLaw:
+class ArrheniusRateLaw(RateLaw):
+    """Arrhenius law returning one scalar rate per reaction."""
+
     pre_exponential: float
     activation_energy: float
     orders: Mapping[str, float]
-    key_species: str
     gas_constant: float = 8.314
 
     def __post_init__(self) -> None:
@@ -97,21 +117,21 @@ class ArrheniusRateLaw:
         if self.gas_constant <= 0.0:
             raise ValueError("gas_constant must be positive.")
 
-    def rate(self, concentrations: Mapping[str, float], temperature: float) -> dict[str, float]:
+    def rate(self, concentrations: Mapping[str, float], temperature: float) -> float:
         temperature_kelvin = _safe_temperature_kelvin(temperature)
         arrhenius_term = _bounded_exponential(
             -self.activation_energy / (self.gas_constant * temperature_kelvin)
         )
         concentration_term = _rate_concentration_term(concentrations, self.orders)
-        reaction_rate = self.pre_exponential * arrhenius_term * concentration_term
-        return {self.key_species: reaction_rate}
+        return self.pre_exponential * arrhenius_term * concentration_term
 
 
 @dataclass(frozen=True)
-class PowerLawRateLaw:
+class PowerLawRateLaw(RateLaw):
+    """Power-law kinetics returning one scalar rate per reaction."""
+
     k_ref: float
     orders: Mapping[str, float]
-    key_species: str
     T_ref: float = 298.15
     E_a: float | None = None
     gas_constant: float = 8.314
@@ -124,7 +144,7 @@ class PowerLawRateLaw:
         if self.gas_constant <= 0.0:
             raise ValueError("gas_constant must be positive.")
 
-    def rate(self, concentrations: Mapping[str, float], temperature: float) -> dict[str, float]:
+    def rate(self, concentrations: Mapping[str, float], temperature: float) -> float:
         concentration_term = _rate_concentration_term(concentrations, self.orders)
 
         rate_constant = self.k_ref
@@ -135,36 +155,11 @@ class PowerLawRateLaw:
             )
             rate_constant *= _bounded_exponential(correction_exponent)
 
-        return {self.key_species: rate_constant * concentration_term}
-
-
-@dataclass(frozen=True)
-class EquilibriumConstantLaw:
-    K_eq: Callable[[float], float]
-    forward_rate_law: RateLaw
-    key_species: str
-    minimum_equilibrium_constant: float = _MIN_EQUILIBRIUM_CONSTANT
-
-    def __post_init__(self) -> None:
-        if self.minimum_equilibrium_constant <= 0.0:
-            raise ValueError("minimum_equilibrium_constant must be positive.")
-
-    def rate(self, concentrations: Mapping[str, float], temperature: float) -> dict[str, float]:
-        forward_terms = self.forward_rate_law.rate(concentrations, temperature)
-        if self.key_species not in forward_terms:
-            raise ValueError(
-                f"Forward rate law did not return required key species '{self.key_species}'."
-            )
-
-        forward_rate = forward_terms[self.key_species]
-        equilibrium_constant = max(self.minimum_equilibrium_constant, self.K_eq(temperature))
-        reverse_rate = forward_rate / equilibrium_constant
-        return {self.key_species: forward_rate - reverse_rate}
+        return rate_constant * concentration_term
 
 
 __all__ = [
     "ArrheniusRateLaw",
-    "EquilibriumConstantLaw",
     "PowerLawRateLaw",
     "RateLaw",
     "Reaction",

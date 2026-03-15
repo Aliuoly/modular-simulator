@@ -1,3 +1,5 @@
+# pyright: reportMissingImports=false
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,8 +8,12 @@ from modular_simulation.connection.connected_plant_orchestrator import Connected
 from modular_simulation.connection.network import ConnectionNetwork
 from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
 from modular_simulation.connection.subsystem_descriptor import SubsystemRuntimeDescriptor
-from modular_simulation.thermodynamics.kinetics import PowerLawRateLaw, Reaction, ReactionSet
-from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
+from modular_simulation.thermodynamics import (
+    PowerLawRateLaw,
+    Reaction,
+    ReactionSet,
+    SimulationRuntimeContext,
+)
 
 
 @dataclass
@@ -47,7 +53,6 @@ def test_simulation_runtime_context_factory_creates_thermo_and_reaction_accessor
                 rate_law=PowerLawRateLaw(
                     k_ref=0.3,
                     orders={"ethanol": 1.0},
-                    key_species="ethanol",
                 ),
             ),
         )

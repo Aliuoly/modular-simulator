@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false
+# pyright: reportMissingTypeStubs=false, reportMissingImports=false, reportUnknownMemberType=false
 
 from math import exp
 from types import SimpleNamespace
@@ -11,7 +11,7 @@ import pytest
 from numpy.typing import NDArray
 from pydantic import ValidationError
 
-from modular_simulation.thermodynamics.kinetics import PowerLawRateLaw, Reaction, ReactionSet
+from modular_simulation.thermodynamics import PowerLawRateLaw, Reaction, ReactionSet
 from modular_simulation.unit_processes import CSTR, PFR
 
 
@@ -33,7 +33,6 @@ def _first_order_reaction_set(k_value: float) -> ReactionSet:
                 rate_law=PowerLawRateLaw(
                     k_ref=k_value,
                     orders={"A": 1.0},
-                    key_species="r1",
                 ),
             ),
         )

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false
+# pyright: reportMissingTypeStubs=false, reportMissingImports=false, reportUnknownMemberType=false
 
 from types import SimpleNamespace
 from typing import Any, cast
@@ -16,7 +16,7 @@ from modular_simulation.components import (
     Trajectory,
 )
 from modular_simulation.framework.system import System
-from modular_simulation.thermodynamics.kinetics import PowerLawRateLaw, Reaction, ReactionSet
+from modular_simulation.thermodynamics import PowerLawRateLaw, Reaction, ReactionSet
 from modular_simulation.unit_processes import CSTR
 
 
@@ -38,7 +38,6 @@ def _first_order_reaction_set(k_value: float) -> ReactionSet:
                 rate_law=PowerLawRateLaw(
                     k_ref=k_value,
                     orders={"A": 1.0},
-                    key_species="r1",
                 ),
             ),
         )

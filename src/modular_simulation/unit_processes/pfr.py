@@ -46,6 +46,23 @@ def _validate_composition(composition: NDArray[np.float64], *, name: str) -> Non
         raise ValueError(f"{name} must sum to 1.0.")
 
 
+def _species_net_rates_vector(
+    reaction_set: ReactionSet,
+    species_names: tuple[str, ...],
+    concentrations: NDArray[np.float64],
+    temperature: float,
+) -> NDArray[np.float64]:
+    concentration_map = {
+        species_name: float(concentrations[index])
+        for index, species_name in enumerate(species_names)
+    }
+    species_rates = reaction_set.net_rates(concentration_map, temperature)
+    return np.asarray(
+        [float(species_rates.get(species_name, 0.0)) for species_name in species_names],
+        dtype=np.float64,
+    )
+
+
 @dataclass(frozen=True)
 class _KineticsBinding:
     reaction_set: ReactionSet
@@ -569,15 +586,14 @@ class PFR(ProcessModel):
             concentrations = cells_moles[cell_index] / cell_volume
             temperature = float(cell_temperatures[cell_index])
 
-            net_rates = np.zeros(n_species, dtype=np.float64)
+            net_rates: NDArray[np.float64] = np.zeros(n_species, dtype=np.float64)
             if kinetics is not None:
-                concentration_map = {
-                    species_name: float(concentrations[index])
-                    for index, species_name in enumerate(kinetics.species_names)
-                }
-                rates_by_name = kinetics.reaction_set.net_rates(concentration_map, temperature)
-                for index, species_name in enumerate(kinetics.species_names):
-                    net_rates[index] = float(rates_by_name.get(species_name, 0.0))
+                net_rates = _species_net_rates_vector(
+                    kinetics.reaction_set,
+                    kinetics.species_names,
+                    concentrations,
+                    temperature,
+                )
 
             upstream_concentrations = (
                 inlet_composition

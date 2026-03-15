@@ -1,8 +1,22 @@
 import importlib
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .algebraic_process_model import (
+        AlgebraicProcessModel,
+        DUAL_INLET,
+        DUAL_OUTLET,
+        ENERGY_INLET,
+        ENERGY_IO,
+        ENERGY_OUTLET,
+        SINGLE_IO,
+        TRIPLE_INLET,
+        TRIPLE_OUTLET,
+        UnitProcessPorts,
+    )
 
 from .kinetics import (
     ArrheniusRateLaw,
-    EquilibriumConstantLaw,
     PowerLawRateLaw,
     RateLaw,
     Reaction,
@@ -32,7 +46,6 @@ __all__ = [
     "ENERGY_INLET",
     "ENERGY_IO",
     "ENERGY_OUTLET",
-    "EquilibriumConstantLaw",
     "FlashResult",
     "PengRobinsonPackage",
     "PowerLawRateLaw",

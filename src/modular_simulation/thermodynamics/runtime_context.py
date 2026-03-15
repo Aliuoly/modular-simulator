@@ -9,6 +9,9 @@ from .property_package import PropertyPackage, create_property_package
 from .species import ActiveSpeciesRegistry, SimulationSpeciesContext
 
 
+_EMPTY_REACTION_SET = ReactionSet(reactions=())
+
+
 @dataclass(frozen=True)
 class SimulationRuntimeContext:
     species_registry: ActiveSpeciesRegistry
@@ -49,7 +52,7 @@ class SimulationRuntimeContext:
         return self.property_package
 
     def get_reactions(self, subsystem_id: str) -> ReactionSet:
-        return self.reaction_sets.get(subsystem_id, ReactionSet(reactions=()))
+        return self.reaction_sets.get(subsystem_id, _EMPTY_REACTION_SET)
 
 
 __all__ = ["SimulationRuntimeContext"]
