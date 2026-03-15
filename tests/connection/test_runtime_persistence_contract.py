@@ -460,7 +460,7 @@ def test_schema_marker_and_version_are_explicit_and_stable() -> None:
 
     assert snapshot["schema_marker"] == RUNTIME_SNAPSHOT_SCHEMA_MARKER
     assert snapshot["schema_version"] == RUNTIME_SNAPSHOT_SCHEMA_VERSION
-    assert RUNTIME_SNAPSHOT_SCHEMA_VERSION == 2
+    assert RUNTIME_SNAPSHOT_SCHEMA_VERSION == 3
     assert set(cast(dict[str, object], snapshot["snapshot"]).keys()) == {
         "runtime",
         "process_runtime_state",

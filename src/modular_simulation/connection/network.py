@@ -10,10 +10,7 @@ from typing import Literal, Protocol, cast
 
 from modular_simulation.connection.hydraulic_compile import (
     CompiledHydraulicGraph,
-    CompiledValveHydraulicState,
     HydraulicCompileLifecycle,
-    compile_valve_hydraulic_state,
-    resolve_line_resistance,
 )
 from modular_simulation.connection.asymmetric_adapter import (
     AsymmetricPortAdapter,
@@ -21,8 +18,6 @@ from modular_simulation.connection.asymmetric_adapter import (
     build_process_binding,
 )
 from modular_simulation.connection.domain_contracts import (
-    ResistanceConfig,
-    ValveConfig,
     validate_reconfiguration_command_envelope,
 )
 from modular_simulation.connection.error_catalog import (
@@ -32,6 +27,10 @@ from modular_simulation.connection.error_catalog import (
 from modular_simulation.connection.hydraulic_solver import (
     ElementEquation,
     HydraulicSystemDefinition,
+)
+from modular_simulation.connection.line_hydraulic_config_manager import (
+    LineHydraulicConfigManager,
+    LineHydraulicConfigManagerSnapshot,
 )
 from modular_simulation.connection.process_binding import ProcessBinding
 from modular_simulation.connection.runtime_snapshot_schema import (
@@ -44,11 +43,6 @@ from modular_simulation.connection.topology import (
     ProcessNode,
     TopologyGraph,
 )
-
-
-_VALVE_ACTUATOR_NAMESPACE_PREFIX = "actuator/valve/"
-_PUMP_ACTUATOR_NAMESPACE_PREFIX = "actuator/pump/"
-_HEAT_ACTUATOR_NAMESPACE_PREFIX = "actuator/heat/"
 
 
 @dataclass(frozen=True)
@@ -106,23 +100,6 @@ class _ProcessSpec:
 
 
 @dataclass(frozen=True)
-class _LineHydraulicConfig:
-    line_id: str
-    equation_name: str
-    resistance_parameter_name: str
-    resistance: ResistanceConfig
-    valve: ValveConfig | None
-    pump: _LinePumpConfig | None
-
-
-@dataclass(frozen=True)
-class _LinePumpConfig:
-    pump_id: str
-    initial_pump_speed: float
-    pump_parameter_name: str
-
-
-@dataclass(frozen=True)
 class _QueuedReconfigurationTransaction:
     request_id: str
     idempotency_key: str | None
@@ -136,20 +113,17 @@ QueuedReconfigurationTransaction = _QueuedReconfigurationTransaction
 
 @dataclass(frozen=True)
 class _NetworkReconfigurationState:
+    """Rollback snapshot for network-owned reconfiguration state."""
+
     process_specs: dict[str, _ProcessSpec]
     boundary_specs: dict[str, _BoundarySpec]
     edges: list[ConnectionEdge]
-    line_hydraulic_configs: dict[str, _LineHydraulicConfig]
+    manager_snapshot: LineHydraulicConfigManagerSnapshot
     edge_lookup: dict[tuple[str, str, str, str], str]
     next_edge_index: int
     next_reconfiguration_index: int
     next_revision_index: int
     queued_reconfigurations: list[QueuedReconfigurationTransaction]
-    pending_valve_open_fractions: dict[str, float]
-    pending_pump_speeds: dict[str, float]
-    line_heat_actuator_ids: dict[str, str]
-    heat_actuator_rates: dict[str, float]
-    pending_heat_actuator_rates: dict[str, float]
     compiled: CompiledConnectionNetwork | None
 
 
@@ -168,6 +142,8 @@ class _RuntimeOrchestrator(Protocol):
 
 
 class ConnectionNetwork:
+    """Topology and compile owner for connected process networks."""
+
     @classmethod
     def from_single_process(
         cls,
@@ -236,17 +212,12 @@ class ConnectionNetwork:
         self._process_specs: dict[str, _ProcessSpec] = {}
         self._boundary_specs: dict[str, _BoundarySpec] = {}
         self._edges: list[ConnectionEdge] = []
-        self._line_hydraulic_configs: dict[str, _LineHydraulicConfig] = {}
+        self._line_hydraulic_manager = LineHydraulicConfigManager()
         self._edge_lookup: dict[tuple[str, str, str, str], str] = {}
         self._next_edge_index: int = 1
         self._next_reconfiguration_index: int = 1
         self._next_revision_index: int = 1
         self._queued_reconfigurations: list[QueuedReconfigurationTransaction] = []
-        self._pending_valve_open_fractions: dict[str, float] = {}
-        self._pending_pump_speeds: dict[str, float] = {}
-        self._line_heat_actuator_ids: dict[str, str] = {}
-        self._heat_actuator_rates: dict[str, float] = {}
-        self._pending_heat_actuator_rates: dict[str, float] = {}
         self._compiled: CompiledConnectionNetwork | None = None
 
     def add_process(
@@ -373,40 +344,23 @@ class ConnectionNetwork:
                     None if config.pump is None else config.pump.pump_parameter_name
                 ),
             )
-            for config in sorted(
-                self._line_hydraulic_configs.values(), key=lambda item: item.line_id
-            )
+            for config in self._line_hydraulic_manager.list_line_hydraulic_configs()
         )
 
     def list_pending_valve_open_fractions(self) -> tuple[tuple[str, float], ...]:
-        return tuple(
-            (line_id, self._pending_valve_open_fractions[line_id])
-            for line_id in sorted(self._pending_valve_open_fractions)
-        )
+        return self._line_hydraulic_manager.list_pending_valve_open_fractions()
 
     def list_pending_pump_speeds(self) -> tuple[tuple[str, float], ...]:
-        return tuple(
-            (line_id, self._pending_pump_speeds[line_id])
-            for line_id in sorted(self._pending_pump_speeds)
-        )
+        return self._line_hydraulic_manager.list_pending_pump_speeds()
 
     def list_line_heat_actuator_ids(self) -> tuple[tuple[str, str], ...]:
-        return tuple(
-            (line_id, self._line_heat_actuator_ids[line_id])
-            for line_id in sorted(self._line_heat_actuator_ids)
-        )
+        return self._line_hydraulic_manager.list_line_heat_actuator_ids()
 
     def list_heat_actuator_rates(self) -> tuple[tuple[str, float], ...]:
-        return tuple(
-            (line_id, self._heat_actuator_rates[line_id])
-            for line_id in sorted(self._heat_actuator_rates)
-        )
+        return self._line_hydraulic_manager.list_heat_actuator_rates()
 
     def list_pending_heat_actuator_rates(self) -> tuple[tuple[str, float], ...]:
-        return tuple(
-            (line_id, self._pending_heat_actuator_rates[line_id])
-            for line_id in sorted(self._pending_heat_actuator_rates)
-        )
+        return self._line_hydraulic_manager.list_pending_heat_actuator_rates()
 
     def list_incident_edge_ids(
         self, *, node_id: str, port_name: str | None = None
@@ -507,8 +461,11 @@ class ConnectionNetwork:
                     "hydraulic compile delegation requires both compile_lifecycle and hydraulic_system_builder"
                 )
             system = self._hydraulic_system_builder(topology)
-            system_for_compile, valve_state_by_line = self._apply_line_hydraulic_configurations(
-                system=system
+            system_for_compile, valve_state_by_line = (
+                self._line_hydraulic_manager.apply_compile_overlays(
+                    system=system,
+                    assert_line_exists=self._assert_line_exists,
+                )
             )
             hydraulic = self._compile_lifecycle.compile(
                 system=system_for_compile,
@@ -582,7 +539,10 @@ class ConnectionNetwork:
             raise ValueError("cannot stage valve command without compiled hydraulic graph")
 
         _ = compiled.hydraulic.with_valve_commands({resolved_line_id: open_fraction})
-        self._pending_valve_open_fractions[resolved_line_id] = float(open_fraction)
+        self._line_hydraulic_manager.stage_valve_open_fraction_command(
+            line_id=resolved_line_id,
+            open_fraction=float(open_fraction),
+        )
 
     def stage_pump_speed_command(
         self,
@@ -608,23 +568,16 @@ class ConnectionNetwork:
             hydraulic=compiled.hydraulic,
             pump_speed_commands={resolved_line_id: float(pump_speed)},
         )
-        self._pending_pump_speeds[resolved_line_id] = float(pump_speed)
+        self._line_hydraulic_manager.stage_pump_speed_command(
+            line_id=resolved_line_id,
+            pump_speed=float(pump_speed),
+        )
 
     def consume_pending_valve_open_fraction_commands(self) -> Mapping[str, float]:
-        pending = {
-            line_id: self._pending_valve_open_fractions[line_id]
-            for line_id in sorted(self._pending_valve_open_fractions)
-        }
-        self._pending_valve_open_fractions = {}
-        return pending
+        return self._line_hydraulic_manager.consume_pending_valve_open_fraction_commands()
 
     def consume_pending_pump_speed_commands(self) -> Mapping[str, float]:
-        pending = {
-            line_id: self._pending_pump_speeds[line_id]
-            for line_id in sorted(self._pending_pump_speeds)
-        }
-        self._pending_pump_speeds = {}
-        return pending
+        return self._line_hydraulic_manager.consume_pending_pump_speed_commands()
 
     def attach_line_heat_actuator(
         self,
@@ -647,8 +600,11 @@ class ConnectionNetwork:
                 "attach_line_heat_actuator field 'initial_heat_rate' must be finite number"
             ),
         )
-        self._line_heat_actuator_ids[normalized_line_id] = normalized_heat_actuator_id
-        self._heat_actuator_rates[normalized_line_id] = initial_heat_rate_scalar
+        self._line_hydraulic_manager.attach_line_heat_actuator(
+            line_id=normalized_line_id,
+            heat_actuator_id=normalized_heat_actuator_id,
+            initial_heat_rate=initial_heat_rate_scalar,
+        )
 
     def stage_heat_actuator_rate_command(
         self,
@@ -665,28 +621,28 @@ class ConnectionNetwork:
         )
         if not isfinite(heat_rate):
             raise ValueError("heat_rate must be finite")
-        self._pending_heat_actuator_rates[resolved_line_id] = float(heat_rate)
+        self._line_hydraulic_manager.stage_heat_actuator_rate_command(
+            line_id=resolved_line_id,
+            heat_rate=float(heat_rate),
+        )
 
     def consume_pending_heat_actuator_rate_commands(self) -> Mapping[str, float]:
-        pending = {
-            line_id: self._pending_heat_actuator_rates[line_id]
-            for line_id in sorted(self._pending_heat_actuator_rates)
-        }
-        self._pending_heat_actuator_rates = {}
-        return pending
+        return self._line_hydraulic_manager.consume_pending_heat_actuator_rate_commands()
 
     def apply_heat_actuator_rate_commands(self, heat_rate_commands: Mapping[str, float]) -> None:
         for line_id in sorted(heat_rate_commands):
-            line_id_scalar = self._normalize_line_id(line_id)
-            self._assert_line_exists(line_id_scalar)
-            if line_id_scalar not in self._line_heat_actuator_ids:
-                raise ValueError(f"line '{line_id_scalar}' does not have an attached heat actuator")
             heat_rate = float(heat_rate_commands[line_id])
             if not isfinite(heat_rate):
                 raise ValueError(
-                    "heat actuator command for line {!r} must be finite".format(line_id_scalar)
+                    "heat actuator command for line {!r} must be finite".format(
+                        self._normalize_line_id(line_id)
+                    )
                 )
-            self._heat_actuator_rates[line_id_scalar] = heat_rate
+        self._line_hydraulic_manager.apply_heat_actuator_rate_commands(
+            heat_rate_commands,
+            normalize_line_id=self._normalize_line_id,
+            assert_line_exists=self._assert_line_exists,
+        )
 
     def with_pump_speed_commands(
         self, pump_speed_commands: Mapping[str, float]
@@ -841,50 +797,30 @@ class ConnectionNetwork:
             error_message="configure_line_geometry field 'length_m' must be a finite positive number",
         )
 
-        previous = self._line_hydraulic_configs.get(normalized_line_id)
-        resolved_equation_name = (
-            previous.equation_name
-            if previous is not None
-            else self._default_equation_name_for_line(normalized_line_id)
-        )
-        resolved_parameter_name = (
-            previous.resistance_parameter_name if previous is not None else "pipe_resistance"
-        )
-        resistance_mode: Literal["derived", "manual_override"] = "derived"
-        manual_value: float | None = None
-        valve: ValveConfig | None = None
-        if previous is not None:
-            resistance_mode = previous.resistance.mode
-            manual_value = previous.resistance.manual_value
-            valve = previous.valve
-
-        if equation_name is not None:
-            resolved_equation_name = self._require_non_empty_string_value(
-                value=equation_name,
-                error_message="configure_line_geometry optional field 'equation_name' must be a non-empty string",
-            )
-        if resistance_parameter_name is not None:
-            resolved_parameter_name = self._require_non_empty_string_value(
-                value=resistance_parameter_name,
-                error_message=(
-                    "configure_line_geometry optional field "
-                    + "'resistance_parameter_name' must be a non-empty string"
-                ),
-            )
-
-        resistance = ResistanceConfig(
-            mode=resistance_mode,
+        self._line_hydraulic_manager.configure_line_geometry(
+            line_id=normalized_line_id,
             radius_m=radius_scalar,
             length_m=length_scalar,
-            manual_value=manual_value,
-        )
-        self._line_hydraulic_configs[normalized_line_id] = _LineHydraulicConfig(
-            line_id=normalized_line_id,
-            equation_name=resolved_equation_name,
-            resistance_parameter_name=resolved_parameter_name,
-            resistance=resistance,
-            valve=valve,
-            pump=None if previous is None else previous.pump,
+            equation_name=(
+                None
+                if equation_name is None
+                else self._require_non_empty_string_value(
+                    value=equation_name,
+                    error_message="configure_line_geometry optional field 'equation_name' must be a non-empty string",
+                )
+            ),
+            resistance_parameter_name=(
+                None
+                if resistance_parameter_name is None
+                else self._require_non_empty_string_value(
+                    value=resistance_parameter_name,
+                    error_message=(
+                        "configure_line_geometry optional field "
+                        + "'resistance_parameter_name' must be a non-empty string"
+                    ),
+                )
+            ),
+            default_equation_name=self._default_equation_name_for_line(normalized_line_id),
         )
 
     def configure_line_resistance(
@@ -896,12 +832,6 @@ class ConnectionNetwork:
     ) -> None:
         normalized_line_id = self._normalize_line_id(line_id)
         self._assert_line_exists(normalized_line_id)
-
-        previous = self._line_hydraulic_configs.get(normalized_line_id)
-        if previous is None:
-            raise ValueError(
-                "configure_line_resistance requires line geometry to be configured first"
-            )
 
         if not isinstance(mode, str) or mode.strip() not in {"derived", "manual_override"}:
             raise ValueError(
@@ -919,19 +849,10 @@ class ConnectionNetwork:
                 ),
             )
 
-        resistance = ResistanceConfig(
-            mode=normalized_mode,
-            radius_m=previous.resistance.radius_m,
-            length_m=previous.resistance.length_m,
-            manual_value=resolved_manual_value,
-        )
-        self._line_hydraulic_configs[normalized_line_id] = _LineHydraulicConfig(
+        self._line_hydraulic_manager.configure_line_resistance(
             line_id=normalized_line_id,
-            equation_name=previous.equation_name,
-            resistance_parameter_name=previous.resistance_parameter_name,
-            resistance=resistance,
-            valve=previous.valve,
-            pump=previous.pump,
+            mode=normalized_mode,
+            manual_value=resolved_manual_value,
         )
 
     def attach_line_valve(
@@ -947,10 +868,6 @@ class ConnectionNetwork:
     ) -> None:
         normalized_line_id = self._normalize_line_id(line_id)
         self._assert_line_exists(normalized_line_id)
-
-        previous = self._line_hydraulic_configs.get(normalized_line_id)
-        if previous is None:
-            raise ValueError("attach_line_valve requires line geometry to be configured first")
 
         normalized_valve_id = self._require_non_empty_string_value(
             value=valve_id,
@@ -969,38 +886,31 @@ class ConnectionNetwork:
             error_message="attach_line_valve field 'initial_open_fraction' must be finite number",
         )
 
-        resolved_equation_name = previous.equation_name
-        if equation_name is not None:
-            resolved_equation_name = self._require_non_empty_string_value(
-                value=equation_name,
-                error_message="attach_line_valve optional field 'equation_name' must be a non-empty string",
-            )
-
-        resolved_parameter_name = previous.resistance_parameter_name
-        if resistance_parameter_name is not None:
-            resolved_parameter_name = self._require_non_empty_string_value(
-                value=resistance_parameter_name,
-                error_message=(
-                    "attach_line_valve optional field 'resistance_parameter_name' "
-                    + "must be a non-empty string"
-                ),
-            )
-        elif previous.valve is None:
-            resolved_parameter_name = "valve_resistance"
-
-        valve = ValveConfig(
+        self._line_hydraulic_manager.attach_line_valve(
+            line_id=normalized_line_id,
             valve_id=normalized_valve_id,
             minimum_open_fraction=minimum_scalar,
             maximum_open_fraction=maximum_scalar,
             initial_open_fraction=initial_scalar,
-        )
-        self._line_hydraulic_configs[normalized_line_id] = _LineHydraulicConfig(
-            line_id=normalized_line_id,
-            equation_name=resolved_equation_name,
-            resistance_parameter_name=resolved_parameter_name,
-            resistance=previous.resistance,
-            valve=valve,
-            pump=previous.pump,
+            equation_name=(
+                None
+                if equation_name is None
+                else self._require_non_empty_string_value(
+                    value=equation_name,
+                    error_message="attach_line_valve optional field 'equation_name' must be a non-empty string",
+                )
+            ),
+            resistance_parameter_name=(
+                None
+                if resistance_parameter_name is None
+                else self._require_non_empty_string_value(
+                    value=resistance_parameter_name,
+                    error_message=(
+                        "attach_line_valve optional field 'resistance_parameter_name' "
+                        + "must be a non-empty string"
+                    ),
+                )
+            ),
         )
 
     def attach_line_pump(
@@ -1015,10 +925,6 @@ class ConnectionNetwork:
         normalized_line_id = self._normalize_line_id(line_id)
         self._assert_line_exists(normalized_line_id)
 
-        previous = self._line_hydraulic_configs.get(normalized_line_id)
-        if previous is None:
-            raise ValueError("attach_line_pump requires line geometry to be configured first")
-
         normalized_pump_id = self._require_non_empty_string_value(
             value=pump_id,
             error_message="attach_line_pump field 'pump_id' must be a non-empty string",
@@ -1028,35 +934,28 @@ class ConnectionNetwork:
             error_message="attach_line_pump field 'initial_pump_speed' must be finite number",
         )
 
-        resolved_equation_name = previous.equation_name
-        if equation_name is not None:
-            resolved_equation_name = self._require_non_empty_string_value(
-                value=equation_name,
-                error_message="attach_line_pump optional field 'equation_name' must be a non-empty string",
-            )
-
-        resolved_parameter_name = (
-            previous.pump.pump_parameter_name if previous.pump is not None else "pump_speed"
-        )
-        if pump_parameter_name is not None:
-            resolved_parameter_name = self._require_non_empty_string_value(
-                value=pump_parameter_name,
-                error_message=(
-                    "attach_line_pump optional field 'pump_parameter_name' "
-                    + "must be a non-empty string"
-                ),
-            )
-
-        self._line_hydraulic_configs[normalized_line_id] = _LineHydraulicConfig(
+        self._line_hydraulic_manager.attach_line_pump(
             line_id=normalized_line_id,
-            equation_name=resolved_equation_name,
-            resistance_parameter_name=previous.resistance_parameter_name,
-            resistance=previous.resistance,
-            valve=previous.valve,
-            pump=_LinePumpConfig(
-                pump_id=normalized_pump_id,
-                initial_pump_speed=initial_pump_speed_scalar,
-                pump_parameter_name=resolved_parameter_name,
+            pump_id=normalized_pump_id,
+            initial_pump_speed=initial_pump_speed_scalar,
+            equation_name=(
+                None
+                if equation_name is None
+                else self._require_non_empty_string_value(
+                    value=equation_name,
+                    error_message="attach_line_pump optional field 'equation_name' must be a non-empty string",
+                )
+            ),
+            pump_parameter_name=(
+                None
+                if pump_parameter_name is None
+                else self._require_non_empty_string_value(
+                    value=pump_parameter_name,
+                    error_message=(
+                        "attach_line_pump optional field 'pump_parameter_name' "
+                        + "must be a non-empty string"
+                    ),
+                )
             ),
         )
 
@@ -1246,10 +1145,7 @@ class ConnectionNetwork:
                     edge.target.port_name,
                 )
                 _ = self._edge_lookup.pop(edge_key, None)
-                _ = self._line_hydraulic_configs.pop(normalized_edge_id, None)
-                _ = self._line_heat_actuator_ids.pop(normalized_edge_id, None)
-                _ = self._heat_actuator_rates.pop(normalized_edge_id, None)
-                _ = self._pending_heat_actuator_rates.pop(normalized_edge_id, None)
+                self._line_hydraulic_manager.remove_line(normalized_edge_id)
                 return normalized_edge_id
             raise ValueError(f"unknown connection edge_id '{normalized_edge_id}'")
 
@@ -1279,10 +1175,7 @@ class ConnectionNetwork:
                 continue
             del self._edges[index]
             _ = self._edge_lookup.pop(edge_key, None)
-            _ = self._line_hydraulic_configs.pop(existing_edge_id, None)
-            _ = self._line_heat_actuator_ids.pop(existing_edge_id, None)
-            _ = self._heat_actuator_rates.pop(existing_edge_id, None)
-            _ = self._pending_heat_actuator_rates.pop(existing_edge_id, None)
+            self._line_hydraulic_manager.remove_line(existing_edge_id)
             return existing_edge_id
 
         raise ValueError(f"unknown connection edge_id '{existing_edge_id}'")
@@ -1330,21 +1223,17 @@ class ConnectionNetwork:
             raise
 
     def _capture_reconfiguration_state(self) -> _NetworkReconfigurationState:
+        manager_snapshot = self._line_hydraulic_manager.capture_snapshot()
         return _NetworkReconfigurationState(
             process_specs=dict(self._process_specs),
             boundary_specs=dict(self._boundary_specs),
             edges=list(self._edges),
-            line_hydraulic_configs=dict(self._line_hydraulic_configs),
+            manager_snapshot=manager_snapshot,
             edge_lookup=dict(self._edge_lookup),
             next_edge_index=self._next_edge_index,
             next_reconfiguration_index=self._next_reconfiguration_index,
             next_revision_index=self._next_revision_index,
             queued_reconfigurations=list(self._queued_reconfigurations),
-            pending_valve_open_fractions=dict(self._pending_valve_open_fractions),
-            pending_pump_speeds=dict(self._pending_pump_speeds),
-            line_heat_actuator_ids=dict(self._line_heat_actuator_ids),
-            heat_actuator_rates=dict(self._heat_actuator_rates),
-            pending_heat_actuator_rates=dict(self._pending_heat_actuator_rates),
             compiled=self._compiled,
         )
 
@@ -1352,127 +1241,18 @@ class ConnectionNetwork:
         self._process_specs = dict(state.process_specs)
         self._boundary_specs = dict(state.boundary_specs)
         self._edges = list(state.edges)
-        self._line_hydraulic_configs = dict(state.line_hydraulic_configs)
         self._edge_lookup = dict(state.edge_lookup)
         self._next_edge_index = state.next_edge_index
         self._next_reconfiguration_index = state.next_reconfiguration_index
         self._next_revision_index = state.next_revision_index
         self._queued_reconfigurations = list(state.queued_reconfigurations)
-        self._pending_valve_open_fractions = dict(state.pending_valve_open_fractions)
-        self._pending_pump_speeds = dict(state.pending_pump_speeds)
-        self._line_heat_actuator_ids = dict(state.line_heat_actuator_ids)
-        self._heat_actuator_rates = dict(state.heat_actuator_rates)
-        self._pending_heat_actuator_rates = dict(state.pending_heat_actuator_rates)
+        self._line_hydraulic_manager.restore_snapshot(state.manager_snapshot)
         self._compiled = state.compiled
 
     def _drain_reconfiguration_queue(self) -> tuple[QueuedReconfigurationTransaction, ...]:
         queue = tuple(self._queued_reconfigurations)
         self._queued_reconfigurations = []
         return queue
-
-    def _apply_line_hydraulic_configurations(
-        self, *, system: HydraulicSystemDefinition
-    ) -> tuple[HydraulicSystemDefinition, Mapping[str, CompiledValveHydraulicState]]:
-        if not self._line_hydraulic_configs:
-            return system, {}
-
-        equations = list(system.equations)
-        equation_name_to_index: dict[str, int] = {}
-        for index, equation in enumerate(equations):
-            if equation.name in equation_name_to_index:
-                raise ValueError(
-                    "line configuration requires unique equation names; duplicate {!r}".format(
-                        equation.name
-                    )
-                )
-            equation_name_to_index[equation.name] = index
-
-        valve_state_by_line: dict[str, CompiledValveHydraulicState] = {}
-        for line_id in sorted(self._line_hydraulic_configs):
-            self._assert_line_exists(line_id)
-            config = self._line_hydraulic_configs[line_id]
-            resolved_resistance = resolve_line_resistance(
-                line_id=line_id,
-                resistance=config.resistance,
-            )
-
-            equation_index = equation_name_to_index.get(config.equation_name)
-            if equation_index is None:
-                raise ValueError(
-                    "line {!r} references unknown hydraulic equation {!r}".format(
-                        line_id,
-                        config.equation_name,
-                    )
-                )
-            equation = equations[equation_index]
-            parameter_name = config.resistance_parameter_name
-            supported_parameter_names = equation.element.parameter_spec.names
-            if parameter_name not in supported_parameter_names:
-                raise ValueError(
-                    "line {!r} references unsupported resistance parameter {!r} for equation {!r}".format(
-                        line_id,
-                        parameter_name,
-                        equation.name,
-                    )
-                )
-
-            if config.valve is not None and config.pump is not None:
-                raise ValueError(
-                    "line {!r} cannot attach both valve and pump hydraulic overlays".format(line_id)
-                )
-
-            if config.valve is not None:
-                valve_state_by_line[line_id] = compile_valve_hydraulic_state(
-                    line_id=line_id,
-                    equation_name=config.equation_name,
-                    resolved_resistance=resolved_resistance,
-                    valve=config.valve,
-                    resistance_parameter_name=parameter_name,
-                )
-                continue
-
-            if config.pump is not None:
-                pump_parameter_name = config.pump.pump_parameter_name
-                if pump_parameter_name not in supported_parameter_names:
-                    raise ValueError(
-                        "line {!r} references unsupported pump parameter {!r} for equation {!r}".format(
-                            line_id,
-                            pump_parameter_name,
-                            equation.name,
-                        )
-                    )
-                updated_parameters = dict(equation.parameters)
-                updated_parameters[pump_parameter_name] = config.pump.initial_pump_speed
-                equations[equation_index] = ElementEquation(
-                    name=equation.name,
-                    element=equation.element,
-                    inputs=equation.inputs,
-                    parameters=MappingProxyType(updated_parameters),
-                    unknown_name_map=equation.unknown_name_map,
-                    residual_name_map=equation.residual_name_map,
-                )
-                continue
-
-            updated_parameters = dict(equation.parameters)
-            updated_parameters[parameter_name] = resolved_resistance.active_value
-            equations[equation_index] = ElementEquation(
-                name=equation.name,
-                element=equation.element,
-                inputs=equation.inputs,
-                parameters=MappingProxyType(updated_parameters),
-                unknown_name_map=equation.unknown_name_map,
-                residual_name_map=equation.residual_name_map,
-            )
-
-        return (
-            HydraulicSystemDefinition(
-                equations=tuple(equations),
-                linear_residual_equations=system.linear_residual_equations,
-                unknown_order=system.unknown_order,
-                residual_order=system.residual_order,
-            ),
-            valve_state_by_line,
-        )
 
     def _normalize_reconfiguration_mutation(
         self, request_mapping: Mapping[object, object]
@@ -1617,42 +1397,18 @@ class ConnectionNetwork:
         valve_id: str | None,
         actuator_tag: str | None,
     ) -> str:
-        selector_count = (
-            int(line_id is not None) + int(valve_id is not None) + int(actuator_tag is not None)
+        compiled = self._compiled
+        compiled_valve_line_ids: tuple[str, ...] = ()
+        if compiled is not None and compiled.hydraulic is not None:
+            compiled_valve_line_ids = tuple(compiled.hydraulic.valve_state_by_line)
+        return self._line_hydraulic_manager.resolve_valve_command_line_id(
+            line_id=line_id,
+            valve_id=valve_id,
+            actuator_tag=actuator_tag,
+            normalize_line_id=self._normalize_line_id,
+            assert_line_exists=self._assert_line_exists,
+            compiled_valve_line_ids=compiled_valve_line_ids,
         )
-        if selector_count != 1:
-            raise ValueError(
-                "set_valve_open_fraction requires exactly one selector: 'line_id', 'valve_id', or 'actuator_tag'"
-            )
-
-        if actuator_tag is not None:
-            resolved_valve_id = self._parse_valve_id_from_actuator_tag(actuator_tag)
-            return self._resolve_line_id_for_valve_id(resolved_valve_id)
-
-        if valve_id is not None:
-            resolved_valve_id = self._require_non_empty_string_value(
-                value=valve_id,
-                error_message="valve_id must be a non-empty string",
-            )
-            return self._resolve_line_id_for_valve_id(resolved_valve_id)
-
-        if line_id is None:
-            raise RuntimeError("line_id selector is required")
-        resolved_line_id = self._normalize_line_id(line_id)
-        line_config = self._line_hydraulic_configs.get(resolved_line_id)
-        if line_config is None:
-            compiled = self._compiled
-            if (
-                compiled is not None
-                and compiled.hydraulic is not None
-                and resolved_line_id in compiled.hydraulic.valve_state_by_line
-            ):
-                return resolved_line_id
-            self._assert_line_exists(resolved_line_id)
-            line_config = self._line_hydraulic_configs.get(resolved_line_id)
-        if line_config is None or line_config.valve is None:
-            raise ValueError(f"line '{resolved_line_id}' does not have an attached valve")
-        return resolved_line_id
 
     def _resolve_pump_command_line_id(
         self,
@@ -1661,71 +1417,13 @@ class ConnectionNetwork:
         pump_id: str | None,
         actuator_tag: str | None,
     ) -> str:
-        selector_count = (
-            int(line_id is not None) + int(pump_id is not None) + int(actuator_tag is not None)
+        return self._line_hydraulic_manager.resolve_pump_command_line_id(
+            line_id=line_id,
+            pump_id=pump_id,
+            actuator_tag=actuator_tag,
+            normalize_line_id=self._normalize_line_id,
+            assert_line_exists=self._assert_line_exists,
         )
-        if selector_count != 1:
-            raise ValueError(
-                "set_pump_speed requires exactly one selector: 'line_id', 'pump_id', or 'actuator_tag'"
-            )
-
-        if actuator_tag is not None:
-            resolved_pump_id = self._parse_pump_id_from_actuator_tag(actuator_tag)
-            return self._resolve_line_id_for_pump_id(resolved_pump_id)
-
-        if pump_id is not None:
-            resolved_pump_id = self._require_non_empty_string_value(
-                value=pump_id,
-                error_message="pump_id must be a non-empty string",
-            )
-            return self._resolve_line_id_for_pump_id(resolved_pump_id)
-
-        if line_id is None:
-            raise RuntimeError("line_id selector is required")
-        resolved_line_id = self._normalize_line_id(line_id)
-        self._assert_line_exists(resolved_line_id)
-        line_config = self._line_hydraulic_configs.get(resolved_line_id)
-        if line_config is None or line_config.pump is None:
-            raise ValueError(f"line '{resolved_line_id}' does not have an attached pump")
-        return resolved_line_id
-
-    def _resolve_line_id_for_valve_id(self, valve_id: str) -> str:
-        line_ids = tuple(
-            sorted(
-                line_key
-                for line_key, config in self._line_hydraulic_configs.items()
-                if config.valve is not None and config.valve.valve_id == valve_id
-            )
-        )
-        if not line_ids:
-            raise ValueError(f"unknown valve '{valve_id}'")
-        if len(line_ids) > 1:
-            raise ValueError(
-                f"valve '{valve_id}' is attached to multiple lines {line_ids!r}; use line_id selector"
-            )
-        resolved_line_id = line_ids[0] if line_ids else None
-        if resolved_line_id is None:
-            raise RuntimeError(f"failed to resolve line for valve '{valve_id}'")
-        return resolved_line_id
-
-    def _resolve_line_id_for_pump_id(self, pump_id: str) -> str:
-        line_ids = tuple(
-            sorted(
-                line_key
-                for line_key, config in self._line_hydraulic_configs.items()
-                if config.pump is not None and config.pump.pump_id == pump_id
-            )
-        )
-        if not line_ids:
-            raise ValueError(f"unknown pump '{pump_id}'")
-        if len(line_ids) > 1:
-            raise ValueError(
-                f"pump '{pump_id}' is attached to multiple lines {line_ids!r}; use line_id selector"
-            )
-        resolved_line_id = line_ids[0] if line_ids else None
-        if resolved_line_id is None:
-            raise RuntimeError(f"failed to resolve line for pump '{pump_id}'")
-        return resolved_line_id
 
     def _resolve_heat_command_line_id(
         self,
@@ -1734,119 +1432,13 @@ class ConnectionNetwork:
         heat_actuator_id: str | None,
         actuator_tag: str | None,
     ) -> str:
-        selector_count = (
-            int(line_id is not None)
-            + int(heat_actuator_id is not None)
-            + int(actuator_tag is not None)
+        return self._line_hydraulic_manager.resolve_heat_command_line_id(
+            line_id=line_id,
+            heat_actuator_id=heat_actuator_id,
+            actuator_tag=actuator_tag,
+            normalize_line_id=self._normalize_line_id,
+            assert_line_exists=self._assert_line_exists,
         )
-        if selector_count != 1:
-            raise ValueError(
-                "set_heat_actuator_rate requires exactly one selector: 'line_id', 'heat_actuator_id', or 'actuator_tag'"
-            )
-
-        if actuator_tag is not None:
-            resolved_heat_actuator_id = self._parse_heat_actuator_id_from_actuator_tag(actuator_tag)
-            return self._resolve_line_id_for_heat_actuator_id(resolved_heat_actuator_id)
-
-        if heat_actuator_id is not None:
-            resolved_heat_actuator_id = self._require_non_empty_string_value(
-                value=heat_actuator_id,
-                error_message="heat_actuator_id must be a non-empty string",
-            )
-            return self._resolve_line_id_for_heat_actuator_id(resolved_heat_actuator_id)
-
-        if line_id is None:
-            raise RuntimeError("line_id selector is required")
-        resolved_line_id = self._normalize_line_id(line_id)
-        self._assert_line_exists(resolved_line_id)
-        if resolved_line_id not in self._line_heat_actuator_ids:
-            raise ValueError(f"line '{resolved_line_id}' does not have an attached heat actuator")
-        return resolved_line_id
-
-    def _resolve_line_id_for_heat_actuator_id(self, heat_actuator_id: str) -> str:
-        line_ids = tuple(
-            sorted(
-                line_key
-                for line_key, configured_heat_actuator_id in self._line_heat_actuator_ids.items()
-                if configured_heat_actuator_id == heat_actuator_id
-            )
-        )
-        if not line_ids:
-            raise ValueError(f"unknown heat actuator '{heat_actuator_id}'")
-        if len(line_ids) > 1:
-            raise ValueError(
-                "heat actuator '{}' is attached to multiple lines {!r}; use line_id selector".format(
-                    heat_actuator_id,
-                    line_ids,
-                )
-            )
-        resolved_line_id = line_ids[0] if line_ids else None
-        if resolved_line_id is None:
-            raise RuntimeError(f"failed to resolve line for heat actuator '{heat_actuator_id}'")
-        return resolved_line_id
-
-    def _parse_valve_id_from_actuator_tag(self, actuator_tag: object) -> str:
-        normalized = self._require_non_empty_string_value(
-            value=actuator_tag,
-            error_message=(
-                "set_valve_open_fraction field 'actuator_tag' must match canonical "
-                + "valve actuator tag 'actuator/valve/<id>'"
-            ),
-        )
-        if not normalized.startswith(_VALVE_ACTUATOR_NAMESPACE_PREFIX):
-            raise ValueError(
-                "set_valve_open_fraction field 'actuator_tag' must match canonical "
-                + "valve actuator tag 'actuator/valve/<id>'"
-            )
-        valve_id = normalized.removeprefix(_VALVE_ACTUATOR_NAMESPACE_PREFIX).strip()
-        if not valve_id:
-            raise ValueError(
-                "set_valve_open_fraction field 'actuator_tag' must match canonical "
-                + "valve actuator tag 'actuator/valve/<id>'"
-            )
-        return valve_id
-
-    def _parse_pump_id_from_actuator_tag(self, actuator_tag: object) -> str:
-        normalized = self._require_non_empty_string_value(
-            value=actuator_tag,
-            error_message=(
-                "set_pump_speed field 'actuator_tag' must match canonical "
-                + "pump actuator tag 'actuator/pump/<id>'"
-            ),
-        )
-        if not normalized.startswith(_PUMP_ACTUATOR_NAMESPACE_PREFIX):
-            raise ValueError(
-                "set_pump_speed field 'actuator_tag' must match canonical "
-                + "pump actuator tag 'actuator/pump/<id>'"
-            )
-        pump_id = normalized.removeprefix(_PUMP_ACTUATOR_NAMESPACE_PREFIX).strip()
-        if not pump_id:
-            raise ValueError(
-                "set_pump_speed field 'actuator_tag' must match canonical "
-                + "pump actuator tag 'actuator/pump/<id>'"
-            )
-        return pump_id
-
-    def _parse_heat_actuator_id_from_actuator_tag(self, actuator_tag: object) -> str:
-        normalized = self._require_non_empty_string_value(
-            value=actuator_tag,
-            error_message=(
-                "set_heat_actuator_rate field 'actuator_tag' must match canonical "
-                + "heat actuator tag 'actuator/heat/<id>'"
-            ),
-        )
-        if not normalized.startswith(_HEAT_ACTUATOR_NAMESPACE_PREFIX):
-            raise ValueError(
-                "set_heat_actuator_rate field 'actuator_tag' must match canonical "
-                + "heat actuator tag 'actuator/heat/<id>'"
-            )
-        heat_actuator_id = normalized.removeprefix(_HEAT_ACTUATOR_NAMESPACE_PREFIX).strip()
-        if not heat_actuator_id:
-            raise ValueError(
-                "set_heat_actuator_rate field 'actuator_tag' must match canonical "
-                + "heat actuator tag 'actuator/heat/<id>'"
-            )
-        return heat_actuator_id
 
     def _with_pump_speed_commands(
         self,
@@ -1873,7 +1465,7 @@ class ConnectionNetwork:
             if not isfinite(pump_speed):
                 raise ValueError("pump_speed command for line {!r} must be finite".format(line_id))
 
-            line_config = self._line_hydraulic_configs.get(line_id)
+            line_config = self._line_hydraulic_manager.get_line_hydraulic_config(line_id)
             if line_config is None or line_config.pump is None:
                 raise ValueError(f"unknown pump command line_id '{line_id}'")
 
