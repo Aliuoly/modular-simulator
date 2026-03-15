@@ -3,10 +3,8 @@ import importlib
 import pytest
 
 material_models = importlib.import_module("modular_simulation.connection.material_models")
-DensityModelSelection = material_models.DensityModelSelection
 IdealGasDensityModel = material_models.IdealGasDensityModel
 IncompressibleDensityModel = material_models.IncompressibleDensityModel
-select_density_model = material_models.select_density_model
 
 
 def test_incompressible_density_model_returns_constant_density() -> None:
@@ -47,16 +45,9 @@ def test_ideal_gas_density_rejects_non_positive_pressure_and_temperature(
         _ = model.density(pressure=pressure, temperature=temperature)
 
 
-def test_density_model_selection_returns_expected_implementation() -> None:
-    incompressible = select_density_model(
-        DensityModelSelection(model="incompressible", parameters={"density_kg_per_m3": 995.0})
-    )
-    ideal_gas = select_density_model(
-        DensityModelSelection(
-            model="ideal_gas",
-            parameters={"specific_gas_constant_j_per_kg_k": 287.0},
-        )
-    )
+def test_density_models_are_constructed_directly_from_concrete_classes() -> None:
+    incompressible = IncompressibleDensityModel(density_kg_per_m3=995.0)
+    ideal_gas = IdealGasDensityModel(specific_gas_constant_j_per_kg_k=287.0)
 
     assert isinstance(incompressible, IncompressibleDensityModel)
     assert isinstance(ideal_gas, IdealGasDensityModel)

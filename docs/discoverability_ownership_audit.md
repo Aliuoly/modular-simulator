@@ -45,7 +45,6 @@ Audit method: grep module-level `def <public_name>(...)` candidates across `src/
 | `connection.unit_process_wiring` | `create_system_for_unit`, `create_subsystem_for_unit` | KEEP | Small wiring factories/adapters that construct subsystem wrappers from supplied units/context. |
 | `connection.asymmetric_adapter` | `build_process_binding` | KEEP | Adapter/factory selector for process binding shapes; no hidden workflow lifecycle. |
 | `connection.domain_contracts` | `validate_command_envelope` | KEEP | Public contract validation boundary for command envelopes. |
-| `connection.material_models` | `select_density_model` | KEEP | Small stateless factory selector for density-model owners. |
 | `connection.hydraulic_element` | `smooth_signed_quadratic_flow_term`, `smooth_signed_quadratic_flow_term_derivative` | KEEP | Pure mathematical kernels shared by hydraulic elements. |
 | `thermodynamics.stream` | `default_inlet_map`, `default_outlet_map` | KEEP | Lightweight stream-port attribute map adapters. |
 | `thermodynamics.species` | `resolve_species` | KEEP | Shared stateless resolution boundary for species lookup. |

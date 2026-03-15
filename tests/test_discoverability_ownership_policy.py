@@ -2,6 +2,7 @@ from importlib import import_module
 from pathlib import Path
 
 POLICY_DOC = Path("docs/discoverability_ownership_policy.md")
+AUDIT_DOC = Path("docs/discoverability_ownership_audit.md")
 
 FORBIDDEN_PUBLIC_HELPERS = {
     "modular_simulation.connection.hydraulic_solver": {
@@ -49,3 +50,31 @@ def test_sanctioned_exceptions_documented() -> None:
     text = POLICY_DOC.read_text(encoding="utf-8")
     missing = [entry for entry in SANCTIONED_EXCEPTIONS if entry not in text]
     assert not missing, f"Policy doc missing sanctioned exception references: {missing}"
+
+
+def test_density_material_models_expose_only_direct_concrete_types() -> None:
+    module = import_module("modular_simulation.connection.material_models")
+    audit_text = AUDIT_DOC.read_text(encoding="utf-8")
+    public_module_callables = {
+        name
+        for name, value in vars(module).items()
+        if callable(value)
+        and not isinstance(value, type)
+        and getattr(value, "__module__", None) == module.__name__
+        and not name.startswith("_")
+    }
+    public_density_types = {
+        name
+        for name, value in vars(module).items()
+        if isinstance(value, type)
+        and getattr(value, "__module__", None) == module.__name__
+        and name.endswith("DensityModel")
+    }
+
+    assert public_module_callables == set()
+    assert public_density_types == {
+        "DensityModel",
+        "IncompressibleDensityModel",
+        "IdealGasDensityModel",
+    }
+    assert "connection.material_models" not in audit_text
