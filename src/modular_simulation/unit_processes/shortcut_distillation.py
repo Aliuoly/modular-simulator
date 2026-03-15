@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportImplicitStringConcatenation=false
+# pyright: reportMissingTypeStubs=false, reportMissingImports=false, reportUnknownVariableType=false, reportUnknownArgumentType=false, reportUnknownMemberType=false, reportImplicitStringConcatenation=false
 
 from math import exp, isfinite, log, sqrt
 from typing import Annotated, ClassVar, cast, override
-import warnings
 
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import PrivateAttr, model_validator
+from pydantic import PrivateAttr
 
 from modular_simulation.measurables.process_model import StateMetadata as M
 from modular_simulation.measurables.process_model import StateType as T
@@ -321,33 +320,6 @@ class ShortcutDistillation(AlgebraicProcessModel):
         y = 1.0 - exp(((1.0 + 54.4 * x) / (11.0 + 117.2 * x)) * ((x - 1.0) / sqrt(x)))
         y = min(max(y, 1.0e-9), 1.0 - 1.0e-9)
         return max(n_min + 1.0e-6, (n_min + y) / (1.0 - y))
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_legacy_configured_specs(cls, data: object) -> object:
-        if not isinstance(data, dict):
-            return data
-        legacy_names = {
-            "light_key_distillate_recovery": "configured_light_key_distillate_recovery_target",
-            "configured_light_key_distillate_recovery": "configured_light_key_distillate_recovery_target",
-            "heavy_key_bottoms_recovery": "configured_heavy_key_bottoms_recovery_target",
-            "configured_heavy_key_bottoms_recovery": "configured_heavy_key_bottoms_recovery_target",
-            "reflux_ratio_factor": "configured_minimum_reflux_ratio_factor",
-            "configured_reflux_ratio_factor": "configured_minimum_reflux_ratio_factor",
-            "reflux_ratio_setpoint": "configured_reflux_ratio_target",
-            "configured_reflux_ratio": "configured_reflux_ratio_target",
-        }
-        for legacy_name, new_name in legacy_names.items():
-            if legacy_name in data:
-                if new_name in data:
-                    raise ValueError(f"Provide only one of '{legacy_name}' or '{new_name}'.")
-                warnings.warn(
-                    f"{legacy_name} is deprecated; use {new_name}",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                data[new_name] = data.pop(legacy_name)
-        return data
 
     @override
     def model_post_init(self, context: object) -> None:

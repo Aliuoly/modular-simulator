@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false
+# pyright: reportMissingTypeStubs=false, reportMissingImports=false, reportUnknownMemberType=false
 
 from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from modular_simulation.connection.hydraulic_compile import calculate_effective_valve_resistance
 from modular_simulation.connection.hydraulic_element import (
@@ -229,27 +230,24 @@ def test_pump_invalid_inputs_raise(kwargs: dict[str, object], error_match: str) 
         _ = Pump(**cast(Any, params))
 
 
-def test_pump_constructor_accepts_legacy_pressure_rise_alias_with_warning() -> None:
-    with pytest.warns(DeprecationWarning, match="pressure_rise is deprecated; use pump_speed"):
-        pump = cast(
-            Pump,
-            Pump.model_validate(
-                cast(
-                    Any,
-                    {
-                        "n_species": 2,
-                        "inlet_flow": 0.01,
-                        "inlet_temperature": 300.0,
-                        "inlet_pressure": 100000.0,
-                        "inlet_composition": np.array([0.5, 0.5], dtype=np.float64),
-                        "pressure_rise": 50000.0,
-                        "efficiency": 0.75,
-                    },
-                )
-            ),
-        )
+def test_pump_constructor_rejects_legacy_pressure_rise_alias() -> None:
+    assert not hasattr(Pump, "pressure_rise")
 
-    assert pump.pump_speed == pytest.approx(50000.0)
+    with pytest.raises(ValidationError, match="pressure_rise"):
+        _ = Pump.model_validate(
+            cast(
+                Any,
+                {
+                    "n_species": 2,
+                    "inlet_flow": 0.01,
+                    "inlet_temperature": 300.0,
+                    "inlet_pressure": 100000.0,
+                    "inlet_composition": np.array([0.5, 0.5], dtype=np.float64),
+                    "pressure_rise": 50000.0,
+                    "efficiency": 0.75,
+                },
+            )
+        )
 
 
 def test_pump_exposes_hydraulic_parameters_for_port_with_pump_speed_authority() -> None:

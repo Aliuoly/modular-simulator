@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 from numpy.typing import NDArray
+from pydantic import ValidationError
 
 from modular_simulation.unit_processes.component_separator import ComponentSeparator
 
@@ -76,20 +77,13 @@ def test_component_separator_supports_species_named_split_mapping() -> None:
     ) == pytest.approx(np.array([0.9, 0.1], dtype=np.float64))
 
 
-def test_component_separator_accepts_legacy_split_fractions_with_warning() -> None:
-    with pytest.warns(
-        DeprecationWarning,
-        match=r"split_fractions is deprecated; use configured_split_fraction_targets",
-    ):
-        separator = ComponentSeparator(
+def test_component_separator_rejects_legacy_split_fractions_alias() -> None:
+    with pytest.raises(ValidationError, match="split_fractions"):
+        _ = ComponentSeparator(
             n_species=2,
             split_fractions={"water": 0.8, "ethanol": 0.2},
             species_order=("water", "ethanol"),
         )
-
-    assert np.asarray(
-        separator.configured_split_fraction_targets, dtype=np.float64
-    ) == pytest.approx(np.array([0.8, 0.2], dtype=np.float64))
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportMissingTypeArgument=false
+# pyright: reportMissingTypeStubs=false, reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownParameterType=false, reportMissingTypeArgument=false
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from modular_simulation.thermodynamics.property_package import FlashResult
 from modular_simulation.unit_processes import ShortcutDistillation
@@ -135,7 +136,7 @@ def test_mass_balance_closure() -> None:
     assert column.actual_stages > column.minimum_stages
 
 
-def test_shortcut_distillation_accepts_legacy_configured_specs_with_warning() -> None:
+def test_shortcut_distillation_rejects_legacy_configured_specs() -> None:
     legacy_kwargs: dict[str, Any] = {
         "light_key_distillate_recovery": 0.93,
         "heavy_key_bottoms_recovery": 0.94,
@@ -143,31 +144,19 @@ def test_shortcut_distillation_accepts_legacy_configured_specs_with_warning() ->
         "reflux_ratio_setpoint": 0.0,
     }
 
-    with pytest.warns(DeprecationWarning) as recorded:
-        column = ShortcutDistillation(
+    with pytest.raises(ValidationError) as excinfo:
+        _ = ShortcutDistillation(
             n_species=2,
             light_key_index=0,
             heavy_key_index=1,
             **legacy_kwargs,
         )
 
-    messages = {str(warning.message) for warning in recorded}
-    assert (
-        "light_key_distillate_recovery is deprecated; use configured_light_key_distillate_recovery_target"
-        in messages
-    )
-    assert (
-        "heavy_key_bottoms_recovery is deprecated; use configured_heavy_key_bottoms_recovery_target"
-        in messages
-    )
-    assert (
-        "reflux_ratio_factor is deprecated; use configured_minimum_reflux_ratio_factor" in messages
-    )
-    assert "reflux_ratio_setpoint is deprecated; use configured_reflux_ratio_target" in messages
-    assert column.configured_light_key_distillate_recovery_target == pytest.approx(0.93)
-    assert column.configured_heavy_key_bottoms_recovery_target == pytest.approx(0.94)
-    assert column.configured_minimum_reflux_ratio_factor == pytest.approx(1.7)
-    assert column.configured_reflux_ratio_target == pytest.approx(0.0)
+    message = str(excinfo.value)
+    assert "light_key_distillate_recovery" in message
+    assert "heavy_key_bottoms_recovery" in message
+    assert "reflux_ratio_factor" in message
+    assert "reflux_ratio_setpoint" in message
 
 
 def test_shortcut_distillation_helper_cluster_is_class_owned() -> None:
