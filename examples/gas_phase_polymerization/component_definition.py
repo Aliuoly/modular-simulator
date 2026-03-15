@@ -5,7 +5,7 @@ from typing import Any, cast
 
 from modular_simulation.components import (
     BangBangController,
-    CalculationBase,
+    AbstractCalculation,
     CalculationModelPath,
     InternalModelController,
     PIDController,
@@ -84,7 +84,7 @@ sensors = [
     SampledDelayedSensor(measurement_tag="discharge_valve_position", unit=""),
 ]
 
-calculations: list[CalculationBase] = [
+calculations: list[AbstractCalculation] = [
     FirstOrderFilter(
         name="mass_prod_rate_filter",
         raw_signal_tag="mass_prod_rate",

@@ -4,16 +4,29 @@ from __future__ import annotations
 
 from typing import Annotated, override
 
-from modular_simulation.components import CalculationBase, TagMetadata, TagType
+from modular_simulation.components import AbstractCalculation, TagMetadata, TagType
 from modular_simulation.utils.typing import StateValue
 
 
-class HeatDutyCalculation(CalculationBase):
+class HeatDutyCalculation(AbstractCalculation):
     """Compute jacket heat duty from measured temperatures."""
 
-    heat_duty_tag: Annotated[str, TagMetadata(type=TagType.OUTPUT, unit="kJ/hour", description="Estimated heat duty transferred to the jacket")]
-    Tk_tag: Annotated[str, TagMetadata(type=TagType.INPUT, unit="deg_C", description="Measured jacket temperature")]
-    T_tag: Annotated[str, TagMetadata(type=TagType.INPUT, unit="deg_C", description="Measured reactor temperature")]
+    heat_duty_tag: Annotated[
+        str,
+        TagMetadata(
+            type=TagType.OUTPUT,
+            unit="kJ/hour",
+            description="Estimated heat duty transferred to the jacket",
+        ),
+    ]
+    Tk_tag: Annotated[
+        str,
+        TagMetadata(type=TagType.INPUT, unit="deg_C", description="Measured jacket temperature"),
+    ]
+    T_tag: Annotated[
+        str,
+        TagMetadata(type=TagType.INPUT, unit="deg_C", description="Measured reactor temperature"),
+    ]
 
     kw: Annotated[float, TagMetadata(type=TagType.CONSTANT, unit="kJ/(s*K*m^2)")]
     area: Annotated[float, TagMetadata(type=TagType.CONSTANT, unit="m^2")]
