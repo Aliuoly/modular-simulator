@@ -135,7 +135,7 @@ class ControllerModeManager:
             1. A in CASCADE mode, B in MANUAL mode,
                 here, B's control action = A's SP is dictated by a trajectory (B.mv_trajectory)
             2. A in AUTO mode, B in TRACKING mode 
-                here, A's SP is dictated by a trajectory (A.sp_trajectory)
+                here, A's SP is dictated by a trajectory (A.reference_trajectory)
         even though both options above are functionally equivalent. 
     """
     auto_ref_source: Trajectory
@@ -210,8 +210,8 @@ class ControllerModeManager:
 
     def _change_mode_to_auto(self) -> ControllerMode:
         """
-        When changing to AUTO mode, the setpoint source becomes the local sp_trajectory.
-        However, to ensure bumpless transfer, the local sp_trajectory
+        When changing to AUTO mode, the setpoint source becomes the local reference_trajectory.
+        However, to ensure bumpless transfer, the local reference_trajectory
         is updated with the last setpoint, wherever it came from.
         """
         self.mode = ControllerMode.AUTO
