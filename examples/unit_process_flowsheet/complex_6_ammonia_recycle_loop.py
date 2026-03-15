@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, cast
+# pyright: reportMissingImports=false
 
 import numpy as np
 
 from modular_simulation.flowsheet import Flowsheet
+from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 from modular_simulation.unit_processes import (
     ComponentSeparator,
     HeaterCooler,
@@ -14,9 +14,20 @@ from modular_simulation.unit_processes import (
 )
 
 
+def _create_flowsheet(*, species: tuple[str, ...], dt: float) -> Flowsheet:
+    runtime_context = SimulationRuntimeContext.create(species_names=list(species))
+    return Flowsheet(context=runtime_context, dt=dt)
+
+
+def _print_report(title: str, report: dict[str, float]) -> None:
+    print(title)
+    for key, value in report.items():
+        print(f"- {key}: {value}")
+
+
 def run_example(*, steps: int = 3000, dt: float = 0.2, make_plot: bool = True) -> dict[str, float]:
     species = ("hydrogen", "ammonia")
-    flowsheet = cast(Any, Flowsheet).create(dt=dt, species=species)
+    flowsheet = _create_flowsheet(species=species, dt=dt)
     n_species = len(species)
 
     flowsheet.add_unit("synthesis_mixer", Mixer(n_inlets=2, n_species=n_species))
@@ -31,7 +42,7 @@ def run_example(*, steps: int = 3000, dt: float = 0.2, make_plot: bool = True) -
         "condenser_separator",
         ComponentSeparator(
             n_species=n_species,
-            split_fractions=np.array([0.04, 0.95], dtype=np.float64),
+            configured_split_fraction_targets=np.array([0.04, 0.95], dtype=np.float64),
         ),
     )
     flowsheet.add_unit(
@@ -72,9 +83,8 @@ def run_example(*, steps: int = 3000, dt: float = 0.2, make_plot: bool = True) -
     flowsheet.connect("condenser_separator.outlet_2", "purge_splitter")
     flowsheet.connect("purge_splitter.outlet_1", "recycle_export")
     flowsheet.connect("purge_splitter.outlet_2", "purge_export")
-    diagram_file = flowsheet.write_mermaid(Path(__file__).with_suffix(".mmd"))
 
-    results = flowsheet.step(steps=steps, dt=dt)
+    results = flowsheet.run(steps=steps, dt=dt)
 
     fresh_to_mixer = results.get_stream("fresh_syngas", "synthesis_mixer.inlet_1")
     recycle_to_mixer = results.get_stream("recycle_return", "synthesis_mixer.inlet_2")
@@ -96,22 +106,10 @@ def run_example(*, steps: int = 3000, dt: float = 0.2, make_plot: bool = True) -
         "liquid_product_purity": float(product_to_outlet.composition[-1][1]),
         "purge_flow_mol_s": float(purge_to_outlet.flow_rate[-1]),
     }
-    results.print_report("COMPLEX (6 PROCESSES): AMMONIA LOOP WITH PURGE/RECYCLE", report)
-    print(f"- flow_diagram_file: {diagram_file}")
+    _print_report("COMPLEX (6 PROCESSES): AMMONIA LOOP WITH PURGE/RECYCLE", report)
 
     if make_plot:
-        plot_file = results.plot_stream_metric(
-            {
-                "fresh to mixer": ("fresh_syngas", "synthesis_mixer.inlet_1"),
-                "reactor to separator": ("ammonia_reactor", "condenser_separator"),
-                "recycle return": ("recycle_return", "synthesis_mixer.inlet_2"),
-            },
-            metric="flow_rate",
-            title="complex_6_ammonia_recycle_loop: key stream flows",
-            output_path=Path(__file__).with_suffix(".png"),
-        )
-        if plot_file is not None:
-            print(f"- plot_file: {plot_file}")
+        print("- plotting is not implemented for the current canonical flowsheet API")
 
     return report
 
