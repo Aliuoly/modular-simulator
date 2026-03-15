@@ -1,20 +1,20 @@
-"""Utilities for plotting :class:`TagData` series with Matplotlib."""
+"""Utilities for plotting :class:`DataValue` series with Matplotlib."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from typing import Any, Iterable, TYPE_CHECKING, Callable
+from typing import Any, TYPE_CHECKING, Callable
 
 import numpy as np
 
-from modular_simulation.components import TagData
+from modular_simulation.components import DataValue
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from matplotlib.axes import Axes
 else:  # pragma: no cover - fall back when matplotlib is absent
     Axes = Any  # type: ignore
 
-SeriesInput = Sequence[TagData] | Mapping[str, Sequence[Any]]
+SeriesInput = Sequence[DataValue] | Mapping[str, Sequence[Any]]
 
 
 def _coerce_scalar(value: Any, index: int | None = None) -> float:
@@ -29,7 +29,7 @@ def _coerce_scalar(value: Any, index: int | None = None) -> float:
 
 
 def triplets_to_arrays(
-    samples: Sequence[TagData], index: int | None = None
+    samples: Sequence[DataValue], index: int | None = None
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Convert a sequence of triplets into NumPy arrays of time, value, and quality flags."""
 
@@ -70,19 +70,6 @@ def _extract_series(
     return triplets_to_arrays(samples, index)
 
 
-def _iter_true_segments(mask: np.ndarray) -> Iterable[slice]:
-    start: int | None = None
-    for idx, flag in enumerate(mask):
-        if flag:
-            if start is None:
-                start = idx
-        elif start is not None:
-            yield slice(start, idx)
-            start = None
-    if start is not None:
-        yield slice(start, mask.shape[0])
-
-
 def plot_triplet_series(
     ax: Axes,
     samples: SeriesInput,
@@ -96,7 +83,7 @@ def plot_triplet_series(
     t_end: float | tuple[float, ...] = np.inf,  # in the converted unit
     array_index: int | None = None,
 ) -> list[Any]:
-    """Plot a :class:`TagData` series on ``ax``.
+    """Plot a :class:`DataValue` series on ``ax``.
 
     Parameters
     ----------
@@ -166,12 +153,12 @@ def plot_triplet_series(
     return artists
 
 
-def triplets_from_history(history_entry: Mapping[str, Sequence[Any]]) -> list[TagData]:
+def triplets_from_history(history_entry: Mapping[str, Sequence[Any]]) -> list[DataValue]:
     """Convert a history mapping (time/value/ok) to triplet objects."""
 
     times, values, ok = _extract_series(history_entry)
     return [
-        TagData(t=float(t), value=float(v), ok=bool(flag))
+        DataValue(time=float(t), value=float(v), ok=bool(flag))
         for t, v, flag in zip(times, values, ok, strict=True)
     ]
 

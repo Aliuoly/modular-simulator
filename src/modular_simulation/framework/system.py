@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-# pyright: reportImportCycles=false
+# pyright: reportImportCycles=false, reportMissingImports=false
 
 import hashlib
 import json
 import re
-import warnings
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version as package_version
 from importlib import import_module
@@ -46,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 CHECKPOINT_SCHEMA_MARKER = "modular_simulation.system.checkpoint"
-CHECKPOINT_SCHEMA_VERSION = 1
+CHECKPOINT_SCHEMA_VERSION = 2
 CHECKPOINT_PACKAGE_NAME = "modular-simulation"
 CHECKPOINT_VERSION_MISMATCH_ERROR_CODE = "CHECKPOINT_VERSION_MISMATCH"
 CHECKPOINT_INTEGRITY_MISMATCH_ERROR_CODE = "CHECKPOINT_INTEGRITY_MISMATCH"
@@ -78,7 +77,6 @@ class _SensorMutationSnapshot:
     measured_points_cache: dict[str, Point] | None
     calculated_points_cache: dict[str, Point] | None
     reference_points_cache: dict[str, Point] | None
-    setpoint_points_cache: dict[str, Point] | None
     sensor_bindings_by_id: dict[str, RuntimeSensorBinding]
     sensor_state_by_id: dict[str, SensorRuntimeBindingState]
 
@@ -113,7 +111,6 @@ class _ControllerMutationSnapshot:
     measured_points_cache: dict[str, Point] | None
     calculated_points_cache: dict[str, Point] | None
     reference_points_cache: dict[str, Point] | None
-    setpoint_points_cache: dict[str, Point] | None
 
 
 class System(BaseModel):
@@ -521,16 +518,6 @@ class System(BaseModel):
         )
         return active_trajectory
 
-    def extend_controller_sp_trajectory(
-        self, cv_tag: str, value: StateValue | None = None
-    ) -> "Trajectory":
-        warnings.warn(
-            "extend_controller_sp_trajectory() is deprecated; use extend_controller_reference_trajectory()",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.extend_controller_reference_trajectory(cv_tag=cv_tag, value=value)
-
     def extend_control_element_mv_trajectory(
         self, mv_tag: str, value: StateValue | None = None
     ) -> "Trajectory":
@@ -586,15 +573,6 @@ class System(BaseModel):
     @property
     def controller_bindings(self) -> dict[str, RuntimeControllerBinding]:
         return dict(self._controller_bindings_by_id)
-
-    @property
-    def tag_store(self) -> PointRegistry:
-        """Public access to the point registry (tag -> Point).
-
-        This alias matches tests that expect `system.tag_store` to be a Mapping
-        of tag names (including sensor alias tags) to Point objects.
-        """
-        return self._point_registry
 
     def apply_sensor_runtime_mutation(
         self,
@@ -1113,11 +1091,6 @@ class System(BaseModel):
                 if self._point_registry._reference_points is None
                 else dict(self._point_registry._reference_points)
             ),
-            setpoint_points_cache=(
-                None
-                if self._point_registry._setpoint_points is None
-                else dict(self._point_registry._setpoint_points)
-            ),
         )
 
     def _restore_controller_mutation_snapshot(
@@ -1140,16 +1113,12 @@ class System(BaseModel):
             if snapshot.reference_points_cache is None
             else dict(snapshot.reference_points_cache)
         )
-        self._point_registry._setpoint_points = (
-            None if snapshot.setpoint_points_cache is None else dict(snapshot.setpoint_points_cache)
-        )
         self._invalidate_controller_cache()
 
     def _capture_point_registry_snapshot(
         self,
     ) -> tuple[
         dict[str, Point],
-        dict[str, Point] | None,
         dict[str, Point] | None,
         dict[str, Point] | None,
         dict[str, Point] | None,
@@ -1166,16 +1135,12 @@ class System(BaseModel):
             None
             if point_registry._reference_points is None
             else dict(point_registry._reference_points),
-            None
-            if point_registry._setpoint_points is None
-            else dict(point_registry._setpoint_points),
         )
 
     def _restore_point_registry_snapshot(
         self,
         snapshot: tuple[
             dict[str, Point],
-            dict[str, Point] | None,
             dict[str, Point] | None,
             dict[str, Point] | None,
             dict[str, Point] | None,
@@ -1186,7 +1151,6 @@ class System(BaseModel):
         point_registry._measured_points = None if snapshot[1] is None else dict(snapshot[1])
         point_registry._calculated_points = None if snapshot[2] is None else dict(snapshot[2])
         point_registry._reference_points = None if snapshot[3] is None else dict(snapshot[3])
-        point_registry._setpoint_points = None if snapshot[4] is None else dict(snapshot[4])
 
     def _invalidate_controller_cache(self) -> None:
         for cache_field in (
@@ -1289,11 +1253,6 @@ class System(BaseModel):
                 if point_registry._reference_points is None
                 else dict(point_registry._reference_points)
             ),
-            setpoint_points_cache=(
-                None
-                if point_registry._setpoint_points is None
-                else dict(point_registry._setpoint_points)
-            ),
             sensor_bindings_by_id=dict(self._sensor_bindings_by_id),
             sensor_state_by_id=sensor_state_by_id,
         )
@@ -1315,9 +1274,6 @@ class System(BaseModel):
             if snapshot.reference_points_cache is None
             else dict(snapshot.reference_points_cache)
         )
-        point_registry._setpoint_points = (
-            None if snapshot.setpoint_points_cache is None else dict(snapshot.setpoint_points_cache)
-        )
         self._sensor_bindings_by_id = dict(snapshot.sensor_bindings_by_id)
         for sensor in self.sensors:
             binding_state = snapshot.sensor_state_by_id.get(sensor.name)
@@ -1332,8 +1288,6 @@ class System(BaseModel):
             _ = point_registry._measured_points.pop(point_tag, None)
         if point_registry._calculated_points is not None:
             _ = point_registry._calculated_points.pop(point_tag, None)
-        if point_registry._setpoint_points is not None:
-            _ = point_registry._setpoint_points.pop(point_tag, None)
 
     def _binding_from_mutation(
         self,
@@ -1509,7 +1463,7 @@ class System(BaseModel):
         schema_version = payload["schema_version"]
         if schema_version != CHECKPOINT_SCHEMA_VERSION:
             raise ValueError(
-                "invalid system checkpoint payload: field 'schema_version' does not match expected version"
+                f"[{CHECKPOINT_VERSION_MISMATCH_ERROR_CODE}] invalid system checkpoint payload: field 'schema_version' does not match expected version"
             )
 
         package_metadata = _require_mapping(payload["package_metadata"], "package_metadata")
