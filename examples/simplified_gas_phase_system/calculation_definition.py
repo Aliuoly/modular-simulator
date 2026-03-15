@@ -3,7 +3,7 @@ from typing import Annotated, override
 import numpy as np
 
 from modular_simulation.components import (
-    CalculationBase,
+    AbstractCalculation,
     TagMetadata,
     TagType,
 )
@@ -12,7 +12,7 @@ from modular_simulation.utils.typing import StateValue
 SMALL = 1e-12
 
 
-class MoleRatioCalculation(CalculationBase):
+class MoleRatioCalculation(AbstractCalculation):
     """
     Calculates the mole ratio of comonomer and hydrogen to monomer.
     All are technically unitless unless I want to define
@@ -34,7 +34,7 @@ class MoleRatioCalculation(CalculationBase):
         return {self.rM2_tag: ratios[0]}
 
 
-class Monomer1PartialPressure(CalculationBase):
+class Monomer1PartialPressure(AbstractCalculation):
     """
     Calculates the mole ratio of comonomer and hydrogen to monomer. \n
     Output tags MUST be ordered as follows \n
