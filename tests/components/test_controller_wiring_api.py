@@ -651,6 +651,68 @@ def test_controller_activation_rejects_canonical_pump_suffix_alias_without_exact
     )
 
 
+def test_controller_operations_require_runtime_dispatcher() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network(runtime)
+    api = ControllerRuntimeWiringApi(network=network)
+
+    request_id = api.create_controller(
+        controller_id="controller_without_dispatcher",
+        controller_type="PIDController",
+        controller_module="modular_simulation.components.control_system.controllers",
+        controller_config={
+            "name": "controller_without_dispatcher",
+            "cv_range": (0.0, 1.0),
+            "Kp": 3.0,
+            "Ti": 5.0,
+            "Td": 0.0,
+        },
+    )
+    assert request_id == "rq_0001"
+    before_failure = network.save_runtime_snapshot()
+
+    with pytest.raises(
+        RuntimeError,
+        match=re.escape(
+            "reconfiguration transaction rollback: request 'rq_0001' mutation 1 failed: "
+            + "controller runtime mutation dispatcher is not configured for controller operations"
+        ),
+    ):
+        _ = network.step(macro_step_time_s=0.25)
+
+    assert network.save_runtime_snapshot() == before_failure
+
+
+def test_controller_operation_zero_resistance_guard_rejects_hydraulic_fields(
+    thermal_process_model: ProcessModel,
+) -> None:
+    system = _build_system(thermal_process_model)
+    runtime = _runtime_with_dispatchers(system)
+    network = _network(runtime)
+
+    _ = network.queue_reconfiguration(
+        {
+            "operation": "bind_controller_output",
+            "controller_id": "controller_x",
+            "actuator_tag": "actuator/heat/heater_power",
+            "radius_m": 0.1,
+        }
+    )
+    queued_snapshot = network.save_runtime_snapshot()
+
+    with pytest.raises(
+        RuntimeError,
+        match=re.escape(
+            "reconfiguration transaction rollback: request 'rq_0001' mutation 1 failed: "
+            + "operation 'bind_controller_output' must not include hydraulic/topology fields ['radius_m']; "
+            + "controller operations are zero-resistance instrumentation updates"
+        ),
+    ):
+        _ = network.step(macro_step_time_s=0.25)
+
+    assert network.save_runtime_snapshot() == queued_snapshot
+
+
 def _queue_pid_activation(
     api: ControllerRuntimeWiringApi,
     *,
