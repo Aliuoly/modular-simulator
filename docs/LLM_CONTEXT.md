@@ -190,19 +190,6 @@ Use the connected-plant path as the active default for connection-layer work.
   - Bare publication tags are normalized to `<descriptor_id>/<published_tag>`.
   - Cross-subsystem collisions on the same published tag are fail-fast and identify both subsystem owners.
 
-### Break-and-replace API mapping
-
-Legacy process-interface symbols are intentionally removed in `modular_simulation.connection.process_interface`.
-
-- `ProcessInterface` -> `ConnectionNetwork.compile().process_bindings['<process_id>']` + `ProcessBinding.bind_inlets(...)` / `ProcessBinding.bind_outlets(...)`
-- `ProcessModelAdapter` -> `ConnectionNetwork.compile().process_bindings['<process_id>']`
-- `ProcessBalanceTerm` -> `ProcessBinding.get_outlet('<port_name>')` fields (`normalized_inlet_flow`, `inlet_flow`, `outlet_flow`)
-
-Guardrail expectation:
-
-- Removed symbols raise `AttributeError` with actionable migration guidance.
-- Legacy flow should not be documented or presented as recommended fallback behavior.
-
 ### Example command for migrated path
 
 - Run `uv run python examples/connection_layer/two_tank_reaction_comparison.py --no-show`.

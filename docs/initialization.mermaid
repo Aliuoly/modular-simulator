@@ -2,27 +2,27 @@ sequenceDiagram
     participant User
     participant System
     participant ProcessModel
-    participant SensorBase
-    participant CalculationBase
+    participant AbstractSensor
+    participant AbstractCalculation
     participant ControlElement
-    participant TagStore
+    participant PointRegistry
 
-    Note over System, TagStore: Initialization Phase (add_component)
+    Note over System, PointRegistry: Initialization Phase (add_component)
     
     User->>System: add_component(Sensor)
     activate System
-    System->>TagStore: add(Sensor.tag_info)
-    System->>SensorBase: initialize(System)
+    System->>PointRegistry: add(Sensor.measurement_point)
+    System->>AbstractSensor: initialize(System)
     deactivate System
 
     User->>System: add_component(Calculation)
     activate System
-    System->>CalculationBase: initialize(System)
-    System->>TagStore: add(Calculation.output_tag_info)
+    System->>AbstractCalculation: initialize(System)
+    System->>PointRegistry: add(Calculation.output_point)
     deactivate System
 
     User->>System: add_component(ControlElement)
     activate System
     System->>ControlElement: initialize(System)
-    System->>TagStore: add(ControlElement.controller_sp_tag_info)
+    System->>PointRegistry: add(ControlElement.controller_reference_point_dict)
     deactivate System

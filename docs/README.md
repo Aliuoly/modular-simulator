@@ -136,18 +136,6 @@ The recommended authoring flow is:
 - Cross-subsystem ownership collision on the same `published_tag` fails fast.
 - Collision errors are explicit, they identify the conflicting subsystems and stop registration/evaluation.
 
-## Break-and-Replace Migration Map
-
-Legacy `modular_simulation.connection.process_interface` symbols are removed, they are not a fallback path.
-
-| Removed API | Replacement |
-| --- | --- |
-| `ProcessInterface` | Use `ProcessBinding` from `ConnectionNetwork.compile().process_bindings['<process_id>']`, bind ports with `bind_inlets` and `bind_outlets`. |
-| `ProcessModelAdapter` | Use `ConnectionNetwork.compile().process_bindings['<process_id>']` directly for explicit inlet and outlet wiring. |
-| `ProcessBalanceTerm` | Use `ProcessBinding.get_outlet('<port_name>')`, read `normalized_inlet_flow`, `inlet_flow`, and `outlet_flow` from the returned mapping. |
-
-Guardrail behavior is strict by design: attempts to access removed symbols raise actionable migration errors that point to `ConnectionNetwork.compile().process_bindings['<process_id>']` and the `ProcessBinding` API (`bind_inlets`, `bind_outlets`, `get_outlet`, `validate`).
-
 ## Architecture & Interactions
 
 The framework orchestrates interactions between the **System** (simulation engine), **Process Model** (physics/chemistry), **Sensors**, **Calculations**, and **Controllers**.
@@ -178,7 +166,7 @@ We have detailed diagrams illustrating how these components interact:
     *   `Calculations`: Derive calculated values from Sensor data or other calculation results. Define inputs and outputs using **`TagMetadata`**.
 
     ```python
-    class MyCalculation(CalculationBase):
+    class MyCalculation(AbstractCalculation):
         input_tag: Annotated[str, TagMetadata(TagType.INPUT, unit="m")]
         output_tag: Annotated[str, TagMetadata(TagType.OUTPUT, unit="m")]
     ```
