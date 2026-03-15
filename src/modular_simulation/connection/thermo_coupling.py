@@ -209,6 +209,11 @@ class ThermoBoundaryPropagationStep:
                 edge.target.port_name,
             )
 
+        self._record_all_process_outlet_snapshots(
+            network=network,
+            macro_step_time_s=macro_step_time_s,
+        )
+
         for target_key in sorted(incoming_conditions_by_target):
             incoming_conditions = incoming_conditions_by_target[target_key]
             if not incoming_conditions:
@@ -258,6 +263,52 @@ class ThermoBoundaryPropagationStep:
 
         return conditions
 
+    def _record_all_process_outlet_snapshots(
+        self,
+        *,
+        network: ConnectionNetwork,
+        macro_step_time_s: float,
+    ) -> None:
+        runtime_port_snapshot_store = self._config.runtime_port_snapshot_store
+        if runtime_port_snapshot_store is None:
+            return
+
+        compiled = network.compiled
+        if compiled is None:
+            return
+
+        connected_source_ports = {
+            (edge.source.node_id, edge.source.port_name) for edge in compiled.topology.edges
+        }
+
+        for process_node in sorted(
+            compiled.topology.process_nodes, key=lambda item: item.process_id
+        ):
+            source_node_id = process_node.process_id
+            source_binding = compiled.process_bindings.get(source_node_id)
+            for source_port_name in process_node.outlet_ports:
+                if (source_node_id, source_port_name) in connected_source_ports:
+                    continue
+                source_condition = self._resolve_source_outlet_condition(
+                    source_node_id=source_node_id,
+                    source_port_name=source_port_name,
+                    source_binding=source_binding,
+                )
+                if source_condition is None:
+                    continue
+
+                state = source_condition.state
+                runtime_port_snapshot_store.record_outlet(
+                    node_id=source_node_id,
+                    port_name=source_port_name,
+                    condition=PortCondition(
+                        state=state,
+                        species_ids=state.species_ids,
+                        through_molar_flow_rate=float(source_condition.through_molar_flow_rate),
+                        macro_step_time_s=macro_step_time_s,
+                    ),
+                )
+
     def _build_stream_port_condition(
         self,
         *,
@@ -293,7 +344,14 @@ class ThermoBoundaryPropagationStep:
             )
 
         flow_rate = self._resolve_hydraulic_flow(edge_id=edge_id, hydraulic_result=hydraulic_result)
+        if flow_rate is None and source_binding is not None:
+            return None
         if flow_rate is None:
+            flow_rate = float(source_condition.through_molar_flow_rate)
+        elif (
+            abs(float(flow_rate)) <= 1.0e-12
+            and abs(float(source_condition.through_molar_flow_rate)) > 1.0e-12
+        ):
             flow_rate = float(source_condition.through_molar_flow_rate)
 
         resolved_condition = PortCondition(
@@ -333,9 +391,11 @@ class ThermoBoundaryPropagationStep:
         candidates.append(source_binding)
 
         seen_candidate_ids: set[int] = set()
+        saw_process_source = False
         for candidate in candidates:
             if candidate is None:
                 continue
+            saw_process_source = True
             candidate_id = id(candidate)
             if candidate_id in seen_candidate_ids:
                 continue
@@ -343,6 +403,13 @@ class ThermoBoundaryPropagationStep:
             resolved_condition = resolve_process_outlet_condition(candidate, source_port_name)
             if resolved_condition is not None:
                 return resolved_condition
+
+        if saw_process_source:
+            raise BindingError(
+                "Missing canonical outlet condition for process source "
+                + f"'{source_node_id}.{source_port_name}'; source must implement "
+                + "resolve_outlet_condition(port_name)."
+            )
         return None
 
     def _resolve_stream_port_io(

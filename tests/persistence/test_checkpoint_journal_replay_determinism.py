@@ -1,9 +1,14 @@
+# pyright: reportMissingImports=false
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
 import pytest
 
+from modular_simulation.connection.error_catalog import (
+    COMPATIBILITY_FAILURE_CODE,
+    DiagnosticValueError,
+)
 from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
 from modular_simulation.connection.hydraulic_solver import (
     HydraulicSystemDefinition,
@@ -12,11 +17,14 @@ from modular_simulation.connection.hydraulic_solver import (
 from modular_simulation.connection.network import ConnectionNetwork
 from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
 from modular_simulation.connection.runtime_persistence import (
+    RUNTIME_SNAPSHOT_SCHEMA_VERSION,
     restore_runtime_snapshot_contract,
     runtime_replay_state_hash,
     save_runtime_snapshot_contract,
+    validate_runtime_snapshot_contract,
     verify_runtime_replay_hashes,
 )
+from modular_simulation.framework.system import checkpoint_payload_checksum
 
 
 def _linear_equation(
@@ -253,3 +261,28 @@ def test_checkpoint_resume_replay_hashes_detect_perturbed_queue_order() -> None:
             baseline_hashes=baseline_hashes,
             replay_hashes=perturbed_hashes,
         )
+
+
+def test_runtime_snapshot_contract_schema_mismatch_is_rejected() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network(runtime)
+    process_runtime_state: dict[str, object] = {
+        "reactor": {"temperature": 345.0, "conversion": 0.34}
+    }
+
+    snapshot = save_runtime_snapshot_contract(
+        runtime=runtime,
+        network=network,
+        process_runtime_state=process_runtime_state,
+    )
+    legacy_snapshot = dict(snapshot)
+    legacy_snapshot["schema_version"] = RUNTIME_SNAPSHOT_SCHEMA_VERSION - 1
+    payload_without_checksum = dict(legacy_snapshot)
+    payload_without_checksum.pop("integrity_checksum", None)
+    legacy_snapshot["integrity_checksum"] = checkpoint_payload_checksum(payload_without_checksum)
+
+    with pytest.raises(DiagnosticValueError) as caught:
+        validate_runtime_snapshot_contract(legacy_snapshot)
+    assert caught.value.payload["code"] == COMPATIBILITY_FAILURE_CODE
+    message = str(caught.value.payload.get("message", ""))
+    assert "schema_version" in message

@@ -34,7 +34,7 @@ from modular_simulation.framework.system import (
 )
 
 RUNTIME_SNAPSHOT_SCHEMA_MARKER = "connection.runtime.snapshot"
-RUNTIME_SNAPSHOT_SCHEMA_VERSION = 2
+RUNTIME_SNAPSHOT_SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True)

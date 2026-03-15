@@ -7,8 +7,10 @@ from typing import cast
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 
 from modular_simulation.connection.connection_layer import TransportAndMixingUpdate
+from modular_simulation.connection.process_binding import BindingError
 from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
 from modular_simulation.connection.hydraulic_solver import (
     HydraulicSolveResult,
@@ -160,7 +162,7 @@ def _transport_result() -> LagTransportUpdateResult:
     )
 
 
-def test_outlet_resolution_prefers_port_condition_resolver_when_available() -> None:
+def test_resolver_preferred_outlet_resolution_uses_port_condition_resolver() -> None:
     resolved_condition = _port_condition(pressure=180000.0, temperature=345.0, flow_rate=4.5)
     unit = _ResolverPreferredUnit(resolved_condition)
     resolver: ProcessOutletConditionResolver = unit
@@ -171,14 +173,14 @@ def test_outlet_resolution_prefers_port_condition_resolver_when_available() -> N
     assert unit.legacy_get_calls == []
 
 
-def test_outlet_resolution_falls_back_to_get_outlet_stream_when_resolver_absent() -> None:
+def test_legacy_fallback_outlet_resolution_without_resolver_returns_none() -> None:
     legacy_condition = _port_condition(pressure=155000.0, temperature=330.0, flow_rate=2.25)
     unit = _LegacyFallbackUnit(StreamData.from_port_condition(legacy_condition))
 
     resolved_condition = resolve_process_outlet_condition(unit, "product")
 
-    assert resolved_condition == legacy_condition
-    assert unit.legacy_get_calls == ["product"]
+    assert resolved_condition is None
+    assert unit.legacy_get_calls == []
 
 
 def test_runtime_step_thermo_coupling_wires_runtime_owned_snapshot_store() -> None:
@@ -205,7 +207,7 @@ def test_runtime_step_thermo_coupling_wires_runtime_owned_snapshot_store() -> No
         )
 
     runtime = ConnectionRuntimeOrchestrator(
-        runtime_context=_RuntimeContextStub(),
+        runtime_context=cast("SimulationRuntimeContext", _RuntimeContextStub()),
         hydraulic_solve_step=hydraulic_solve_step,
         transport_and_mixing_step=transport_and_mixing_step,
     )
@@ -270,7 +272,7 @@ def test_runtime_step_thermo_coupling_wires_runtime_owned_snapshot_store() -> No
     assert latest_outlet_stream.molar_flow_rate == 1.75
 
 
-def test_flowsheet_prefers_runtime_outlet_snapshot_before_legacy_stream_getter() -> None:
+def test_runtime_snapshot_preferred_flowsheet_uses_runtime_outlet_snapshot() -> None:
     context = SimulationRuntimeContext.create(species_names=["water", "ethanol"])
     flowsheet = Flowsheet(context=context, dt=0.2)
 
@@ -280,8 +282,17 @@ def test_flowsheet_prefers_runtime_outlet_snapshot_before_legacy_stream_getter()
     flowsheet.add_feed_from_values("feed", T=320.0, P=140000.0, z=(0.5, 0.5), flow=2.0)
     flowsheet.chain("feed", "heater", "cooler")
 
-    plant = flowsheet.compile()
-    _ = plant.step(macro_step_time_s=0.2)
+    def _resolve_outlet_condition(self: HeaterCooler, port_name: str) -> PortCondition:
+        return self.get_outlet_stream(port_name).to_port_condition()
+
+    with patch.object(
+        HeaterCooler,
+        "resolve_outlet_condition",
+        new=_resolve_outlet_condition,
+        create=True,
+    ):
+        plant = flowsheet.compile()
+        _ = plant.step(macro_step_time_s=0.2)
 
     legacy_get_calls: list[str] = []
     original_get_outlet_stream = HeaterCooler.get_outlet_stream
@@ -295,19 +306,9 @@ def test_flowsheet_prefers_runtime_outlet_snapshot_before_legacy_stream_getter()
         return original_get_outlet_stream(self, port_name)
 
     heater_connection = flowsheet._connections[1]
-    state_trace_values = {
-        "heater": {state_name: [] for state_name in preferred_heater.state_list},
-        "cooler": {
-            state_name: []
-            for state_name in cast("HeaterCooler", flowsheet.get_unit("cooler")).state_list
-        },
-    }
 
     with patch.object(HeaterCooler, "get_outlet_stream", new=_tracked_get_outlet_stream):
         heater_to_cooler = flowsheet._stream_snapshot_for_connection(heater_connection)
-        heater_result = flowsheet._build_unit_results(state_trace_values=state_trace_values)[
-            "heater"
-        ]
 
     assert legacy_get_calls == []
     latest_outlet = plant.runtime_orchestrator.get_latest_outlet_condition(
@@ -316,40 +317,115 @@ def test_flowsheet_prefers_runtime_outlet_snapshot_before_legacy_stream_getter()
     )
     assert latest_outlet is not None
     assert heater_to_cooler == StreamData.from_port_condition(latest_outlet)
-    assert heater_result.outlet_streams["outlet"] == StreamData.from_port_condition(latest_outlet)
 
 
-def test_flowsheet_falls_back_to_legacy_stream_getter_without_runtime_snapshot() -> None:
+def test_legacy_fallback_thermo_coupling_process_source_without_resolver_raises_binding_error() -> (
+    None
+):
+    def hydraulic_solve_step(
+        *,
+        network: ConnectionNetwork,
+        macro_step_time_s: float,
+    ) -> HydraulicSolveResult:
+        del network, macro_step_time_s
+        return _hydraulic_result(edge_flow=1.75)
+
+    def transport_and_mixing_step(
+        *,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+        macro_step_time_s: float,
+    ) -> TransportAndMixingUpdate:
+        del network, hydraulic_result, macro_step_time_s
+        return TransportAndMixingUpdate(
+            transport_results={
+                "edge_0001": _transport_result(),
+                "edge_0002": _transport_result(),
+            }
+        )
+
+    runtime = ConnectionRuntimeOrchestrator(
+        runtime_context=cast("SimulationRuntimeContext", _RuntimeContextStub()),
+        hydraulic_solve_step=hydraulic_solve_step,
+        transport_and_mixing_step=transport_and_mixing_step,
+    )
+
+    network = ConnectionNetwork(
+        compile_lifecycle=HydraulicCompileLifecycle(),
+        hydraulic_system_builder=lambda topology: _valid_system(),
+        runtime_orchestrator=runtime,
+    )
+    network.add_process("reactor", inlet_ports=("feed",), outlet_ports=("product",))
+    network.add_boundary_source("feed_boundary")
+    network.add_boundary_sink("product_boundary")
+    network.connect("feed_boundary", "reactor.feed")
+    network.connect("reactor.product", "product_boundary")
+    compiled = network.compile()
+
+    reactor_bridge = _LegacyFallbackUnit(
+        StreamData.from_port_condition(
+            _port_condition(pressure=111000.0, temperature=301.0, flow_rate=0.33)
+        )
+    )
+    runtime.bind_stream_port_io(node_id="reactor", stream_port_io=reactor_bridge)
+    runtime.set_feed_stream(
+        boundary_id="feed_boundary",
+        stream=StreamData.from_port_condition(
+            _port_condition(pressure=130000.0, temperature=320.0, flow_rate=3.2)
+        ),
+    )
+
+    network._compiled = replace(
+        compiled,
+        process_bindings={
+            **compiled.process_bindings,
+            "reactor": reactor_bridge,
+        },
+    )
+
+    with pytest.raises(BindingError, match="Missing canonical outlet condition"):
+        _ = network.step(macro_step_time_s=1.0)
+
+    assert reactor_bridge.legacy_get_calls == []
+
+
+def test_legacy_fallback_flowsheet_stream_snapshot_without_runtime_snapshot_raises_runtime_error() -> (
+    None
+):
     context = SimulationRuntimeContext.create(species_names=["water", "ethanol"])
     flowsheet = Flowsheet(context=context, dt=0.2)
 
-    fallback_heater = HeaterCooler(n_species=2, mode="duty", external_heat_duty=0.0)
-    flowsheet.add_unit("heater", fallback_heater)
+    flowsheet.add_unit("heater", HeaterCooler(n_species=2, mode="duty", external_heat_duty=0.0))
     flowsheet.add_unit("cooler", HeaterCooler(n_species=2, mode="duty", external_heat_duty=0.0))
     flowsheet.add_feed_from_values("feed", T=320.0, P=140000.0, z=(0.5, 0.5), flow=2.0)
     flowsheet.chain("feed", "heater", "cooler")
     _ = flowsheet.compile()
 
-    legacy_get_calls: list[str] = []
-    original_get_outlet_stream = HeaterCooler.get_outlet_stream
+    heater_connection = flowsheet._connections[1]
+    with pytest.raises(RuntimeError, match="missing runtime-owned outlet snapshot"):
+        _ = flowsheet._stream_snapshot_for_connection(heater_connection)
 
-    def _tracked_get_outlet_stream(self: HeaterCooler, port_name: str) -> StreamData:
-        if self is fallback_heater:
-            legacy_get_calls.append(port_name)
-        return original_get_outlet_stream(self, port_name)
 
-    with patch.object(HeaterCooler, "get_outlet_stream", new=_tracked_get_outlet_stream):
-        heater_connection = flowsheet._connections[1]
-        stream = flowsheet._stream_snapshot_for_connection(heater_connection)
-        state_trace_values = {
-            "heater": {state_name: [] for state_name in fallback_heater.state_list},
-            "cooler": {
-                state_name: []
-                for state_name in cast("HeaterCooler", flowsheet.get_unit("cooler")).state_list
-            },
-        }
-        results = flowsheet._build_unit_results(state_trace_values=state_trace_values)
+def test_legacy_fallback_flowsheet_unit_results_without_runtime_snapshot_raises_runtime_error() -> (
+    None
+):
+    context = SimulationRuntimeContext.create(species_names=["water", "ethanol"])
+    flowsheet = Flowsheet(context=context, dt=0.2)
 
-    assert isinstance(stream, StreamData)
-    assert results["heater"].outlet_streams["outlet"] == stream
-    assert legacy_get_calls == ["outlet", "outlet"]
+    heater = HeaterCooler(n_species=2, mode="duty", external_heat_duty=0.0)
+    flowsheet.add_unit("heater", heater)
+    flowsheet.add_unit("cooler", HeaterCooler(n_species=2, mode="duty", external_heat_duty=0.0))
+    flowsheet.add_feed_from_values("feed", T=320.0, P=140000.0, z=(0.5, 0.5), flow=2.0)
+    flowsheet.chain("feed", "heater", "cooler")
+    _ = flowsheet.compile()
+
+    state_trace_values = {
+        "heater": {state_name: [] for state_name in heater.state_list},
+        "cooler": {
+            state_name: []
+            for state_name in cast("HeaterCooler", flowsheet.get_unit("cooler")).state_list
+        },
+    }
+
+    with pytest.raises(RuntimeError, match="missing runtime-owned outlet snapshot"):
+        _ = flowsheet._build_unit_results(state_trace_values=state_trace_values)
