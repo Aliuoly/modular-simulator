@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class FirstOrderTrajectoryController(AbstractController):
-    """ControllerBase that targets user-specified first-order closed-loop dynamics.
+    """AbstractController that targets user-specified first-order closed-loop dynamics.
 
     The controller approximates the process as a first-order lag and computes
     the manipulated variable that will drive the measured CV toward the

@@ -20,16 +20,11 @@ logger = logging.getLogger(__name__)
 def convert_calculation_to_str(calculation_name: type[AbstractCalculation] | str) -> str:
     if isinstance(calculation_name, str):
         return calculation_name
-    elif issubclass(calculation_name, AbstractCalculation):
-        return calculation_name.__name__
-    else:
-        raise ValueError(
-            "calculation name to a IMC controller must be either str or type[CalculationBase]"
-        )
+    return calculation_name.__name__
 
 
 class CalculationModelPath(BaseModel):
-    """Descriptor pointing an IMC to a ``CalculationBase`` method to use as its model.
+    """Descriptor pointing an IMC to an ``AbstractCalculation`` method to use as its model.
 
     ``calculation_name`` can be the class/type itself or the custom name used
     when the calculation was registered with the system.  ``method_name`` is
@@ -44,7 +39,7 @@ class InternalModelController(AbstractController):
     """Internal Model Control (IMC) implementation for SISO loops.
 
     ``model`` may be a callable operating directly in system units or a
-    :class:`CalculationBase` method referenced via :class:`CalculationModelPath`.
+    :class:`AbstractCalculation` method referenced via :class:`CalculationModelPath`.
     During initialization the controller resolves the model, builds unit
     converters between the calculation space and the system's manipulated
     variable, and caches MV bounds in those units.  Each update solves a

@@ -1,15 +1,14 @@
 from __future__ import annotations  # without this cant type hint the cascade controller properly
 
-# pyright: reportImportCycles=false
+# pyright: reportImportCycles=false, reportMissingImports=false
 from abc import ABC, abstractmethod
 import math
-import warnings
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast, override
 from astropy.units import UnitBase
 import numpy as np
 from .controller_mode import ControllerMode
-from pydantic import AliasChoices, ConfigDict, Field, PrivateAttr, SerializeAsAny, model_validator
+from pydantic import ConfigDict, Field, PrivateAttr, SerializeAsAny
 from modular_simulation.components.point import DataValue, Point
 from .trajectory import Trajectory
 from modular_simulation.validation.exceptions import ControllerConfigurationError
@@ -48,7 +47,6 @@ class AbstractController(AbstractComponent, ABC):
     )
     reference_trajectory: Trajectory | None = Field(
         default=None,
-        validation_alias=AliasChoices("reference_trajectory", "sp_trajectory"),
         description="A Trajectory instance defining the reference (REF) over time.",
     )
     cascade_controller: SerializeAsAny[AbstractController | None] = Field(
@@ -82,21 +80,6 @@ class AbstractController(AbstractComponent, ABC):
     _initialized: bool = PrivateAttr(default=False)
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")  # pyright: ignore[reportUnannotatedClassAttribute]
-
-    @model_validator(mode="before")
-    @classmethod
-    def _warn_on_deprecated_reference_aliases(cls, data: Any) -> Any:  # pyright: ignore[reportExplicitAny]
-        if (
-            isinstance(data, Mapping)
-            and "sp_trajectory" in data
-            and "reference_trajectory" not in data
-        ):
-            warnings.warn(
-                "sp_trajectory is deprecated; use reference_trajectory",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-        return data
 
     # -------- AbstractComponent Interface --------
 
@@ -182,14 +165,12 @@ class AbstractController(AbstractComponent, ABC):
     def _load_runtime_state(self, state: dict[str, Any]) -> None:  # pyright: ignore[reportExplicitAny]
         """Subclass should overload this method and call super()._load_runtime_state() before returning."""
         self.mode = ControllerMode[state["mode"]]
-        reference_state = state.get("reference")
-        if reference_state is None and "sp" in state:
-            warnings.warn(
-                "controller runtime state field 'sp' is deprecated; use 'reference'",
-                DeprecationWarning,
-                stacklevel=2,
+        if "sp" in state:
+            raise ValueError(
+                "controller runtime state field 'sp' is not supported; use 'reference'"
             )
-            reference_state = state["sp"]
+
+        reference_state = state.get("reference")
 
         pending_runtime_state: dict[str, DataValue] = {}
         if reference_state is not None:
@@ -243,8 +224,11 @@ class AbstractController(AbstractComponent, ABC):
             type="reference",
             description=f"reference signal for {self.cv_tag}",
         )
+        reference_trajectory = self.reference_trajectory
+        if reference_trajectory is None:
+            raise RuntimeError("Controller reference trajectory was not initialized during install")
         self._reference_point.data = DataValue(
-            time=system.time, value=self.reference_trajectory(system.time), ok=True
+            time=system.time, value=reference_trajectory(system.time), ok=True
         )
 
         self._system = system
@@ -438,15 +422,6 @@ class AbstractController(AbstractComponent, ABC):
         if self.cascade_controller is not None:
             reference_point_dict.update(self.cascade_controller.reference_point_dict)
         return reference_point_dict
-
-    @property
-    def sp_point_dict(self) -> dict[str, Point]:
-        warnings.warn(
-            "sp_point_dict is deprecated; use reference_point_dict",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.reference_point_dict
 
     @property
     def t(self) -> Seconds:

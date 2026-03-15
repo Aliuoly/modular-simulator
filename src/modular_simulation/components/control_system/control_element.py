@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportImportCycles=false
-import warnings
+# pyright: reportImportCycles=false, reportMissingImports=false
 from typing import TYPE_CHECKING, Any, override
 import numpy as np
 from astropy.units import Unit
@@ -58,7 +57,7 @@ class ControlElement(AbstractComponent):
 
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
-        extra="allow",
+        extra="forbid",
         validate_assignment=False,
     )
 
@@ -210,6 +209,13 @@ class ControlElement(AbstractComponent):
 
     @override
     def _load_runtime_state(self, state: dict[str, Any]) -> None:
+        allowed_keys = {"mode", "mv"}
+        extra_keys = sorted(set(state) - allowed_keys)
+        if extra_keys:
+            raise ValueError(
+                "control element runtime state has unsupported field(s): "
+                + ", ".join(repr(key) for key in extra_keys)
+            )
         if "mode" in state:
             self.mode = ControllerMode[state["mode"]]
         if "mv" in state:
@@ -272,15 +278,6 @@ class ControlElement(AbstractComponent):
         if self.controller is None:
             return {}
         return self.controller.reference_point_dict
-
-    @property
-    def controller_sp_point_dict(self) -> dict[str, Point]:
-        warnings.warn(
-            "controller_sp_point_dict is deprecated; use controller_reference_point_dict",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.controller_reference_point_dict
 
 
 ControlElement.model_rebuild()
