@@ -75,19 +75,6 @@ class MaterialState(BaseModel):
             entropy_molar=entropy_molar,
         )
 
-    @classmethod
-    def from_legacy(
-        cls,
-        pressure: float,
-        temperature: float,
-        mole_fractions: tuple[float, ...],
-    ) -> "MaterialState":
-        return cls(
-            pressure=pressure,
-            temperature=temperature,
-            mole_fractions=mole_fractions,
-        )
-
     @override
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, MaterialState):

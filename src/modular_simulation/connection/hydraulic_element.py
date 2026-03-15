@@ -152,11 +152,11 @@ class PumpHydraulicElement:
             raise RuntimeError("dp_curve callback must be set")
         m_dot = unknowns["flow_rate"]
         pump_speed = parameters["pump_speed"]
-        pressure_rise = dp_curve(m_dot, pump_speed)
+        pump_head = dp_curve(m_dot, pump_speed)
 
         return {
             "head_balance": (
-                inputs["upstream_pressure"] - inputs["downstream_pressure"] + pressure_rise
+                inputs["upstream_pressure"] - inputs["downstream_pressure"] + pump_head
             )
         }
 
