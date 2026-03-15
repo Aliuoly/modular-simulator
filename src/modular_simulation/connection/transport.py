@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from math import exp, isfinite
-from typing import Final, Protocol
+from typing import Final
 
 COMPOSITION_ABS_TOL: Final[float] = 1.0e-9
 
@@ -23,6 +23,8 @@ def _validate_composition(*, composition: tuple[float, ...], name: str) -> tuple
 
 @dataclass(frozen=True)
 class LagTransportState:
+    """Transport state carried along a connection edge."""
+
     composition: tuple[float, ...]
     temperature: float
 
@@ -34,26 +36,13 @@ class LagTransportState:
 
 @dataclass(frozen=True)
 class LagTransportUpdateResult:
+    """Result of advancing a transport state by one lag update."""
+
     state: LagTransportState
     update_fraction: float
     flow_scale: float
     flow_sign_changed: bool
     held_for_near_zero_flow: bool
-
-
-@dataclass(frozen=True)
-class AdvancedConservativeTransportScaffoldState:
-    model: str = "advanced_conservative"
-    implemented: bool = False
-    message: str = (
-        "Advanced conservative transport is scaffolded only and is not implemented in T3.5."
-    )
-
-
-@dataclass(frozen=True)
-class TransportModelSelection:
-    model: str
-    parameters: Mapping[str, float] | None = None
 
 
 def _is_non_zero_flow(*, flow: float, epsilon: float) -> bool:
@@ -84,10 +73,22 @@ def _compute_flow_sign_changed(
     )
 
 
-class TransportModel(Protocol):
+class TransportModel(ABC):
+    """Framework-owned nominal base for built-in transport model implementations."""
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls.__module__ != __name__:
+            raise TypeError(
+                "TransportModel is framework-owned and may only be implemented "
+                "inside modular_simulation.connection.transport"
+            )
+
     @property
+    @abstractmethod
     def model(self) -> str: ...
 
+    @abstractmethod
     def update(
         self,
         *,
@@ -100,14 +101,7 @@ class TransportModel(Protocol):
 
 
 @dataclass(frozen=True)
-class MVPLagTransportModel:
-    """Preferred owner-led API for MVP lag transport updates.
-
-    Normal callers should use ``MVPLagTransportModel.update(...)``. The
-    module-level ``update_lag_transport_state(...)`` function is kept public only
-    as a sanctioned low-level kernel for deliberate advanced use.
-    """
-
+class MVPLagTransportModel(TransportModel):
     lag_time_constant_s: float
     near_zero_flow_epsilon: float = 1.0e-12
     flow_smoothing_flow_rate: float = 1.0e-9
@@ -139,7 +133,7 @@ class MVPLagTransportModel:
         through_molar_flow_rate: float,
         previous_through_molar_flow_rate: float | None = None,
     ) -> LagTransportUpdateResult:
-        return update_lag_transport_state(
+        return _update_lag_transport_state(
             current_state=current_state,
             advected_state=advected_state,
             dt=dt,
@@ -151,60 +145,11 @@ class MVPLagTransportModel:
         )
 
 
-@dataclass(frozen=True)
-class AdvancedConservativeTransportModelScaffold:
-    scaffold_state: AdvancedConservativeTransportScaffoldState = (
-        AdvancedConservativeTransportScaffoldState()
-    )
-
-    @property
-    def model(self) -> str:
-        return "advanced_conservative"
-
-    def update(
-        self,
-        *,
-        current_state: LagTransportState,
-        advected_state: LagTransportState,
-        dt: float,
-        through_molar_flow_rate: float,
-        previous_through_molar_flow_rate: float | None = None,
-    ) -> LagTransportUpdateResult:
-        del current_state, advected_state, dt
-        _ = _compute_flow_sign_changed(
-            through_molar_flow_rate=through_molar_flow_rate,
-            previous_through_molar_flow_rate=previous_through_molar_flow_rate,
-            near_zero_flow_epsilon=1.0e-12,
-        )
-        raise NotImplementedError(self.scaffold_state.message)
+# TODO: Add future built-in transport model implementations here as advanced
+# transport families may be added later beyond the current MVP lag model.
 
 
-def select_transport_model(config: TransportModelSelection) -> TransportModel:
-    """Sanctioned public factory for transport model owners.
-
-    Use this selection boundary when configuration determines the transport model,
-    then drive transport behavior through the returned owner object's
-    ``.update(...)`` method.
-    """
-
-    parameters = dict(config.parameters or {})
-
-    if config.model == "mvp_lag":
-        return MVPLagTransportModel(**parameters)
-    if config.model == "advanced_conservative":
-        if parameters:
-            raise ValueError(
-                "advanced_conservative scaffold does not accept parameters yet. "
-                + "Use model='advanced_conservative' with no parameters."
-            )
-        return AdvancedConservativeTransportModelScaffold()
-    supported_models = "mvp_lag, advanced_conservative"
-    raise ValueError(
-        f"Unsupported transport model '{config.model}'. Supported models: {supported_models}."
-    )
-
-
-def update_lag_transport_state(
+def _update_lag_transport_state(
     *,
     current_state: LagTransportState,
     advected_state: LagTransportState,
@@ -215,13 +160,6 @@ def update_lag_transport_state(
     near_zero_flow_epsilon: float = 1.0e-12,
     flow_smoothing_flow_rate: float = 1.0e-9,
 ) -> LagTransportUpdateResult:
-    """Sanctioned public low-level lag transport kernel.
-
-    Prefer ``MVPLagTransportModel.update(...)`` for standard discoverable usage.
-    Call this function directly only when intentionally composing the deterministic
-    lag kernel outside the owner-led API.
-    """
-
     if dt <= 0.0:
         raise ValueError("dt must be positive")
     if not isfinite(dt):
@@ -295,13 +233,8 @@ def update_lag_transport_state(
 
 
 __all__ = [
-    "AdvancedConservativeTransportModelScaffold",
-    "AdvancedConservativeTransportScaffoldState",
     "LagTransportState",
     "LagTransportUpdateResult",
     "MVPLagTransportModel",
     "TransportModel",
-    "TransportModelSelection",
-    "select_transport_model",
-    "update_lag_transport_state",
 ]

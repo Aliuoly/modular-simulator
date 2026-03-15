@@ -7,7 +7,7 @@ Contributor guidance:
 - Read `docs/discoverability_ownership_policy.md` first for the rule and sanctioned exceptions.
 - Use this audit to confirm whether a public surface stays KEEP or must MOVE to an owner.
 - Prefer owner-led usage in docs and examples, for example `compiled.hydraulic.solve()` and `TransportRuntime.step(...)`.
-- Keep sanctioned exceptions narrow, for example `create_property_package(...)`, `select_transport_model(...)`, and `update_lag_transport_state(...)`.
+- Keep sanctioned exceptions narrow, for example `create_property_package(...)` and `thermodynamics.hydraulic_adapters`.
 
 Audit method: grep module-level `def <public_name>(...)` candidates across `src/modular_simulation`, then classify only real public free-function surfaces (exported names or intentionally non-underscored module entrypoints). Negative-assertion strings, underscored helpers, class methods, and dunder namespace hooks such as module `__getattr__` were excluded.
 
@@ -33,8 +33,6 @@ Audit method: grep module-level `def <public_name>(...)` candidates across `src/
 | --- | --- | --- | --- |
 | `cli.spec_workflow` | `compile_spec_delta` | KEEP | Stateless diff compiler; used as the intentional read-only planning surface while `ModularCli.spec_apply(...)` owns the mutating workflow. |
 | `thermodynamics.property_package` | `create_property_package` | KEEP | Explicitly sanctioned factory boundary for thermodynamic package construction. |
-| `connection.transport` | `select_transport_model` | KEEP | Explicitly sanctioned model-selection factory boundary. |
-| `connection.transport` | `update_lag_transport_state` | KEEP | Explicitly sanctioned low-level deterministic transport kernel beneath owner-led model/runtime APIs. |
 | `thermodynamics.hydraulic_adapters` | `validate_outlet_port`, `pipe_hydraulic_element_for_outlet`, `default_pipe_hydraulic_parameters`, `default_pipe_resistance_for_unit`, `default_valve_hydraulic_parameters`, `default_pump_hydraulic_parameters` | KEEP | Explicitly sanctioned adapter namespace; small adapter/factory helpers rather than ownerless workflows. |
 | `connection.junction_runtime` | `mix_junction_runtime_states` | KEEP | Stateless runtime mixing kernel over supplied topology/state mappings; no stronger owner is required for discoverability. |
 | `connection.pressure_inference` | `build_topology_endpoint_context`, `describe_endpoint`, `resolve_edge_pressure_deltas_pa`, `hydrostatic_pressure_from_submerged_head_pa` | KEEP | Stateless topology/pressure inference helpers; cohesive inference namespace, not lifecycle orchestration. |

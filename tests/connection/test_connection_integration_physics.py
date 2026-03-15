@@ -1,40 +1,32 @@
 from __future__ import annotations
 
-# pyright: reportMissingImports=false, reportAny=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportMissingParameterType=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportMissingParameterType=false
 
-import importlib
 from dataclasses import dataclass
 from math import isfinite
 from types import MappingProxyType
 
 import pytest
 
-hydraulic_element = importlib.import_module("modular_simulation.connection.hydraulic_element")
-hydraulic_compile = importlib.import_module("modular_simulation.connection.hydraulic_compile")
-hydraulic_solver = importlib.import_module("modular_simulation.connection.hydraulic_solver")
-junction = importlib.import_module("modular_simulation.connection.junction")
-network = importlib.import_module("modular_simulation.connection.network")
-state = importlib.import_module("modular_simulation.connection.state")
-transport = importlib.import_module("modular_simulation.connection.transport")
-
-ElementEquation = hydraulic_solver.ElementEquation
-ElementOutputSpec = hydraulic_element.ElementOutputSpec
-ElementParameterSpec = hydraulic_element.ElementParameterSpec
-ElementUnknownSpec = hydraulic_element.ElementUnknownSpec
-HydraulicSystemDefinition = hydraulic_solver.HydraulicSystemDefinition
-HydraulicCompileLifecycle = hydraulic_compile.HydraulicCompileLifecycle
-LagTransportState = transport.LagTransportState
-MVPLagTransportModel = transport.MVPLagTransportModel
-LinearResidualEquation = hydraulic_solver.LinearResidualEquation
-MaterialState = state.MaterialState
-PipeHydraulicElement = hydraulic_element.PipeHydraulicElement
-PortCondition = state.PortCondition
-ConnectionNetwork = network.ConnectionNetwork
-smooth_signed_quadratic_flow_term = hydraulic_element.smooth_signed_quadratic_flow_term
-smooth_signed_quadratic_flow_term_derivative = (
-    hydraulic_element.smooth_signed_quadratic_flow_term_derivative
+from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulic_element import (
+    ElementOutputSpec,
+    ElementParameterSpec,
+    ElementUnknownSpec,
+    HydraulicElement,
+    PipeHydraulicElement,
+    smooth_signed_quadratic_flow_term,
+    smooth_signed_quadratic_flow_term_derivative,
 )
-mix_junction_state = junction.mix_junction_state
+from modular_simulation.connection.hydraulic_solver import (
+    ElementEquation,
+    HydraulicSystemDefinition,
+    LinearResidualEquation,
+)
+from modular_simulation.connection.junction import mix_junction_state
+from modular_simulation.connection.network import ConnectionNetwork
+from modular_simulation.connection.state import MaterialState, PortCondition
+from modular_simulation.connection.transport import LagTransportState, MVPLagTransportModel
 
 
 def _single_pipe_system(
@@ -68,7 +60,7 @@ def _single_pipe_system(
 
 
 @dataclass(frozen=True)
-class _BoundaryNodeElement:
+class _BoundaryNodeElement(HydraulicElement):
     boundary_value: float
     node_coefficient: float
 
@@ -397,8 +389,12 @@ def test_representative_topology_closure_preserves_mass_balance_and_stable_bookk
 
     product_binding = binding.get_outlet("product")
     purge_binding = binding.get_outlet("purge")
-    assert product_binding["outlet_flow"] == pytest.approx(flow_outlet)
-    assert purge_binding["outlet_flow"] == pytest.approx(0.0)
+    product_outlet_flow = product_binding["outlet_flow"]
+    purge_outlet_flow = purge_binding["outlet_flow"]
+    assert isinstance(product_outlet_flow, float)
+    assert isinstance(purge_outlet_flow, float)
+    assert product_outlet_flow == pytest.approx(flow_outlet)
+    assert purge_outlet_flow == pytest.approx(0.0)
     total_inlet = flow_feed_a + flow_feed_b
-    total_outlet = product_binding["outlet_flow"] + purge_binding["outlet_flow"]
+    total_outlet = product_outlet_flow + purge_outlet_flow
     assert total_inlet == pytest.approx(total_outlet)

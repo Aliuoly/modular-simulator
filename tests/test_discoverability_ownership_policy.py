@@ -26,8 +26,6 @@ FORBIDDEN_PUBLIC_HELPERS = {
 
 SANCTIONED_EXCEPTIONS = (
     "create_property_package",
-    "select_transport_model",
-    "update_lag_transport_state",
     "thermodynamics.hydraulic_adapters",
 )
 
@@ -78,3 +76,30 @@ def test_density_material_models_expose_only_direct_concrete_types() -> None:
         "IdealGasDensityModel",
     }
     assert "connection.material_models" not in audit_text
+
+
+def test_transport_public_surface_exposes_owner_only_types() -> None:
+    module = import_module("modular_simulation.connection.transport")
+    public_module_callables = {
+        name
+        for name, value in vars(module).items()
+        if callable(value)
+        and not isinstance(value, type)
+        and getattr(value, "__module__", None) == module.__name__
+        and not name.startswith("_")
+    }
+    public_transport_types = {
+        name
+        for name, value in vars(module).items()
+        if isinstance(value, type)
+        and getattr(value, "__module__", None) == module.__name__
+        and not name.startswith("_")
+    }
+
+    assert public_module_callables == set()
+    assert public_transport_types == {
+        "LagTransportState",
+        "LagTransportUpdateResult",
+        "MVPLagTransportModel",
+        "TransportModel",
+    }

@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import isfinite
 
 from modular_simulation.connection.topology import TopologyGraph
 from modular_simulation.connection.transport import (
     LagTransportState,
     LagTransportUpdateResult,
-    update_lag_transport_state,
+    MVPLagTransportModel,
+    TransportModel,
 )
 
 _COMPOSITION_ABS_TOL = 1.0e-9
@@ -18,6 +19,8 @@ _COMPOSITION_ABS_TOL = 1.0e-9
 
 @dataclass(frozen=True)
 class TransportRuntimeStepResult:
+    """Per-edge results returned from a transport runtime step."""
+
     edge_updates: Mapping[str, LagTransportUpdateResult]
     edge_states: Mapping[str, LagTransportState]
     previous_edge_flow_rates: Mapping[str, float]
@@ -25,10 +28,13 @@ class TransportRuntimeStepResult:
 
 @dataclass(frozen=True)
 class TransportRuntime:
+    """Runtime owner that advances edge transport using its internal default model."""
+
     topology: TopologyGraph
     lag_time_constant_s: float
     near_zero_flow_epsilon: float = 1.0e-12
     flow_smoothing_flow_rate: float = 1.0e-9
+    _model: TransportModel = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.lag_time_constant_s <= 0.0:
@@ -43,6 +49,15 @@ class TransportRuntime:
             raise ValueError("flow_smoothing_flow_rate must be positive")
         if not isfinite(self.flow_smoothing_flow_rate):
             raise ValueError("flow_smoothing_flow_rate must be finite")
+        object.__setattr__(
+            self,
+            "_model",
+            MVPLagTransportModel(
+                lag_time_constant_s=self.lag_time_constant_s,
+                near_zero_flow_epsilon=self.near_zero_flow_epsilon,
+                flow_smoothing_flow_rate=self.flow_smoothing_flow_rate,
+            ),
+        )
 
     def step(
         self,
@@ -78,15 +93,12 @@ class TransportRuntime:
             if previous_edge_flow_rates is not None:
                 previous_through_molar_flow_rate = previous_edge_flow_rates.get(edge_id)
 
-            update_result = update_lag_transport_state(
+            update_result = self._model.update(
                 current_state=current_state,
                 advected_state=advected_state,
                 dt=dt,
-                lag_time_constant_s=self.lag_time_constant_s,
                 through_molar_flow_rate=through_molar_flow_rate,
                 previous_through_molar_flow_rate=previous_through_molar_flow_rate,
-                near_zero_flow_epsilon=self.near_zero_flow_epsilon,
-                flow_smoothing_flow_rate=self.flow_smoothing_flow_rate,
             )
             _assert_runtime_invariants(edge_id=edge_id, update_result=update_result)
 

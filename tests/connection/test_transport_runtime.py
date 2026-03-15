@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # pyright: reportMissingImports=false, reportMissingTypeStubs=false, reportUnknownMemberType=false
 
+import inspect
 from math import isfinite
 
 import modular_simulation.connection.transport_runtime as transport_runtime
@@ -11,7 +12,10 @@ from modular_simulation.connection.topology import (
     PortReference,
     TopologyGraph,
 )
-from modular_simulation.connection.transport import LagTransportState, update_lag_transport_state
+from modular_simulation.connection.transport import (
+    LagTransportState,
+    MVPLagTransportModel,
+)
 from modular_simulation.connection.transport_runtime import TransportRuntime
 
 
@@ -58,7 +62,7 @@ def _single_edge_graph() -> TopologyGraph:
     )
 
 
-def test_runtime_step_delegates_to_sanctioned_lag_kernel_with_flow_tracking() -> None:
+def test_runtime_step_delegates_to_owned_lag_model_with_flow_tracking() -> None:
     graph = _two_edge_graph_unsorted()
     runtime = TransportRuntime(topology=graph, lag_time_constant_s=0.9)
     current_states = {
@@ -77,6 +81,7 @@ def test_runtime_step_delegates_to_sanctioned_lag_kernel_with_flow_tracking() ->
         "edge_a": 0.7,
         "edge_b": 0.3,
     }
+    model = MVPLagTransportModel(lag_time_constant_s=0.9)
 
     runtime_result = runtime.step(
         current_edge_states=current_states,
@@ -90,19 +95,17 @@ def test_runtime_step_delegates_to_sanctioned_lag_kernel_with_flow_tracking() ->
     assert tuple(runtime_result.edge_states.keys()) == ("edge_a", "edge_b")
     assert tuple(runtime_result.previous_edge_flow_rates.keys()) == ("edge_a", "edge_b")
 
-    expected_edge_a = update_lag_transport_state(
+    expected_edge_a = model.update(
         current_state=current_states["edge_a"],
         advected_state=advected_states["edge_a"],
         dt=0.1,
-        lag_time_constant_s=0.9,
         through_molar_flow_rate=edge_flow_rates["edge_a"],
         previous_through_molar_flow_rate=previous_edge_flow_rates["edge_a"],
     )
-    expected_edge_b = update_lag_transport_state(
+    expected_edge_b = model.update(
         current_state=current_states["edge_b"],
         advected_state=advected_states["edge_b"],
         dt=0.1,
-        lag_time_constant_s=0.9,
         through_molar_flow_rate=edge_flow_rates["edge_b"],
         previous_through_molar_flow_rate=previous_edge_flow_rates["edge_b"],
     )
@@ -115,6 +118,23 @@ def test_runtime_step_delegates_to_sanctioned_lag_kernel_with_flow_tracking() ->
         "edge_a": edge_flow_rates["edge_a"],
         "edge_b": edge_flow_rates["edge_b"],
     }
+
+
+def test_runtime_constructor_stays_lag_parameter_based_and_owns_default_model() -> None:
+    signature = inspect.signature(TransportRuntime)
+    assert tuple(signature.parameters) == (
+        "topology",
+        "lag_time_constant_s",
+        "near_zero_flow_epsilon",
+        "flow_smoothing_flow_rate",
+    )
+
+    runtime = TransportRuntime(topology=_single_edge_graph(), lag_time_constant_s=0.8)
+
+    assert isinstance(runtime._model, MVPLagTransportModel)
+    assert runtime._model.lag_time_constant_s == 0.8
+    assert runtime._model.near_zero_flow_epsilon == runtime.near_zero_flow_epsilon
+    assert runtime._model.flow_smoothing_flow_rate == runtime.flow_smoothing_flow_rate
 
 
 def test_runtime_reversal_and_near_zero_hold_sequence_is_deterministic() -> None:
