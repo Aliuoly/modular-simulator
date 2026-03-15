@@ -1,18 +1,16 @@
 from .abstract_component import AbstractComponent
 from .calculations import (
     AbstractCalculation,
-    CalculationBase,
     PointMetadata,
     TagType,
     FirstOrderFilter,
 )
-from .sensors import AbstractSensor, SensorBase
+from .sensors import AbstractSensor
 from .point import DataValue, Point, PointRegistry
 from .sensors.sampled_delayed_sensor import SampledDelayedSensor
 from .control_system import (
     AbstractController,
     CalculationModelPath,
-    ControllerBase,
     InternalModelController,
     PIDController,
     BangBangController,
@@ -23,18 +21,11 @@ from .control_system import (
     ControlElement,
 )
 
-# Backward compatibility aliases
-TagData = DataValue
-
 __all__ = [
-    # New abstract base class names
     "AbstractComponent",
     "AbstractSensor",
-    "SensorBase",
     "AbstractController",
-    "ControllerBase",
     "AbstractCalculation",
-    "CalculationBase",
     # Controllers
     "ControllerMode",
     "MVController",
