@@ -1,7 +1,7 @@
 from modular_simulation.components import (
     SampledDelayedSensor,
     Trajectory,
-    CalculationBase,
+    AbstractCalculation,
     PIDController,
     ControlElement,
 )
@@ -31,7 +31,7 @@ sensors = [
         faulty_aware=True,
     ),
 ]
-calculations: list[CalculationBase] = []
+calculations: list[AbstractCalculation] = []
 
 # Define the control elements and their controllers
 control_elements = [

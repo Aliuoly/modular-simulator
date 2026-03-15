@@ -1,6 +1,6 @@
 from __future__ import annotations
 from modular_simulation.components import (
-    CalculationBase,
+    AbstractCalculation,
     ControlElement,
     PIDController,
     SampledDelayedSensor,
@@ -28,7 +28,7 @@ sensors = [
     SampledDelayedSensor(measurement_tag="jacket_flow", unit="L/s"),
 ]
 
-calculations: list[CalculationBase] = []
+calculations: list[AbstractCalculation] = []
 
 control_elements = [
     ControlElement(

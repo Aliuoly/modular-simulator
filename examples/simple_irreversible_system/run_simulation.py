@@ -107,4 +107,4 @@ if __name__ == "__main__":
 
     plt.show()
 
-    print(system.tag_store)
+    print(system.point_registry)
