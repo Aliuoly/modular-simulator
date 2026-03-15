@@ -1,5 +1,4 @@
 from collections.abc import Mapping, Callable, Iterator
-import warnings
 from typing import override
 from .point import Point, DataValue
 from astropy.units import UnitBase, UnitsError
@@ -20,7 +19,6 @@ class PointRegistry(Mapping[str, Point]):
         self._measured_points: dict[str, Point] | None = None
         self._calculated_points: dict[str, Point] | None = None
         self._reference_points: dict[str, Point] | None = None
-        self._setpoint_points: dict[str, Point] | None = None
 
     @override
     def __getitem__(self, key: str) -> Point:
@@ -53,19 +51,6 @@ class PointRegistry(Mapping[str, Point]):
                 k: v for k, v in self._points.items() if v.type == "calculated"
             }
         return self._calculated_points
-
-    @property
-    def setpoint_points(self) -> dict[str, Point]:
-        warnings.warn(
-            "setpoint_points is deprecated; use reference_points",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        if self._setpoint_points is None:
-            self._setpoint_points = {
-                k: v for k, v in self._points.items() if v.type in {"reference", "setpoint"}
-            }
-        return self._setpoint_points
 
     @property
     def reference_points(self) -> dict[str, Point]:
@@ -111,8 +96,6 @@ class PointRegistry(Mapping[str, Point]):
             self._calculated_points[registration_tag] = point
         elif self._reference_points is not None and point.type == "reference":
             self._reference_points[registration_tag] = point
-        elif self._setpoint_points is not None and point.type in {"reference", "setpoint"}:
-            self._setpoint_points[registration_tag] = point
 
     def _resolve_registration_tag(
         self,

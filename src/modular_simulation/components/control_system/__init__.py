@@ -12,16 +12,12 @@ from .controllers import (
     FirstOrderTrajectoryController,
 )
 
-# Backward compatibility alias
-ControllerBase = AbstractController
-
 __all__ = [
     "ControlElement",
     "ControllerRuntimeWiringApi",
     "Trajectory",
     "ControllerMode",
     "AbstractController",
-    "ControllerBase",  # Deprecated alias for backward compatibility
     "PIDController",
     "InternalModelController",
     "CalculationModelPath",
