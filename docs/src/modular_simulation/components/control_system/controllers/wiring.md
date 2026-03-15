@@ -20,7 +20,7 @@ classDiagram
         +change_control_mode(mode)
     }
     class Controller {
-        <<ControllerBase>>
+        <<AbstractController>>
         cv_tag
         cv_range
         reference_trajectory
@@ -32,7 +32,7 @@ classDiagram
         +change_control_mode(mode)
     }
     class CascadeController{
-        <<ControllerBase>>
+        <<AbstractController>>
     }
     ControlElement -->  Controller
     Controller --> CascadeController
