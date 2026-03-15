@@ -222,13 +222,25 @@ class ProcessModel(BaseModel, ABC):  # pyright: ignore[reportUnsafeMultipleInher
     def load(cls, payload: dict[str, Any]) -> "ProcessModel":
         """Recreate a process model instance from serialized state values."""
 
+        expected_keys = {"type", "module", "t", "states"}
+        payload_keys = set(payload)
+        if payload_keys != expected_keys:
+            raise ValueError(
+                "invalid process model payload keys: expected exactly "
+                + repr(tuple(sorted(expected_keys)))
+            )
+
+        state_values_raw = payload["states"]
+        if not isinstance(state_values_raw, dict):
+            raise ValueError("invalid process model payload: field 'states' must be a mapping")
+
         module = importlib.import_module(payload["module"])
         process_model_cls = getattr(module, payload["type"])
         if not issubclass(process_model_cls, cls):
             raise TypeError(f"{process_model_cls} is not a subclass of {cls}")
 
-        state_values = payload.get("states", {})
-        return process_model_cls(t=payload.get("t", 0.0), **state_values)
+        state_values = cast(dict[str, Any], state_values_raw)
+        return process_model_cls(t=payload["t"], **state_values)
 
     # def _construct_fast_params(self, numba_options) -> None:
     #     """

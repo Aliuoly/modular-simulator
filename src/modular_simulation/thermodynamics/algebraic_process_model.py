@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC
 from dataclasses import dataclass
-from typing import Any, override
+from typing import TYPE_CHECKING, Any, Protocol, cast, override
 
 import numpy as np
 from numpy.typing import NDArray
@@ -10,6 +10,14 @@ from numpy.typing import NDArray
 from modular_simulation.measurables.process_model import ProcessModel, StateType
 from modular_simulation.utils.typing import ArrayIndex, Seconds
 from modular_simulation.validation.exceptions import MeasurableConfigurationError
+
+if TYPE_CHECKING:
+    from modular_simulation.connection.state import PortCondition
+    from modular_simulation.thermodynamics.stream import StreamData
+
+
+class _SupportsOutletStream(Protocol):
+    def get_outlet_stream(self, port_name: str) -> StreamData: ...
 
 
 @dataclass(frozen=True)
@@ -76,6 +84,10 @@ class AlgebraicProcessModel(ProcessModel, ABC):
         )
         self.algebraic_view.update_from_array(final_algebraic_values)
         self.t += dt
+
+    def resolve_outlet_condition(self, port_name: str) -> PortCondition:
+        stream_source = cast("_SupportsOutletStream", self)
+        return stream_source.get_outlet_stream(port_name).to_port_condition()
 
 
 __all__ = [

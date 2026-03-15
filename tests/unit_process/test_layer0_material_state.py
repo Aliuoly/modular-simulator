@@ -1,4 +1,4 @@
-# pyright: reportMissingTypeStubs=false
+# pyright: reportMissingTypeStubs=false, reportMissingImports=false
 
 import pytest
 from pydantic import ValidationError
@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from modular_simulation.connection.state import MaterialState, PortCondition
 
 
-def test_material_state_legacy_constructor_remains_valid() -> None:
+def test_material_state_canonical_constructor_remains_valid() -> None:
     state = MaterialState(
         pressure=101325.0,
         temperature=298.15,
@@ -46,25 +46,32 @@ def test_material_state_species_length_mismatch_fails_validation() -> None:
         )
 
 
-def test_material_state_with_thermo_and_from_legacy() -> None:
-    legacy = MaterialState.from_legacy(
+def test_material_state_with_thermo_preserves_base_fields() -> None:
+    base = MaterialState(
         pressure=101325.0,
         temperature=298.15,
         mole_fractions=(0.4, 0.6),
     )
-    enhanced = legacy.with_thermo(
+    enhanced = base.with_thermo(
         species_ids=("7732-18-5", "64-17-5"),
         phase="two-phase",
         enthalpy_molar=-15000.0,
         entropy_molar=120.0,
     )
 
-    assert legacy.species_ids is None
+    assert base.species_ids is None
     assert enhanced.species_ids == ("7732-18-5", "64-17-5")
     assert enhanced.phase == "two-phase"
-    assert enhanced.pressure == legacy.pressure
-    assert enhanced.temperature == legacy.temperature
-    assert enhanced.mole_fractions == legacy.mole_fractions
+    assert enhanced.pressure == base.pressure
+    assert enhanced.temperature == base.temperature
+    assert enhanced.mole_fractions == base.mole_fractions
+
+
+def test_material_state_from_legacy_constructor_is_absent() -> None:
+    assert not hasattr(MaterialState, "from_legacy")
+
+    with pytest.raises(AttributeError, match="from_legacy"):
+        _ = getattr(MaterialState, "from_legacy")
 
 
 def test_material_state_equality_and_hash_include_thermo_fields() -> None:
