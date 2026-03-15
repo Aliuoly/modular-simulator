@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false
+# pyright: reportMissingTypeStubs=false, reportMissingImports=false, reportUnknownMemberType=false
 
 from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from modular_simulation.components import ControlElement, ControllerMode, Trajectory
 from modular_simulation.framework.system import System
@@ -187,28 +188,19 @@ def test_heater_cooler_uses_external_boundary_names_not_controller_proxies() -> 
     assert "external_outlet_temperature" not in heater.constant_view.state_list
 
 
-def test_legacy_setpoint_inputs_warn_and_normalize() -> None:
-    with pytest.warns(
-        DeprecationWarning, match="duty_setpoint is deprecated; use external_heat_duty"
-    ):
-        with pytest.warns(
-            DeprecationWarning,
-            match="target_temperature_setpoint is deprecated; use external_outlet_temperature",
-        ):
-            heater = HeaterCooler(
-                **cast(
-                    Any,
-                    {
-                        "mode": "temperature",
-                        "n_species": 2,
-                        "duty_setpoint": 123.0,
-                        "target_temperature_setpoint": 345.0,
-                    },
-                )
+@pytest.mark.parametrize("legacy_field", ["duty_setpoint", "target_temperature_setpoint"])
+def test_legacy_setpoint_inputs_are_rejected(legacy_field: str) -> None:
+    with pytest.raises(ValidationError, match=legacy_field):
+        _ = HeaterCooler(
+            **cast(
+                Any,
+                {
+                    "mode": "temperature",
+                    "n_species": 2,
+                    legacy_field: 123.0,
+                },
             )
-
-    assert heater.external_heat_duty == pytest.approx(123.0)
-    assert heater.external_outlet_temperature == pytest.approx(345.0)
+        )
 
 
 def test_heater_cooler_well_mixed_external_boundaries_are_driven_via_heat_actuator_plane() -> None:

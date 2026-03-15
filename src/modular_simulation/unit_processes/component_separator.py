@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false
+# pyright: reportMissingTypeStubs=false, reportMissingImports=false
 
 from collections.abc import Mapping, Sequence
 from math import isfinite
 from typing import Annotated, ClassVar, cast, override
-import warnings
 
 import numpy as np
 from numpy.typing import NDArray
@@ -230,18 +229,7 @@ class ComponentSeparator(AlgebraicProcessModel):
     ] = np.zeros(0, dtype=np.float64)
 
     def __init__(self, **data: object) -> None:
-        legacy_name = "split_fractions"
         canonical_name = "configured_split_fraction_targets"
-        if legacy_name in data:
-            if canonical_name in data:
-                raise ValueError(f"Provide only one of '{legacy_name}' or '{canonical_name}'.")
-            warnings.warn(
-                f"{legacy_name} is deprecated; use {canonical_name}",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            data[canonical_name] = data.pop(legacy_name)
-
         raw_species_order = data.pop("species_order", None)
         raw_configured_split_fraction_targets = data.get(canonical_name, None)
 

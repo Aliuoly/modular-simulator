@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false
+# pyright: reportMissingTypeStubs=false, reportMissingImports=false
 
 from collections.abc import Mapping
 from math import isfinite
-import warnings
 from types import MappingProxyType
 from typing import Annotated, ClassVar, cast, override
 
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import PrivateAttr, model_validator
+from pydantic import PrivateAttr
 
 from modular_simulation.connection.hydraulic_element import PumpHydraulicElement
 from modular_simulation.measurables.process_model import StateMetadata as M
@@ -173,34 +172,6 @@ class Pump(AlgebraicProcessModel):
             raise ValueError("efficiency must be finite and in (0, 1].")
 
         _validate_composition(self.inlet_composition, name="inlet_composition")
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_legacy_pressure_rise(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        if "pressure_rise" not in value:
-            return value
-        if "pump_speed" in value:
-            raise ValueError(
-                "pump_speed and legacy pressure_rise cannot both be provided; use pump_speed only."
-            )
-
-        normalized = dict(value)
-        normalized["pump_speed"] = normalized.pop("pressure_rise")
-        warnings.warn(
-            "pressure_rise is deprecated; use pump_speed",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-        return normalized
-
-    @property
-    def pressure_rise(self) -> float:
-        dp_curve = self._hydraulic_element.dp_curve
-        if dp_curve is None:
-            raise RuntimeError("dp_curve callback must be available for pump calculations.")
-        return float(dp_curve(float(self.inlet_flow), float(self.pump_speed)))
 
     @property
     def ports(self) -> UnitProcessPorts:

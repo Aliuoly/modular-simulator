@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false
+# pyright: reportMissingTypeStubs=false, reportMissingImports=false
 
-import warnings
 from math import isfinite
 from typing import Annotated, ClassVar, Literal, cast, override
 
 import numpy as np
 from numpy.typing import NDArray
-from pydantic import PrivateAttr, field_validator, model_validator
+from pydantic import PrivateAttr, field_validator
 
 from modular_simulation.measurables.process_model import StateMetadata as M
 from modular_simulation.measurables.process_model import StateType as T
@@ -174,34 +173,6 @@ class HeaterCooler(AlgebraicProcessModel):
         numeric_mode = float(value)
         normalized = _mode_from_selector(numeric_mode)
         return _MODE_DUTY if normalized == "duty" else _MODE_TEMPERATURE
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_legacy_boundary_names(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-
-        normalized = dict(value)
-        legacy_name_map = {
-            "duty_setpoint": "external_heat_duty",
-            "target_temperature_setpoint": "external_outlet_temperature",
-        }
-        for legacy_name, canonical_name in legacy_name_map.items():
-            if legacy_name not in normalized:
-                continue
-            if canonical_name in normalized:
-                raise ValueError(
-                    f"{canonical_name} and legacy {legacy_name} cannot both be provided; use {canonical_name} only."
-                )
-
-            normalized[canonical_name] = normalized.pop(legacy_name)
-            warnings.warn(
-                f"{legacy_name} is deprecated; use {canonical_name}",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-
-        return normalized
 
     @override
     def model_post_init(self, context: object) -> None:
