@@ -2,14 +2,17 @@ from __future__ import annotations
 
 from math import isfinite
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 import pytest
 
 from modular_simulation.connection.hydraulic_element import (
+    HydraulicElement,
     PipeHydraulicElement,
     PumpHydraulicElement,
+    ValveHydraulicElement,
+    resolve_hydraulic_element,
 )
 from modular_simulation.connection.hydraulic_solver import (
     ElementEquation,
@@ -40,7 +43,7 @@ from modular_simulation.unit_processes import (
 def _single_flow_equation(
     *,
     name: str,
-    element: Any,
+    element: HydraulicElement,
     upstream_pressure: float,
     downstream_pressure: float,
     flow_unknown_name: str,
@@ -48,7 +51,7 @@ def _single_flow_equation(
 ) -> ElementEquation:
     return ElementEquation(
         name=name,
-        element=cast(Any, element),
+        element=element,
         inputs=MappingProxyType(
             {
                 "upstream_pressure": upstream_pressure,
@@ -211,3 +214,95 @@ def test_multi_outlet_port_validation_lists_allowed_ports() -> None:
         match="Allowed outlet ports: vapor_outlet, liquid_outlet",
     ):
         _ = flash.to_hydraulic_element("outlet")
+
+
+def test_pipe_hydraulic_element_owns_default_parameters_and_geometry_bootstrap() -> None:
+    heater = HeaterCooler(n_species=2)
+    element = heater.to_hydraulic_element("outlet")
+
+    parameters = element.default_parameters(
+        source_unit=heater,
+        source_node_id="heater",
+        source_port_name="outlet",
+        target_unit=None,
+        target_node_id="sink",
+    )
+    bootstrap = element.line_bootstrap(
+        source_unit=heater,
+        source_node_id="heater",
+        source_port_name="outlet",
+        line_id="heater_line",
+    )
+
+    assert parameters == MappingProxyType(default_pipe_hydraulic_parameters(resistance=5.0e3))
+    assert bootstrap is None
+
+
+def test_pump_hydraulic_element_owns_default_parameters_and_bootstrap() -> None:
+    pump = Pump(n_species=2, pump_speed=120_000.0)
+    element = pump.to_hydraulic_element("outlet")
+
+    parameters = element.default_parameters(
+        source_unit=pump,
+        source_node_id="pump",
+        source_port_name="outlet",
+        target_unit=None,
+        target_node_id="sink",
+    )
+    bootstrap = element.line_bootstrap(
+        source_unit=pump,
+        source_node_id="pump",
+        source_port_name="outlet",
+        line_id="pump_line",
+    )
+
+    assert parameters == MappingProxyType(default_pump_hydraulic_parameters(pump_speed=0.0))
+    assert bootstrap is not None
+    assert bootstrap.geometry is not None
+    assert bootstrap.geometry.resistance_parameter_name == "pump_speed"
+    assert bootstrap.pump is not None
+    assert bootstrap.pump.pump_id == "pump_line__pump"
+    assert bootstrap.pump.initial_pump_speed == pytest.approx(120_000.0)
+    assert bootstrap.pump.pump_parameter_name == "pump_speed"
+    assert bootstrap.valve is None
+
+
+def test_valve_hydraulic_element_owns_default_parameters_and_bootstrap() -> None:
+    element = ValveHydraulicElement()
+
+    parameters = element.default_parameters(
+        source_unit=None,
+        source_node_id="feed",
+        source_port_name="outlet",
+        target_unit=None,
+        target_node_id="sink",
+    )
+    bootstrap = element.line_bootstrap(
+        source_unit=None,
+        source_node_id="feed",
+        source_port_name="outlet",
+        line_id="valve_line",
+    )
+
+    assert parameters == MappingProxyType({"valve_resistance": 1.0, "delta": 1.0e-6})
+    assert bootstrap is not None
+    assert bootstrap.geometry is not None
+    assert bootstrap.geometry.resistance_parameter_name == "valve_resistance"
+    assert bootstrap.resistance is not None
+    assert bootstrap.resistance.mode == "manual_override"
+    assert bootstrap.resistance.manual_value == pytest.approx(1.0)
+    assert bootstrap.valve is not None
+    assert bootstrap.valve.valve_id == "valve_line__valve"
+    assert bootstrap.valve.initial_open_fraction == pytest.approx(1.0)
+    assert bootstrap.valve.minimum_open_fraction == pytest.approx(0.0)
+    assert bootstrap.valve.maximum_open_fraction == pytest.approx(1.0)
+
+
+def test_resolve_hydraulic_element_uses_pipe_family_for_boundary_sources() -> None:
+    element = resolve_hydraulic_element(
+        source_unit=None,
+        source_node_id="feed",
+        source_port_name="outlet",
+    )
+
+    assert isinstance(element, PipeHydraulicElement)

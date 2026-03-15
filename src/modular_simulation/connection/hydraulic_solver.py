@@ -20,6 +20,14 @@ class ElementEquation:
     residual_name_map: Mapping[str, str]
 
     def __post_init__(self) -> None:
+        if not isinstance(self.element, HydraulicElement):
+            raise TypeError(
+                "equation {!r} element must be a HydraulicElement, got {!r}".format(
+                    self.name,
+                    type(self.element).__name__,
+                )
+            )
+
         expected_unknowns = set(self.element.unknown_spec.names)
         actual_unknowns = set(self.unknown_name_map.keys())
         if actual_unknowns != expected_unknowns:

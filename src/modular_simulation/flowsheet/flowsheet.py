@@ -17,9 +17,8 @@ from modular_simulation.connection.connected_plant_orchestrator import (
 )
 from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
 from modular_simulation.connection.hydraulic_element import (
-    PipeHydraulicElement,
-    PumpHydraulicElement,
-    ValveHydraulicElement,
+    HydraulicElement,
+    resolve_hydraulic_element,
 )
 from modular_simulation.connection.hydraulic_solver import (
     ElementEquation,
@@ -30,12 +29,6 @@ from modular_simulation.connection.process_stream_io import ProcessStreamIO
 from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
 from modular_simulation.connection.subsystem_descriptor import Subsystem
 from modular_simulation.connection.unit_process_wiring import create_subsystem_for_unit
-from modular_simulation.thermodynamics.hydraulic_adapters import (
-    DEFAULT_HYDRAULIC_DELTA,
-    default_pipe_hydraulic_parameters,
-    default_pipe_resistance_for_unit,
-    default_pump_hydraulic_parameters,
-)
 from modular_simulation.thermodynamics.algebraic_process_model import UnitProcessPorts
 from modular_simulation.thermodynamics.stream import StreamData
 
@@ -787,169 +780,80 @@ class Flowsheet:
             source_port_name=source_port_name,
             target_node_id=source_node_id,
         )
-        if isinstance(element, PumpHydraulicElement):
-            pump_speed = self._resolve_pump_hydraulic_seed_value(
-                source_node_id=source_node_id,
-                source_port_name=source_port_name,
-            )
-            network.configure_line_geometry(
-                line_id=line_id,
-                radius_m=1.0,
-                length_m=1.0,
-                equation_name=line_id,
-                resistance_parameter_name="pump_speed",
-            )
-            network.attach_line_pump(
-                line_id=line_id,
-                pump_id=f"{line_id}__pump",
-                initial_pump_speed=pump_speed,
-                equation_name=line_id,
-                pump_parameter_name="pump_speed",
-            )
+        bootstrap = element.line_bootstrap(
+            source_unit=source_unit,
+            source_node_id=source_node_id,
+            source_port_name=source_port_name,
+            line_id=line_id,
+        )
+        if bootstrap is None:
             return
 
-        if isinstance(element, ValveHydraulicElement):
-            valve_parameters = self._resolve_valve_hydraulic_seed_values(
-                source_node_id=source_node_id,
-                source_port_name=source_port_name,
-            )
-            resistance_when_open = 1.0 / (valve_parameters["cv"] * valve_parameters["cv"])
+        geometry = bootstrap.geometry
+        if geometry is not None:
             network.configure_line_geometry(
                 line_id=line_id,
-                radius_m=1.0,
-                length_m=1.0,
+                radius_m=geometry.radius_m,
+                length_m=geometry.length_m,
                 equation_name=line_id,
-                resistance_parameter_name="valve_resistance",
+                resistance_parameter_name=geometry.resistance_parameter_name,
             )
+
+        resistance = bootstrap.resistance
+        if resistance is not None:
             network.configure_line_resistance(
                 line_id=line_id,
-                mode="manual_override",
-                manual_value=resistance_when_open,
+                mode=resistance.mode,
+                manual_value=resistance.manual_value,
             )
+
+        valve = bootstrap.valve
+        if valve is not None:
             network.attach_line_valve(
                 line_id=line_id,
-                valve_id=f"{line_id}__valve",
-                minimum_open_fraction=valve_parameters["minimum_open_fraction"],
-                maximum_open_fraction=valve_parameters["maximum_open_fraction"],
-                initial_open_fraction=valve_parameters["open_fraction"],
+                valve_id=valve.valve_id,
+                minimum_open_fraction=valve.minimum_open_fraction,
+                maximum_open_fraction=valve.maximum_open_fraction,
+                initial_open_fraction=valve.initial_open_fraction,
                 equation_name=line_id,
-                resistance_parameter_name="valve_resistance",
+                resistance_parameter_name=valve.resistance_parameter_name,
             )
 
-    def _resolve_pump_hydraulic_seed_value(
-        self, *, source_node_id: str, source_port_name: str
-    ) -> float:
-        parameter_getter = self._resolve_hydraulic_parameter_getter(source_node_id=source_node_id)
-        parameters = parameter_getter(source_port_name)
-        if isinstance(parameters, Mapping) and "pump_speed" in parameters:
-            return float(parameters["pump_speed"])
-        raise ValueError(
-            f"unit '{source_node_id}' returned invalid pump hydraulic parameters for port '{source_port_name}'"
-        )
-
-    def _resolve_valve_hydraulic_seed_values(
-        self, *, source_node_id: str, source_port_name: str
-    ) -> dict[str, float]:
-        parameter_getter = self._try_resolve_hydraulic_parameter_getter(
-            source_node_id=source_node_id
-        )
-        if parameter_getter is None:
-            return {
-                "cv": 1.0,
-                "open_fraction": 1.0,
-                "minimum_open_fraction": 0.0,
-                "maximum_open_fraction": 1.0,
-            }
-
-        parameters = parameter_getter(source_port_name)
-        if not isinstance(parameters, Mapping):
-            raise ValueError(
-                f"unit '{source_node_id}' returned invalid valve hydraulic parameters for port '{source_port_name}'"
+        pump = bootstrap.pump
+        if pump is not None:
+            network.attach_line_pump(
+                line_id=line_id,
+                pump_id=pump.pump_id,
+                initial_pump_speed=pump.initial_pump_speed,
+                equation_name=line_id,
+                pump_parameter_name=pump.pump_parameter_name,
             )
-        cv_raw = parameters.get("cv", parameters.get("Cv", 1.0))
-        open_fraction_raw = parameters.get("open_fraction", 1.0)
-        minimum_open_fraction_raw = parameters.get("minimum_open_fraction", 0.0)
-        maximum_open_fraction_raw = parameters.get("maximum_open_fraction", 1.0)
-        return {
-            "cv": float(cv_raw),
-            "open_fraction": float(open_fraction_raw),
-            "minimum_open_fraction": float(minimum_open_fraction_raw),
-            "maximum_open_fraction": float(maximum_open_fraction_raw),
-        }
-
-    def _resolve_hydraulic_parameter_getter(self, *, source_node_id: str):
-        parameter_getter = self._try_resolve_hydraulic_parameter_getter(
-            source_node_id=source_node_id
-        )
-        if parameter_getter is None:
-            raise ValueError(
-                f"unit '{source_node_id}' must implement hydraulic_parameters_for_port(port_name) "
-                + "for pump hydraulic elements"
-            )
-        return parameter_getter
-
-    def _try_resolve_hydraulic_parameter_getter(self, *, source_node_id: str):
-        source_unit = self._units.get(source_node_id)
-        if source_unit is None:
-            return None
-        parameter_getter = getattr(source_unit, "hydraulic_parameters_for_port", None)
-        if not callable(parameter_getter):
-            return None
-        return parameter_getter
 
     def _resolve_hydraulic_element(
         self, *, source_node_id: str, source_port_name: str, target_node_id: str
-    ) -> object:
-        source_unit = self._units.get(source_node_id)
-        if source_unit is None:
-            del target_node_id
-            return PipeHydraulicElement()
-
-        to_hydraulic_element = getattr(source_unit, "to_hydraulic_element", None)
-        if not callable(to_hydraulic_element):
-            raise ValueError(
-                f"unit '{source_node_id}' does not implement to_hydraulic_element(port_name)"
-            )
-        return to_hydraulic_element(source_port_name)
+    ) -> HydraulicElement:
+        del target_node_id
+        return resolve_hydraulic_element(
+            source_unit=self._units.get(source_node_id),
+            source_node_id=source_node_id,
+            source_port_name=source_port_name,
+        )
 
     def _resolve_element_parameters(
         self,
         *,
-        element: object,
+        element: HydraulicElement,
         source_node_id: str,
         source_port_name: str,
         target_node_id: str,
     ) -> Mapping[str, float]:
-        del source_port_name
-        if isinstance(element, PumpHydraulicElement):
-            return MappingProxyType(default_pump_hydraulic_parameters(pump_speed=0.0))
-
-        if isinstance(element, ValveHydraulicElement):
-            return MappingProxyType(
-                {
-                    "valve_resistance": 1.0,
-                    "delta": DEFAULT_HYDRAULIC_DELTA,
-                }
-            )
-
-        if isinstance(element, PipeHydraulicElement):
-            source_unit = self._units.get(source_node_id)
-            target_unit = self._units.get(target_node_id)
-            fallback_unit = source_unit if source_unit is not None else target_unit
-            if fallback_unit is None:
-                resistance = 5.0e3
-            else:
-                resistance = default_pipe_resistance_for_unit(
-                    unit_name=type(fallback_unit).__name__
-                )
-            return MappingProxyType(default_pipe_hydraulic_parameters(resistance=resistance))
-
-        parameter_spec = getattr(element, "parameter_spec", None)
-        raw_parameter_names = getattr(parameter_spec, "names", ())
-        parameter_names = tuple(
-            str(name) for name in cast("tuple[object, ...]", raw_parameter_names)
+        return element.default_parameters(
+            source_unit=self._units.get(source_node_id),
+            source_node_id=source_node_id,
+            source_port_name=source_port_name,
+            target_unit=self._units.get(target_node_id),
+            target_node_id=target_node_id,
         )
-        return MappingProxyType({name: 1.0 for name in parameter_names})
 
     def _source_pressure(self, *, node_id: str, port_name: str) -> float:
         feed_stream = self._feeds.get(node_id)
