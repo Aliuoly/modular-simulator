@@ -4,7 +4,9 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from math import exp, pow
-from typing import Literal
+from typing import Literal, overload
+
+from pydantic import BaseModel, field_validator
 
 _MIN_TEMPERATURE_K = 1.0e-9
 _MIN_EQUILIBRIUM_CONSTANT = 1.0e-12
@@ -48,8 +50,33 @@ def _rate_concentration_term(
     return concentration_term
 
 
-@dataclass(frozen=True)
-class Reaction:
+class Reaction(BaseModel):
+    """User-instantiated reaction definition with validation.
+
+    Responsibility:
+        Encapsulate a single reaction's stoichiometry, kinetic rate law,
+        and (optionally) reverse reaction or equilibrium behavior. This is
+        the primary user-facing class for defining reactions in a simulation;
+        validation at construction ensures well-formed reaction definitions.
+
+    Construction patterns:
+        Use the factory classmethods for common configurations:
+        - Reaction.from_arrhenius(): irreversible reaction with Arrhenius kinetics
+        - Reaction.from_power_law(): irreversible reaction with power-law kinetics
+        - Reaction.from_reversible_arrhenius(): reversible with forward/reverse rate laws
+        - Reaction.from_equilibrium(): reversible via equilibrium constant
+
+    Attributes:
+        name: Human-readable reaction identifier.
+        stoichiometry: Mapping of species names to stoichiometric coefficients.
+        rate_law: Forward rate law instance.
+        reverse_rate_law: Optional reverse rate law (mutually exclusive with equilibrium_constant).
+        equilibrium_constant: Optional K_eq(T) function (mutually exclusive with reverse_rate_law).
+        basis: Rate law basis - "concentration" or "partial_pressure".
+    """
+
+    model_config = {"frozen": True, "arbitrary_types_allowed": True}
+
     name: str
     stoichiometry: Mapping[str, float]
     rate_law: RateLaw
@@ -57,14 +84,252 @@ class Reaction:
     equilibrium_constant: Callable[[float], float] | None = None
     basis: Literal["concentration", "partial_pressure"] = "concentration"
 
-    def __post_init__(self) -> None:
-        if not self.stoichiometry:
+    @field_validator("stoichiometry")
+    @classmethod
+    def _validate_stoichiometry(cls, v: Mapping[str, float]) -> Mapping[str, float]:
+        if not v:
             raise ValueError("Reaction stoichiometry cannot be empty.")
+        return v
 
+    def model_post_init(self, __context: object) -> None:
+        """Validate reversible configuration after all fields are set."""
         if self.reverse_rate_law is not None and self.equilibrium_constant is not None:
             raise ValueError(
                 "Reaction reversible configuration is ambiguous; provide only one of reverse_rate_law or equilibrium_constant."
             )
+
+    @overload
+    @classmethod
+    def from_arrhenius(
+        cls,
+        name: str,
+        stoichiometry: Mapping[str, float],
+        pre_exponential: float,
+        activation_energy: float,
+        orders: Mapping[str, float],
+        gas_constant: float = ...,
+    ) -> Reaction: ...
+
+    @overload
+    @classmethod
+    def from_arrhenius(
+        cls,
+        name: str,
+        stoichiometry: Mapping[str, float],
+        pre_exponential: float,
+        activation_energy: float,
+        orders: Mapping[str, float],
+        *,
+        basis: Literal["concentration", "partial_pressure"],
+    ) -> Reaction: ...
+
+    @classmethod
+    def from_arrhenius(
+        cls,
+        name: str,
+        stoichiometry: Mapping[str, float],
+        pre_exponential: float,
+        activation_energy: float,
+        orders: Mapping[str, float],
+        gas_constant: float = 8.314,
+        basis: Literal["concentration", "partial_pressure"] = "concentration",
+    ) -> Reaction:
+        """Factory for irreversible Arrhenius reaction.
+
+        Example:
+            >>> reaction = Reaction.from_arrhenius(
+            ...     name="A -> B",
+            ...     stoichiometry={"A": -1, "B": 1},
+            ...     pre_exponential=1e13,
+            ...     activation_energy=50000,
+            ...     orders={"A": 1}
+            ... )
+        """
+        return cls(
+            name=name,
+            stoichiometry=stoichiometry,
+            rate_law=ArrheniusRateLaw(
+                pre_exponential=pre_exponential,
+                activation_energy=activation_energy,
+                orders=orders,
+                gas_constant=gas_constant,
+            ),
+            basis=basis,
+        )
+
+    @overload
+    @classmethod
+    def from_power_law(
+        cls,
+        name: str,
+        stoichiometry: Mapping[str, float],
+        k_ref: float,
+        orders: Mapping[str, float],
+        T_ref: float = ...,
+        E_a: float | None = ...,
+        gas_constant: float = ...,
+    ) -> Reaction: ...
+
+    @overload
+    @classmethod
+    def from_power_law(
+        cls,
+        name: str,
+        stoichiometry: Mapping[str, float],
+        k_ref: float,
+        orders: Mapping[str, float],
+        *,
+        basis: Literal["concentration", "partial_pressure"],
+    ) -> Reaction: ...
+
+    @classmethod
+    def from_power_law(
+        cls,
+        name: str,
+        stoichiometry: Mapping[str, float],
+        k_ref: float,
+        orders: Mapping[str, float],
+        T_ref: float = 298.15,
+        E_a: float | None = None,
+        gas_constant: float = 8.314,
+        basis: Literal["concentration", "partial_pressure"] = "concentration",
+    ) -> Reaction:
+        """Factory for irreversible power-law reaction.
+
+        Example:
+            >>> reaction = Reaction.from_power_law(
+            ...     name="A -> B",
+            ...     stoichiometry={"A": -1, "B": 1},
+            ...     k_ref=0.05,
+            ...     orders={"A": 1.5}
+            ... )
+        """
+        return cls(
+            name=name,
+            stoichiometry=stoichiometry,
+            rate_law=PowerLawRateLaw(
+                k_ref=k_ref,
+                orders=orders,
+                T_ref=T_ref,
+                E_a=E_a,
+                gas_constant=gas_constant,
+            ),
+            basis=basis,
+        )
+
+    @overload
+    @classmethod
+    def from_reversible_arrhenius(
+        cls,
+        name: str,
+        stoichiometry: Mapping[str, float],
+        forward_pre_exponential: float,
+        forward_activation_energy: float,
+        forward_orders: Mapping[str, float],
+        reverse_pre_exponential: float,
+        reverse_activation_energy: float,
+        reverse_orders: Mapping[str, float],
+        gas_constant: float = ...,
+    ) -> Reaction: ...
+
+    @overload
+    @classmethod
+    def from_reversible_arrhenius(
+        cls,
+        name: str,
+        stoichiometry: Mapping[str, float],
+        forward_pre_exponential: float,
+        forward_activation_energy: float,
+        forward_orders: Mapping[str, float],
+        reverse_pre_exponential: float,
+        reverse_activation_energy: float,
+        reverse_orders: Mapping[str, float],
+        *,
+        basis: Literal["concentration", "partial_pressure"],
+    ) -> Reaction: ...
+
+    @classmethod
+    def from_reversible_arrhenius(
+        cls,
+        name: str,
+        stoichiometry: Mapping[str, float],
+        forward_pre_exponential: float,
+        forward_activation_energy: float,
+        forward_orders: Mapping[str, float],
+        reverse_pre_exponential: float,
+        reverse_activation_energy: float,
+        reverse_orders: Mapping[str, float],
+        gas_constant: float = 8.314,
+        basis: Literal["concentration", "partial_pressure"] = "concentration",
+    ) -> Reaction:
+        """Factory for reversible reaction with separate forward/reverse rate laws.
+
+        Example:
+            >>> reaction = Reaction.from_reversible_arrhenius(
+            ...     name="A <-> B",
+            ...     stoichiometry={"A": -1, "B": 1},
+            ...     forward_pre_exponential=1e13,
+            ...     forward_activation_energy=50000,
+            ...     forward_orders={"A": 1},
+            ...     reverse_pre_exponential=1e11,
+            ...     reverse_activation_energy=30000,
+            ...     reverse_orders={"B": 1},
+            ... )
+        """
+        return cls(
+            name=name,
+            stoichiometry=stoichiometry,
+            rate_law=ArrheniusRateLaw(
+                pre_exponential=forward_pre_exponential,
+                activation_energy=forward_activation_energy,
+                orders=forward_orders,
+                gas_constant=gas_constant,
+            ),
+            reverse_rate_law=ArrheniusRateLaw(
+                pre_exponential=reverse_pre_exponential,
+                activation_energy=reverse_activation_energy,
+                orders=reverse_orders,
+                gas_constant=gas_constant,
+            ),
+            basis=basis,
+        )
+
+    @classmethod
+    def from_equilibrium(
+        cls,
+        name: str,
+        stoichiometry: Mapping[str, float],
+        pre_exponential: float,
+        activation_energy: float,
+        orders: Mapping[str, float],
+        equilibrium_constant: Callable[[float], float],
+        gas_constant: float = 8.314,
+    ) -> Reaction:
+        """Factory for reversible reaction via temperature-dependent equilibrium constant.
+
+        Example:
+            >>> def K_eq(T):
+            ...     return 10 * exp(-5000 * (1/T - 1/298))
+            >>> reaction = Reaction.from_equilibrium(
+            ...     name="A <-> B",
+            ...     stoichiometry={"A": -1, "B": 1},
+            ...     pre_exponential=1e13,
+            ...     activation_energy=50000,
+            ...     orders={"A": 1},
+            ...     equilibrium_constant=K_eq,
+            ... )
+        """
+        return cls(
+            name=name,
+            stoichiometry=stoichiometry,
+            rate_law=ArrheniusRateLaw(
+                pre_exponential=pre_exponential,
+                activation_energy=activation_energy,
+                orders=orders,
+                gas_constant=gas_constant,
+            ),
+            equilibrium_constant=equilibrium_constant,
+        )
 
     def rate(self, concentrations: Mapping[str, float], temperature: float) -> float:
         forward_rate = self.rate_law.rate(concentrations, temperature)
