@@ -11,13 +11,13 @@ import pytest
 
 from modular_simulation.cli import ModularCli
 from modular_simulation.cli.spec_workflow import SpecApplyError
-from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
 
 
 def _linear_equation(

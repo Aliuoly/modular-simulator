@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from modular_simulation.connection.domain_contracts import SensorBinding
-from modular_simulation.connection.network import ConnectionNetwork
+from modular_simulation.connection.domain.domain_contracts import SensorBinding
+from modular_simulation.connection.topology.network import ConnectionNetwork
 
 
 class SensorRuntimeBindingApi:

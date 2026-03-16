@@ -5,22 +5,22 @@ from collections.abc import Mapping
 import pytest
 
 from modular_simulation.cli import ModularCli
-from modular_simulation.connection.error_catalog import (
+from modular_simulation.connection.domain.error_catalog import (
     CLI_ARGUMENT_ISSUE_CODE,
     REVISION_MISMATCH_CODE,
     VALIDATION_FAILURE_CODE,
     extract_diagnostic_payload,
 )
-from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.reconfiguration_api import (
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.domain.reconfiguration_api import (
     DynamicConnectionLineReconfigurationApi,
 )
-from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
+from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
 
 
 class _FakeCliNetwork:

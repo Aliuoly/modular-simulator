@@ -8,7 +8,7 @@ import json
 from math import isfinite
 from typing import Literal, cast
 
-from modular_simulation.connection.network import ConnectionNetwork
+from modular_simulation.connection.topology.network import ConnectionNetwork
 
 
 _Mutation = dict[str, object]

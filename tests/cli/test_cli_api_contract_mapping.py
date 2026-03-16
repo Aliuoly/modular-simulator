@@ -6,7 +6,7 @@ from typing import cast
 import pytest
 
 from modular_simulation.cli import ModularCli
-from modular_simulation.connection.error_catalog import (
+from modular_simulation.connection.domain.error_catalog import (
     CLI_ARGUMENT_ISSUE_CODE,
     extract_diagnostic_payload,
 )

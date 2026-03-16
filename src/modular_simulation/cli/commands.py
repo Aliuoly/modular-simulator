@@ -6,20 +6,20 @@ from collections.abc import Iterable, Mapping
 from math import isfinite
 from typing import Literal, Protocol, cast
 
-from modular_simulation.connection.error_catalog import (
+from modular_simulation.connection.domain.error_catalog import (
     CLI_ARGUMENT_ISSUE_CODE,
     diagnostic_value_error,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.domain_contracts import (
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.domain.domain_contracts import (
     Port,
     UnitProcess,
 )
-from modular_simulation.connection.reconfiguration_api import (
+from modular_simulation.connection.domain.reconfiguration_api import (
     DynamicUnitPortReconfigurationApi,
     DynamicConnectionLineReconfigurationApi,
 )
-from modular_simulation.connection.domain_contracts import (
+from modular_simulation.connection.domain.domain_contracts import (
     validate_command_envelope,
 )
 from . import spec_workflow

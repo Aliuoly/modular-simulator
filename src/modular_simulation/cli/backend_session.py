@@ -45,19 +45,19 @@ import dataclasses
 import uuid
 from typing import TYPE_CHECKING, Mapping, Sequence
 
-from modular_simulation.connection.domain_contracts import (
+from modular_simulation.connection.domain.domain_contracts import (
     CommandEnvelope,
     validate_command_envelope,
 )
-from modular_simulation.connection.error_catalog import (
+from modular_simulation.connection.domain.error_catalog import (
     DiagnosticPayload,
     extract_diagnostic_payload,
 )
-from modular_simulation.connection.network import (
+from modular_simulation.connection.topology.network import (
     CompiledConnectionNetwork,
     ConnectionNetwork,
 )
-from modular_simulation.connection.reconfiguration_api import (
+from modular_simulation.connection.domain.reconfiguration_api import (
     DynamicConnectionLineReconfigurationApi,
     DynamicUnitPortReconfigurationApi,
 )
@@ -69,7 +69,7 @@ from modular_simulation.components.control_system.runtime_wiring_api import (
 )
 
 if TYPE_CHECKING:
-    from modular_simulation.connection.runtime import (
+    from modular_simulation.connection.runtime.runtime import (
         BarrierReconfigurationReport,
     )
 

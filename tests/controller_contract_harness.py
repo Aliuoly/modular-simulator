@@ -19,14 +19,14 @@ from modular_simulation.components.control_system import (
 from modular_simulation.components.control_system.mode_manager import ControllerModeManager
 from modular_simulation.components.sensors import SampledDelayedSensor
 from modular_simulation.components.point import DataValue
-from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSolveResult,
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
 from modular_simulation.framework.system import System
 from modular_simulation.measurables.process_model import (
     ProcessModel,
