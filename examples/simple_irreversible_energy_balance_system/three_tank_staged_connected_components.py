@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# pyright: reportAttributeAccessIssue=false
+
 from dataclasses import dataclass
 from functools import partial
 from math import isfinite, sqrt
@@ -24,14 +26,17 @@ from modular_simulation.components import (
     SampledDelayedSensor,
     Trajectory,
 )
-from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_element import HydraulicElement, ValveHydraulicElement
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulics.hydraulic_element import (
+    HydraulicElement,
+    ValveHydraulicElement,
+)
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     ElementEquation,
     HydraulicSystemDefinition,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.pressure_inference import (
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.hydraulics.pressure_inference import (
     BoundaryEndpoint,
     EndpointDescriptor,
     ProcessPortEndpoint,
@@ -40,8 +45,8 @@ from modular_simulation.connection.pressure_inference import (
     hydrostatic_pressure_from_submerged_head_pa,
     resolve_edge_pressure_deltas_pa,
 )
-from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
-from modular_simulation.connection.topology import TopologyGraph
+from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
+from modular_simulation.connection.topology.topology import TopologyGraph
 from modular_simulation.framework import System
 from modular_simulation.measurables import StateMetadata as M
 from modular_simulation.measurables import StateType as T

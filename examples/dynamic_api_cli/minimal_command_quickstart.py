@@ -3,19 +3,19 @@ from __future__ import annotations
 from typing import cast
 
 from modular_simulation.cli import ModularCli
-from modular_simulation.connection.domain_contracts import JunctionProcess
-from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.domain.domain_contracts import JunctionProcess
+from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.reconfiguration_api import (
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.domain.reconfiguration_api import (
     DynamicConnectionLineReconfigurationApi,
     DynamicUnitPortReconfigurationApi,
 )
-from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
-from modular_simulation.connection.runtime import ConnectionRuntimeStepResult
+from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
+from modular_simulation.connection.runtime.runtime import ConnectionRuntimeStepResult
 
 
 def _linear_equation(

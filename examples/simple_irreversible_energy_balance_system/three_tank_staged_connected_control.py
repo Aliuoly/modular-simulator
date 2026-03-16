@@ -18,14 +18,17 @@ except ModuleNotFoundError:
     from examples.simple_irreversible_energy_balance_system.process_definition import (
         EnergyBalanceProcessModel,
     )
-from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_element import HydraulicElement, ValveHydraulicElement
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulics.hydraulic_element import (
+    HydraulicElement,
+    ValveHydraulicElement,
+)
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     ElementEquation,
     HydraulicSystemDefinition,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
 from modular_simulation.framework import System
 from modular_simulation.utils.wrappers import second
 
