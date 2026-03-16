@@ -155,7 +155,7 @@ def test_cascade_reference_to_pump_speed_actuator_closes_pressure_loop() -> None
     )
     speed_sensor = SampledDelayedSensor(
         measurement_tag="pump_speed",
-        alias_tag="pump_speed_measured",
+        alias_tag="actuator/pump/recycle_pump",
         unit="Pa",
         sampling_period=0.0,
         deadtime=0.0,
@@ -171,7 +171,7 @@ def test_cascade_reference_to_pump_speed_actuator_closes_pressure_loop() -> None
         mode=ControllerMode.AUTO,
     )
     speed_controller = PIDController(
-        cv_tag="pump_speed_measured",
+        cv_tag="actuator/pump/recycle_pump",
         cv_range=(0.0, 220000.0),
         reference_trajectory=Trajectory(y0=20000.0),
         cascade_controller=pressure_controller,
@@ -182,7 +182,7 @@ def test_cascade_reference_to_pump_speed_actuator_closes_pressure_loop() -> None
     )
 
     pump_speed_element = ControlElement(
-        mv_tag="pump_speed",
+        mv_tag="actuator/pump/recycle_pump",
         mv_range=(0.0, 220000.0),
         mv_trajectory=Trajectory(y0=20000.0),
         controller=speed_controller,

@@ -293,6 +293,7 @@ class ThermoBoundaryPropagationStep:
                     source_node_id=source_node_id,
                     source_port_name=source_port_name,
                     source_binding=source_binding,
+                    allow_binding_payload_fallback=True,
                 )
                 if source_condition is None:
                     continue
@@ -377,6 +378,7 @@ class ThermoBoundaryPropagationStep:
         source_node_id: str,
         source_port_name: str,
         source_binding: object | None,
+        allow_binding_payload_fallback: bool = False,
     ) -> PortCondition | None:
         feed_streams = self._config.feed_streams_by_boundary_id
         if feed_streams is not None:
@@ -392,6 +394,7 @@ class ThermoBoundaryPropagationStep:
 
         seen_candidate_ids: set[int] = set()
         saw_process_source = False
+        saw_payload_binding = False
         for candidate in candidates:
             if candidate is None:
                 continue
@@ -403,6 +406,27 @@ class ThermoBoundaryPropagationStep:
             resolved_condition = resolve_process_outlet_condition(candidate, source_port_name)
             if resolved_condition is not None:
                 return resolved_condition
+
+            if self._supports_outlet_payload(candidate):
+                saw_payload_binding = True
+                if allow_binding_payload_fallback:
+                    payload_condition = self._resolve_binding_payload_outlet_condition(
+                        binding=candidate,
+                        port_name=source_port_name,
+                    )
+                    if payload_condition is not None:
+                        return payload_condition
+
+        if saw_process_source and saw_payload_binding and allow_binding_payload_fallback:
+            raise BindingError(
+                "Missing resolvable outlet condition for process source "
+                + f"'{source_node_id}.{source_port_name}'; source must implement "
+                + "resolve_outlet_condition(port_name) or expose a bound get_outlet(port_name) "
+                + "payload with composition."
+            )
+
+        if saw_process_source and saw_payload_binding:
+            return None
 
         if saw_process_source:
             raise BindingError(
@@ -812,6 +836,117 @@ class ThermoBoundaryPropagationStep:
         if isinstance(raw, Mapping):
             return cast(Mapping[str, object], raw)
         return None
+
+    def _supports_outlet_payload(self, candidate: object | None) -> bool:
+        return candidate is not None and callable(getattr(candidate, "get_outlet", None))
+
+    def _resolve_binding_payload_outlet_condition(
+        self,
+        *,
+        binding: object,
+        port_name: str,
+    ) -> PortCondition | None:
+        outlet_payload = self._safe_get_outlet_payload(binding, port_name)
+        if outlet_payload is None:
+            return None
+
+        raw_composition = outlet_payload.get("composition")
+        if not isinstance(raw_composition, tuple) or not raw_composition:
+            return None
+
+        composition = tuple(float(item) for item in raw_composition)
+        state_payload = outlet_payload.get("state")
+        nested_state = state_payload if isinstance(state_payload, Mapping) else None
+
+        temperature = self._float_from_payload(
+            outlet_payload,
+            "temperature",
+            nested=nested_state,
+            nested_key="temperature",
+        )
+        if temperature is None:
+            temperature = self._config.default_temperature_k
+
+        pressure = self._pressure_from_outlet_payload(outlet_payload)
+        if pressure is None:
+            pressure = self._config.default_pressure_pa
+
+        phase = self._str_from_payload(
+            outlet_payload,
+            "phase",
+            nested=nested_state,
+            nested_key="phase",
+        )
+
+        return PortCondition(
+            state=MaterialState(
+                pressure=pressure,
+                temperature=temperature,
+                mole_fractions=composition,
+                species_ids=None,
+                phase=phase,
+                enthalpy_molar=self._float_from_payload(
+                    outlet_payload,
+                    "enthalpy_molar",
+                    nested=nested_state,
+                    nested_key="enthalpy_molar",
+                ),
+                entropy_molar=self._float_from_payload(
+                    outlet_payload,
+                    "entropy_molar",
+                    nested=nested_state,
+                    nested_key="entropy_molar",
+                ),
+            ),
+            species_ids=None,
+            through_molar_flow_rate=self._flow_from_outlet_payload(outlet_payload),
+            macro_step_time_s=None,
+        )
+
+    def _float_from_payload(
+        self,
+        payload: Mapping[str, object],
+        key: str,
+        *,
+        nested: Mapping[str, object] | None = None,
+        nested_key: str | None = None,
+    ) -> float | None:
+        value = payload.get(key)
+        if isinstance(value, (float, int)) and isfinite(float(value)):
+            return float(value)
+        if nested is None or nested_key is None:
+            return None
+        nested_value = nested.get(nested_key)
+        if isinstance(nested_value, (float, int)) and isfinite(float(nested_value)):
+            return float(nested_value)
+        return None
+
+    def _str_from_payload(
+        self,
+        payload: Mapping[str, object],
+        key: str,
+        *,
+        nested: Mapping[str, object] | None = None,
+        nested_key: str | None = None,
+    ) -> str | None:
+        value = payload.get(key)
+        if isinstance(value, str):
+            return value
+        if nested is None or nested_key is None:
+            return None
+        nested_value = nested.get(nested_key)
+        if isinstance(nested_value, str):
+            return nested_value
+        return None
+
+    def _flow_from_outlet_payload(self, outlet_payload: Mapping[str, object]) -> float:
+        fallback = outlet_payload.get("outlet_flow")
+        if isinstance(fallback, (float, int)) and isfinite(float(fallback)):
+            return float(fallback)
+        fallback = outlet_payload.get("flow")
+        if isinstance(fallback, (float, int)) and isfinite(float(fallback)):
+            return abs(float(fallback))
+        return 0.0
 
     def _resolve_manual_overrides(
         self,

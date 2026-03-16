@@ -79,11 +79,11 @@ class FirstOrderLiquidTankModel(ProcessModel):
     ] = 1.0
     inlet_reactant_fraction: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="", description="Inlet reactant mole fraction"),
+        M(type=T.BOUNDARY, unit="", description="Inlet reactant mole fraction"),
     ] = 1.0
     inlet_molar_flow_rate: Annotated[
         float,
-        M(type=T.CONTROLLED, unit="mol/s", description="Inlet molar flow rate"),
+        M(type=T.BOUNDARY, unit="mol/s", description="Inlet molar flow rate"),
     ] = 1.0
     liquid_holdup_mol: Annotated[
         float,

@@ -24,7 +24,7 @@ SparseJacobianTriplet = hydraulic_solver.SparseJacobianTriplet
 
 
 @dataclass(frozen=True)
-class _AffineResidualElement:
+class _AffineResidualElement(hydraulic_element.HydraulicElement):
     coefficient_a: float
     coefficient_b: float
 
@@ -62,7 +62,7 @@ class _AffineResidualElement:
 
 
 @dataclass(frozen=True)
-class _JacobianOnlyElement:
+class _JacobianOnlyElement(hydraulic_element.HydraulicElement):
     parameter_spec: ElementParameterSpec = ElementParameterSpec(names=())
     unknown_spec: ElementUnknownSpec = ElementUnknownSpec(names=("u",))
     output_spec: ElementOutputSpec = ElementOutputSpec(residual_names=("r",))
