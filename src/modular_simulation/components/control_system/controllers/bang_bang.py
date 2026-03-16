@@ -52,7 +52,7 @@ class BangBangController(AbstractController):
     _state: bool = PrivateAttr(default=False)
 
     @override
-    def post_install(
+    def post_wire_to_element(
         self,
         system: System,
         mv_getter: Callable[[], DataValue],

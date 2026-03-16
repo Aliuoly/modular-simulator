@@ -23,6 +23,15 @@ from modular_simulation.connection.network import (
 
 @dataclass(frozen=True)
 class BarrierReconfigurationReport:
+    """Report returned after attempting to apply a batch of reconfiguration requests.
+
+    Responsibility:
+        Convey how many requests were present before and after processing, which
+        request IDs were applied or skipped, and the resulting graph revision
+        (if any). This is a lightweight value object used by callers to inspect
+        the outcome of a barrier application without exposing processing internals.
+    """
+
     queue_size_before: int
     queue_size_after: int
     applied_request_ids: tuple[str, ...]
@@ -32,6 +41,15 @@ class BarrierReconfigurationReport:
 
 @dataclass(frozen=True)
 class RuntimeBarrierStateSnapshot:
+    """Snapshot of runtime barrier-related state owned by the runtime.
+
+    Responsibility:
+        Capture the minimal runtime-side state required to rollback or restore
+        barrier processing: simulation time, macro-step index, and committed
+        idempotency mapping. The processor itself does not mutate these values
+        directly but relies on a runtime owner implementing capture/restore.
+    """
+
     simulation_time_s: float
     macro_step_index: int
     committed_idempotency_keys: frozenset[str]
@@ -77,6 +95,18 @@ class _ReconfigurationBarrierRuntimeOwner(Protocol):
 
 
 class ReconfigurationBarrierProcessor:
+    """Processor that applies queued reconfiguration transactions at a barrier.
+
+    Responsibility:
+        Own the lifecycle for parsing, semantic and invariant validation,
+        staging of mutations, and compile-preview for a drained batch of
+        queued reconfiguration transactions. The runtime (runtime owner)
+        remains responsible for time/macro-step, idempotency storage,
+        save/restore of runtime state, and executing hydraulic solve steps; the
+        processor coordinates with that runtime owner but does not own those
+        concerns.
+    """
+
     def __init__(self, *, runtime_owner: _ReconfigurationBarrierRuntimeOwner) -> None:
         self._runtime_owner = runtime_owner
 

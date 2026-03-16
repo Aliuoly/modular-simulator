@@ -179,7 +179,13 @@ def test_runtime_snapshot_round_trip_preserves_port_condition_store() -> None:
         process_runtime_state=process_runtime_state,
     )
     validated = validate_runtime_snapshot_contract(snapshot)
-    assert validated.port_condition_store == snapshot["snapshot"]["port_condition_store"]
+    # snapshot["snapshot"] is typed as object in some contexts; narrow it to a mapping before indexing
+    snapshot_section = cast(dict[str, object], snapshot["snapshot"])
+    from modular_simulation.connection.runtime_port_snapshot_store import RuntimePortSnapshotPayload
+
+    assert validated.port_condition_store == cast(
+        RuntimePortSnapshotPayload, snapshot_section["port_condition_store"]
+    )
 
     runtime.clear_latest_port_conditions()
     process_runtime_state["reactor"] = {"temperature": 300.0, "conversion": 0.10}

@@ -102,6 +102,16 @@ class TransportModel(ABC):
 
 @dataclass(frozen=True)
 class MVPLagTransportModel(TransportModel):
+    """Minimal built-in lag transport model used by the runtime.
+
+    Responsibility:
+        Provide the bundled 'mvp_lag' transport behaviour used by runtime
+        owners. This implementation is framework-owned and encapsulates the
+        lag-time, near-zero flow handling, and smoothing heuristics used when
+        advancing LagTransportState across an edge. Public construction is a
+        simple data-constructor; heavy lifting happens in update(...).
+    """
+
     lag_time_constant_s: float
     near_zero_flow_epsilon: float = 1.0e-12
     flow_smoothing_flow_rate: float = 1.0e-9

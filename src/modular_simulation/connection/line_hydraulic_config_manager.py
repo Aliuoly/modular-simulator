@@ -24,6 +24,15 @@ _HEAT_ACTUATOR_NAMESPACE_PREFIX = "actuator/heat/"
 
 @dataclass(frozen=True)
 class LinePumpConfig:
+    """Small value object describing an attached pump on a line.
+
+    Responsibility:
+        Store identification and the initial parameter choice for a pump
+        overlay attached to a hydraulic line. This is a small, storage-only
+        value object used by LineHydraulicConfig to record pump attachment
+        metadata; behavior and validation belong to the manager.
+    """
+
     pump_id: str
     initial_pump_speed: float
     pump_parameter_name: str
@@ -31,6 +40,15 @@ class LinePumpConfig:
 
 @dataclass(frozen=True)
 class LineHydraulicConfig:
+    """Container describing the hydraulic overlay configuration for a line.
+
+    Responsibility:
+        Record the chosen hydraulic equation, the resistance parameter name,
+        and any attached valve or pump overlays. This class is a pure data
+        holder; mutation and higher-level validation are the responsibility of
+        LineHydraulicConfigManager.
+    """
+
     line_id: str
     equation_name: str
     resistance_parameter_name: str
@@ -41,6 +59,15 @@ class LineHydraulicConfig:
 
 @dataclass(frozen=True)
 class LineHydraulicConfigManagerSnapshot:
+    """Snapshot of manager-owned line-hydraulic configuration and pending commands.
+
+    Responsibility:
+        Capture only the configuration and staged command state owned by
+        LineHydraulicConfigManager so ConnectionNetwork (or other callers)
+        can embed and restore manager state without reaching into manager
+        internals.
+    """
+
     line_hydraulic_configs: dict[str, LineHydraulicConfig]
     pending_valve_open_fractions: dict[str, float]
     pending_pump_speeds: dict[str, float]
@@ -50,6 +77,16 @@ class LineHydraulicConfigManagerSnapshot:
 
 
 class LineHydraulicConfigManager:
+    """Manager that owns line-specific hydraulic configuration and staged commands.
+
+    Responsibility:
+        Own the line-hydraulic configuration cluster (geometry/resistance,
+        attached valve/pump overlays, heat-actuator mapping) and staged
+        command queues (valve/pump/heat actuator commands). This manager
+        provides snapshot capture/restore and compile-time overlay projection
+        but does not own graph compilation or network topology.
+    """
+
     def __init__(self) -> None:
         self._line_hydraulic_configs: dict[str, LineHydraulicConfig] = {}
         self._pending_valve_open_fractions: dict[str, float] = {}
