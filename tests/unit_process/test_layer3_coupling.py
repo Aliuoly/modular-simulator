@@ -5,24 +5,27 @@ import numpy as np
 import pytest
 from typing import cast
 
-from modular_simulation.connection.connection_layer import TransportAndMixingUpdate
-from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.runtime.connection_layer import TransportAndMixingUpdate
+from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSolveResult,
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.runtime import (
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.runtime.runtime import (
     ConnectionRuntimeOrchestrator,
     ConnectionRuntimeStepResult,
 )
-from modular_simulation.connection.state import MaterialState, PortCondition
-from modular_simulation.connection.thermo_coupling import (
+from modular_simulation.connection.domain.state import MaterialState, PortCondition
+from modular_simulation.connection.runtime.thermo_coupling import (
     ThermoBoundaryPropagationConfig,
     ThermoBoundaryPropagationStep,
 )
-from modular_simulation.connection.transport import LagTransportState, LagTransportUpdateResult
+from modular_simulation.connection.domain.transport import (
+    LagTransportState,
+    LagTransportUpdateResult,
+)
 from modular_simulation.thermodynamics.property_package import FlashResult, PropertyPackage
 from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 

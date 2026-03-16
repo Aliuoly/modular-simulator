@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false
+# pyright: reportMissingTypeStubs=false, reportMissingImports=false
 
+from collections.abc import Mapping
 from math import isfinite
+from types import MappingProxyType
 from typing import Annotated, ClassVar, cast, override
 
 import numpy as np
 from numpy.typing import NDArray
 from pydantic import PrivateAttr
 
-from modular_simulation.connection.hydraulic_compile import calculate_effective_valve_resistance
-from modular_simulation.connection.hydraulic_element import (
-    ValveHydraulicElement,
-    smooth_signed_quadratic_flow_term,
-)
+from modular_simulation.connection.hydraulics.hydraulic_element import PumpHydraulicElement
 from modular_simulation.measurables.process_model import StateMetadata as M
 from modular_simulation.measurables.process_model import StateType as T
 from modular_simulation.thermodynamics.algebraic_process_model import (
@@ -21,13 +19,18 @@ from modular_simulation.thermodynamics.algebraic_process_model import (
     SINGLE_IO,
     UnitProcessPorts,
 )
-from modular_simulation.thermodynamics.hydraulic_adapters import validate_outlet_port
+from modular_simulation.thermodynamics.hydraulic_adapters import (
+    default_pump_hydraulic_parameters,
+    validate_outlet_port,
+)
 from modular_simulation.thermodynamics.property_package import PropertyPackage
 from modular_simulation.thermodynamics.stream import PortAttributeMap, StreamData
 from modular_simulation.utils.typing import ArrayIndex, Seconds
 
+_FLOW_EPSILON = 1.0e-12
 _COMPOSITION_TOL = 1.0e-8
 _TINY_POSITIVE_PRESSURE = 1.0e-9
+_REFERENCE_RHO_CP = 4.2e6
 
 
 def _coerce_vector(
@@ -54,7 +57,17 @@ def _validate_composition(composition: NDArray[np.float64], *, name: str) -> Non
         raise ValueError(f"{name} must sum to 1.0.")
 
 
-class Valve(AlgebraicProcessModel):
+def _pressure_rise_curve(flow_rate: float, pump_speed: float) -> float:
+    del flow_rate
+    return pump_speed
+
+
+def _d_pressure_rise_d_flow_rate(flow_rate: float, pump_speed: float) -> float:
+    del flow_rate, pump_speed
+    return 0.0
+
+
+class Pump(AlgebraicProcessModel):
     _INLET_MAP: ClassVar[dict[str, PortAttributeMap]] = {
         "inlet": PortAttributeMap(
             flow="inlet_flow",
@@ -73,26 +86,14 @@ class Valve(AlgebraicProcessModel):
     }
 
     n_species: Annotated[int, M(type=T.CONSTANT, unit="", description="number of species")] = 2
-    Cv: Annotated[
+    pump_speed: Annotated[
         float,
-        M(type=T.CONSTANT, unit="", description="valve flow coefficient (m^3/s/sqrt(Pa))"),
-    ] = 1.0
-    minimum_open_fraction: Annotated[
-        float,
-        M(type=T.CONSTANT, unit="", description="minimum allowed valve opening"),
+        M(type=T.BOUNDARY, unit="Pa", description="pump speed proxy used by pump head curve"),
     ] = 0.0
-    maximum_open_fraction: Annotated[
+    efficiency: Annotated[
         float,
-        M(type=T.CONSTANT, unit="", description="maximum allowed valve opening"),
-    ] = 1.0
-    delta: Annotated[
-        float,
-        M(type=T.CONSTANT, unit="m^3/s", description="smooth flow regularization parameter"),
-    ] = 1.0e-6
-    min_relative_open_fraction: Annotated[
-        float,
-        M(type=T.CONSTANT, unit="", description="minimum throttling fraction floor"),
-    ] = 1.0e-3
+        M(type=T.CONSTANT, unit="", description="hydraulic efficiency in (0,1]"),
+    ] = 0.75
 
     inlet_flow: Annotated[
         float,
@@ -110,10 +111,6 @@ class Valve(AlgebraicProcessModel):
         NDArray[np.float64],
         M(type=T.BOUNDARY, unit="", description="inlet composition vector by species index"),
     ] = np.zeros(0, dtype=np.float64)
-    open_fraction: Annotated[
-        float,
-        M(type=T.BOUNDARY, unit="", description="instantaneous valve opening fraction"),
-    ] = 1.0
 
     outlet_flow: Annotated[
         float,
@@ -121,7 +118,7 @@ class Valve(AlgebraicProcessModel):
     ] = 0.0
     outlet_pressure: Annotated[
         float,
-        M(type=T.ALGEBRAIC, unit="Pa", description="outlet pressure after throttling"),
+        M(type=T.ALGEBRAIC, unit="Pa", description="outlet pressure after pressure rise"),
     ] = 101325.0
     outlet_temperature: Annotated[
         float,
@@ -131,13 +128,18 @@ class Valve(AlgebraicProcessModel):
         NDArray[np.float64],
         M(type=T.ALGEBRAIC, unit="", description="outlet composition vector by species index"),
     ] = np.zeros(0, dtype=np.float64)
-    outlet_enthalpy: Annotated[
+    power_consumed: Annotated[
         float,
-        M(type=T.ALGEBRAIC, unit="J/mol", description="outlet molar enthalpy"),
+        M(type=T.ALGEBRAIC, unit="W", description="hydraulic power consumption"),
     ] = 0.0
 
     _property_package: PropertyPackage | None = PrivateAttr(default=None)
-    _hydraulic_element: ValveHydraulicElement = PrivateAttr(default_factory=ValveHydraulicElement)
+    _hydraulic_element: PumpHydraulicElement = PrivateAttr(
+        default_factory=lambda: PumpHydraulicElement(
+            dp_curve=_pressure_rise_curve,
+            d_dp_d_mdot=_d_pressure_rise_d_flow_rate,
+        )
+    )
 
     @override
     def model_post_init(self, context: object) -> None:
@@ -164,23 +166,10 @@ class Valve(AlgebraicProcessModel):
             raise ValueError("inlet_temperature must be finite.")
         if not isfinite(self.inlet_pressure) or self.inlet_pressure <= 0.0:
             raise ValueError("inlet_pressure must be finite and positive.")
-        if not isfinite(self.open_fraction):
-            raise ValueError("open_fraction must be finite.")
-        if not isfinite(self.Cv) or self.Cv <= 0.0:
-            raise ValueError("Cv must be finite and positive.")
-        if not isfinite(self.delta) or self.delta <= 0.0:
-            raise ValueError("delta must be finite and positive.")
-        if not isfinite(self.minimum_open_fraction) or not isfinite(self.maximum_open_fraction):
-            raise ValueError("valve open range must be finite.")
-        if self.minimum_open_fraction > self.maximum_open_fraction:
-            raise ValueError("valve open range is invalid: minimum must be <= maximum.")
-        if (
-            self.open_fraction < self.minimum_open_fraction
-            or self.open_fraction > self.maximum_open_fraction
-        ):
-            raise ValueError("open_fraction must be within configured min/max bounds.")
-        if not isfinite(self.min_relative_open_fraction) or self.min_relative_open_fraction <= 0.0:
-            raise ValueError("min_relative_open_fraction must be finite and positive.")
+        if not isfinite(self.pump_speed) or self.pump_speed < 0.0:
+            raise ValueError("pump_speed must be finite and non-negative.")
+        if not isfinite(self.efficiency) or self.efficiency <= 0.0 or self.efficiency > 1.0:
+            raise ValueError("efficiency must be finite and in (0, 1].")
 
         _validate_composition(self.inlet_composition, name="inlet_composition")
 
@@ -197,7 +186,7 @@ class Valve(AlgebraicProcessModel):
         package = self._property_package
         if package is None:
             raise ValueError(
-                "Valve requires a property package with density and molecular_weight to convert between mol/s and m^3/s."
+                "Pump requires a property package with density and molecular_weight to convert between mol/s and m^3/s."
             )
 
         density_kg_m3: float | None = None
@@ -213,29 +202,29 @@ class Valve(AlgebraicProcessModel):
                 )
         except Exception as exc:
             raise ValueError(
-                "Valve could not determine density from property package for flow conversion."
+                "Pump could not determine density from property package for flow conversion."
             ) from exc
 
         if not isfinite(float(density_kg_m3)) or float(density_kg_m3) <= 0.0:
             raise ValueError(
-                "Valve requires a positive density from property package to convert between mol/s and m^3/s."
+                "Pump requires a positive density from property package to convert between mol/s and m^3/s."
             )
 
         try:
             molecular_weight_kg_per_mol = float(package.molecular_weight(composition)) / 1000.0
         except Exception as exc:
             raise ValueError(
-                "Valve could not determine molecular_weight from property package for flow conversion."
+                "Pump could not determine molecular_weight from property package for flow conversion."
             ) from exc
 
         if not isfinite(molecular_weight_kg_per_mol) or molecular_weight_kg_per_mol <= 0.0:
             raise ValueError(
-                "Valve requires a positive molecular_weight from property package to convert between mol/s and m^3/s."
+                "Pump requires a positive molecular_weight from property package to convert between mol/s and m^3/s."
             )
 
         molar_density = float(density_kg_m3) / molecular_weight_kg_per_mol
         if not isfinite(molar_density) or molar_density <= 0.0:
-            raise ValueError("Valve computed a non-positive molar density for flow conversion.")
+            raise ValueError("Pump computed a non-positive molar density for flow conversion.")
         return molar_density
 
     def apply_inlet(self, port_name: str, stream: StreamData) -> None:
@@ -293,7 +282,18 @@ class Valve(AlgebraicProcessModel):
             port_name=port_name,
             allowed_outlet_ports=self.ports.outlets,
         )
-        return ValveHydraulicElement()
+        return PumpHydraulicElement(
+            dp_curve=_pressure_rise_curve,
+            d_dp_d_mdot=_d_pressure_rise_d_flow_rate,
+        )
+
+    def hydraulic_parameters_for_port(self, port_name: str) -> Mapping[str, float]:
+        validate_outlet_port(
+            unit_name=type(self).__name__,
+            port_name=port_name,
+            allowed_outlet_ports=self.ports.outlets,
+        )
+        return MappingProxyType(default_pump_hydraulic_parameters(pump_speed=self.pump_speed))
 
     @staticmethod
     @override
@@ -317,13 +317,9 @@ class Valve(AlgebraicProcessModel):
         inlet_temperature = float(u[u_map["inlet_temperature"]])
         inlet_pressure = float(u[u_map["inlet_pressure"]])
         inlet_composition = _vector_from_state(u, u_map["inlet_composition"])
-        open_fraction = float(u[u_map["open_fraction"]])
 
-        cv_value = float(k[k_map["Cv"]])
-        minimum_open_fraction = float(k[k_map["minimum_open_fraction"]])
-        maximum_open_fraction = float(k[k_map["maximum_open_fraction"]])
-        delta = float(k[k_map["delta"]])
-        min_relative_open_fraction = float(k[k_map["min_relative_open_fraction"]])
+        pump_speed = float(u[u_map["pump_speed"]])
+        efficiency = float(k[k_map["efficiency"]])
 
         if not isfinite(inlet_flow) or inlet_flow < 0.0:
             raise ValueError("inlet_flow must be finite and non-negative.")
@@ -331,41 +327,35 @@ class Valve(AlgebraicProcessModel):
             raise ValueError("inlet_temperature must be finite.")
         if not isfinite(inlet_pressure) or inlet_pressure <= 0.0:
             raise ValueError("inlet_pressure must be finite and positive.")
-        if not isfinite(open_fraction):
-            raise ValueError("open_fraction must be finite.")
-        if not isfinite(cv_value) or cv_value <= 0.0:
-            raise ValueError("Cv must be finite and positive.")
-        if not isfinite(delta) or delta <= 0.0:
-            raise ValueError("delta must be finite and positive.")
-        if not isfinite(min_relative_open_fraction) or min_relative_open_fraction <= 0.0:
-            raise ValueError("min_relative_open_fraction must be finite and positive.")
+        if not isfinite(pump_speed) or pump_speed < 0.0:
+            raise ValueError("pump_speed must be finite and non-negative.")
+        if not isfinite(efficiency) or efficiency <= 0.0 or efficiency > 1.0:
+            raise ValueError("efficiency must be finite and in (0, 1].")
         if inlet_composition.size != n_species:
             raise ValueError(
                 f"inlet_composition length mismatch: expected {n_species}, got {inlet_composition.size}."
             )
-
         _validate_composition(inlet_composition, name="inlet_composition")
 
-        resistance_when_open = 1.0 / (cv_value * cv_value)
-        effective_resistance = calculate_effective_valve_resistance(
-            resistance_when_open=resistance_when_open,
-            open_fraction=open_fraction,
-            minimum_open_fraction=minimum_open_fraction,
-            maximum_open_fraction=maximum_open_fraction,
-            min_relative_open_fraction=min_relative_open_fraction,
+        element = PumpHydraulicElement(
+            dp_curve=_pressure_rise_curve,
+            d_dp_d_mdot=_d_pressure_rise_d_flow_rate,
         )
+        dp_curve = element.dp_curve
+        if dp_curve is None:
+            raise RuntimeError("dp_curve callback must be available for pump calculations.")
+        element_pressure_rise = float(dp_curve(inlet_flow, pump_speed))
 
-        flow_term = smooth_signed_quadratic_flow_term(m_dot=inlet_flow, delta=delta)
-        outlet_pressure = max(
-            inlet_pressure - effective_resistance * flow_term, _TINY_POSITIVE_PRESSURE
-        )
+        outlet_pressure = max(inlet_pressure + element_pressure_rise, _TINY_POSITIVE_PRESSURE)
+        power_consumed = inlet_flow * element_pressure_rise / efficiency
+        delta_temperature = element_pressure_rise / (efficiency * _REFERENCE_RHO_CP)
 
         result = np.zeros(algebraic_size, dtype=np.float64)
         result[algebraic_map["outlet_flow"]] = inlet_flow
         result[algebraic_map["outlet_pressure"]] = outlet_pressure
-        result[algebraic_map["outlet_temperature"]] = inlet_temperature
+        result[algebraic_map["outlet_temperature"]] = inlet_temperature + delta_temperature
         result[algebraic_map["outlet_composition"]] = inlet_composition
-        result[algebraic_map["outlet_enthalpy"]] = 0.0
+        result[algebraic_map["power_consumed"]] = power_consumed
         return result
 
     @override
@@ -374,6 +364,9 @@ class Valve(AlgebraicProcessModel):
 
         package = self._property_package
         if package is None:
+            return
+        if self.inlet_flow <= _FLOW_EPSILON:
+            self.outlet_temperature = float(self.inlet_temperature)
             return
 
         composition_array = np.asarray(self.inlet_composition, dtype=np.float64)
@@ -384,15 +377,49 @@ class Valve(AlgebraicProcessModel):
             P=float(self.inlet_pressure),
             z=z,
         )
-        inlet_enthalpy = float(flash_in.enthalpy_molar)
+        phase_for_cp = "liquid" if flash_in.phase == "two-phase" else flash_in.phase
+        cp_molar = float(
+            package.heat_capacity_cp(
+                T=float(self.inlet_temperature),
+                P=float(self.inlet_pressure),
+                z=z,
+                phase=phase_for_cp,
+            )
+        )
+        mw_kg_per_mol = float(package.molecular_weight(z)) / 1000.0
 
-        flash_out = package.flash_ph(
+        density = flash_in.liquid_density
+        if density is None:
+            density = flash_in.vapor_density
+        if density is None:
+            density = package.density(
+                T=float(self.inlet_temperature),
+                P=float(self.inlet_pressure),
+                z=z,
+                phase=phase_for_cp,
+            )
+
+        if cp_molar <= 0.0 or mw_kg_per_mol <= 0.0 or density <= 0.0:
+            return
+
+        cp_mass = cp_molar / mw_kg_per_mol
+        rho_cp = float(density) * cp_mass
+        if rho_cp <= 0.0:
+            return
+
+        dp_curve = self._hydraulic_element.dp_curve
+        if dp_curve is None:
+            return
+        element_pressure_rise = float(dp_curve(float(self.inlet_flow), float(self.pump_speed)))
+        delta_temperature = element_pressure_rise / (float(self.efficiency) * rho_cp)
+        target_temperature = float(self.inlet_temperature) + delta_temperature
+
+        flash_out = package.flash_tp(
+            T=target_temperature,
             P=max(float(self.outlet_pressure), _TINY_POSITIVE_PRESSURE),
-            H=inlet_enthalpy,
             z=z,
         )
         self.outlet_temperature = float(flash_out.temperature)
-        self.outlet_enthalpy = float(flash_out.enthalpy_molar)
 
 
-__all__ = ["Valve"]
+__all__ = ["Pump"]

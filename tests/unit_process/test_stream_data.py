@@ -6,7 +6,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from modular_simulation.connection.state import MaterialState, PortCondition
+from modular_simulation.connection.domain.state import MaterialState, PortCondition
 from modular_simulation.thermodynamics.stream import (
     PortAttributeMap,
     StreamData,

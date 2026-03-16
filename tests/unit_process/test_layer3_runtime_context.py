@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from modular_simulation.connection.connected_plant_orchestrator import ConnectedPlantOrchestrator
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
-from modular_simulation.connection.subsystem_descriptor import SubsystemRuntimeDescriptor
+from modular_simulation.connection.runtime.connected_plant_orchestrator import (
+    ConnectedPlantOrchestrator,
+)
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
+from modular_simulation.connection.topology.subsystem_descriptor import SubsystemRuntimeDescriptor
 from modular_simulation.thermodynamics import (
     PowerLawRateLaw,
     Reaction,

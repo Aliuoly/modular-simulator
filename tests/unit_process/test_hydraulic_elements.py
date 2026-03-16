@@ -7,14 +7,14 @@ from typing import Any
 import numpy as np
 import pytest
 
-from modular_simulation.connection.hydraulic_element import (
+from modular_simulation.connection.hydraulics.hydraulic_element import (
     HydraulicElement,
     PipeHydraulicElement,
     PumpHydraulicElement,
     ValveHydraulicElement,
     resolve_hydraulic_element,
 )
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     ElementEquation,
     HydraulicSystemDefinition,
 )

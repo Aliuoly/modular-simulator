@@ -9,7 +9,7 @@ import pytest
 from numpy.typing import NDArray
 from pydantic import ValidationError
 
-from modular_simulation.unit_processes.component_separator import ComponentSeparator
+from modular_simulation.unit_processes.separation.component_separator import ComponentSeparator
 
 
 def _attach(model: ComponentSeparator) -> None:

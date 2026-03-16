@@ -7,7 +7,7 @@ import pytest
 from typing import cast
 
 from modular_simulation.components import SampledDelayedSensor
-from modular_simulation.connection.unit_process_wiring import (
+from modular_simulation.connection.topology.unit_process_wiring import (
     create_subsystem_for_unit,
     create_system_for_unit,
 )

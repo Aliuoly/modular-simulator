@@ -165,6 +165,7 @@ def test_shortcut_distillation_helper_cluster_is_class_owned() -> None:
         / "src"
         / "modular_simulation"
         / "unit_processes"
+        / "separation"
         / "shortcut_distillation.py"
     )
     module_text = module_path.read_text(encoding="utf-8")

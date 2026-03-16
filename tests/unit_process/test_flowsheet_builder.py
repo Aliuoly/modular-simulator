@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from modular_simulation.connection.connected_plant_orchestrator import ConnectedPlantOrchestrator
+from modular_simulation.connection.runtime.connected_plant_orchestrator import (
+    ConnectedPlantOrchestrator,
+)
 from modular_simulation.flowsheet import Flowsheet
 from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 from modular_simulation.unit_processes import FlashDrum, HeatExchanger, HeaterCooler

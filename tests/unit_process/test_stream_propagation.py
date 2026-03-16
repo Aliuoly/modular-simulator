@@ -3,10 +3,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from modular_simulation.connection.connection_layer import TransportAndMixingUpdate
-from modular_simulation.connection.hydraulic_solver import HydraulicSolveResult
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.thermo_coupling import (
+from modular_simulation.connection.runtime.connection_layer import TransportAndMixingUpdate
+from modular_simulation.connection.hydraulics.hydraulic_solver import HydraulicSolveResult
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.runtime.thermo_coupling import (
     ThermoBoundaryPropagationConfig,
     ThermoBoundaryPropagationStep,
 )

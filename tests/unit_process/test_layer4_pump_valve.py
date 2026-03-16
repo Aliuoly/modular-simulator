@@ -9,8 +9,10 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from modular_simulation.connection.hydraulic_compile import calculate_effective_valve_resistance
-from modular_simulation.connection.hydraulic_element import (
+from modular_simulation.connection.hydraulics.hydraulic_compile import (
+    calculate_effective_valve_resistance,
+)
+from modular_simulation.connection.hydraulics.hydraulic_element import (
     PumpHydraulicElement,
     ValveHydraulicElement,
     smooth_signed_quadratic_flow_term,
