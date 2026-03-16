@@ -30,7 +30,7 @@ from modular_simulation.components.calculations.abstract_calculation import Abst
 from modular_simulation.components.abstract_component import ComponentDataDict
 from modular_simulation.components.control_system.controller_mode import ControllerMode
 from modular_simulation.components.control_system.abstract_controller import AbstractController
-from modular_simulation.connection.domain_contracts import SensorBinding
+from modular_simulation.connection.domain.domain_contracts import SensorBinding
 from modular_simulation.validation.exceptions import (
     SensorConfigurationError,
     ControllerConfigurationError,

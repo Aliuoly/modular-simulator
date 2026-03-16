@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from modular_simulation.connection.hydraulic_compile import calculate_effective_valve_resistance
-from modular_simulation.connection.hydraulic_element import PipeHydraulicElement
+from modular_simulation.connection.hydraulics.hydraulic_compile import (
+    calculate_effective_valve_resistance,
+)
+from modular_simulation.connection.hydraulics.hydraulic_element import PipeHydraulicElement
 
 DEFAULT_HYDRAULIC_DELTA = 1.0e-6
 

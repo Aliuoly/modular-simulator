@@ -5,18 +5,18 @@ from collections.abc import Mapping, Sequence
 
 import pytest
 
-from modular_simulation.connection.error_catalog import (
+from modular_simulation.connection.domain.error_catalog import (
     COMPATIBILITY_FAILURE_CODE,
     DiagnosticValueError,
 )
-from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
-from modular_simulation.connection.runtime_persistence import (
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
+from modular_simulation.connection.runtime.runtime_persistence import (
     RUNTIME_SNAPSHOT_SCHEMA_VERSION,
     restore_runtime_snapshot_contract,
     runtime_replay_state_hash,

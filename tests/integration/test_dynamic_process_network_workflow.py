@@ -13,26 +13,29 @@ from modular_simulation.components.control_system import (
     Trajectory,
 )
 from modular_simulation.components.sensors import SampledDelayedSensor, SensorRuntimeBindingApi
-from modular_simulation.connection.domain_contracts import ValveConfig
-from modular_simulation.connection.hydraulic_compile import (
+from modular_simulation.connection.domain.domain_contracts import ValveConfig
+from modular_simulation.connection.hydraulics.hydraulic_compile import (
     HydraulicCompileLifecycle,
 )
-from modular_simulation.connection.hydraulic_element import HydraulicElement, ValveHydraulicElement
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_element import (
+    HydraulicElement,
+    ValveHydraulicElement,
+)
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     ElementEquation,
     HydraulicSolveResult,
     HydraulicSystemDefinition,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.reconfiguration_api import (
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.domain.reconfiguration_api import (
     DynamicConnectionLineReconfigurationApi,
     DynamicUnitPortReconfigurationApi,
 )
-from modular_simulation.connection.runtime import (
+from modular_simulation.connection.runtime.runtime import (
     ConnectionRuntimeOrchestrator,
     ConnectionRuntimeStepResult,
 )
-from modular_simulation.connection.runtime_persistence import (
+from modular_simulation.connection.runtime.runtime_persistence import (
     restore_runtime_snapshot_contract,
     runtime_replay_state_hash,
     save_runtime_snapshot_contract,

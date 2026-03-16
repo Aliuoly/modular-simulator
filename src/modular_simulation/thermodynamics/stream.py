@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from modular_simulation.connection.state import MaterialState, PortCondition
+from modular_simulation.connection.domain.state import MaterialState, PortCondition
 
 from .algebraic_process_model import UnitProcessPorts
 

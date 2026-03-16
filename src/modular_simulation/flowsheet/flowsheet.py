@@ -11,31 +11,31 @@ import warnings
 import numpy as np
 from numpy.typing import NDArray
 
-from modular_simulation.connection.connected_plant_orchestrator import (
+from modular_simulation.connection.runtime.connected_plant_orchestrator import (
     ConnectedPlantOrchestrator,
     ConnectedPlantStepResult,
 )
-from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_element import (
+from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulics.hydraulic_element import (
     HydraulicElement,
     resolve_hydraulic_element,
 )
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     ElementEquation,
     HydraulicSystemDefinition,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.process_stream_io import ProcessStreamIO
-from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
-from modular_simulation.connection.subsystem_descriptor import Subsystem
-from modular_simulation.connection.unit_process_wiring import create_subsystem_for_unit
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.runtime.process_stream_io import ProcessStreamIO
+from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
+from modular_simulation.connection.topology.subsystem_descriptor import Subsystem
+from modular_simulation.connection.topology.unit_process_wiring import create_subsystem_for_unit
 from modular_simulation.thermodynamics.algebraic_process_model import UnitProcessPorts
 from modular_simulation.thermodynamics.stream import StreamData
 
 if TYPE_CHECKING:
     from modular_simulation.measurables.process_model import ProcessModel
     from modular_simulation.framework.system import System
-    from modular_simulation.connection.topology import TopologyGraph
+    from modular_simulation.connection.topology.topology import TopologyGraph
     from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 
 

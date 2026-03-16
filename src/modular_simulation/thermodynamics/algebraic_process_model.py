@@ -12,7 +12,7 @@ from modular_simulation.utils.typing import ArrayIndex, Seconds
 from modular_simulation.validation.exceptions import MeasurableConfigurationError
 
 if TYPE_CHECKING:
-    from modular_simulation.connection.state import PortCondition
+    from modular_simulation.connection.domain.state import PortCondition
     from modular_simulation.thermodynamics.stream import StreamData
 
 
