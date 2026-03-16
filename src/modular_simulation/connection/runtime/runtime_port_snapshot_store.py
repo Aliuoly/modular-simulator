@@ -7,7 +7,7 @@ from typing import cast
 
 from pydantic import ValidationError
 
-from modular_simulation.connection.state import PortCondition
+from ..domain.state import PortCondition
 
 PortConditionPayload = dict[str, object]
 PortSnapshotNamespacePayload = dict[str, dict[str, PortConditionPayload]]

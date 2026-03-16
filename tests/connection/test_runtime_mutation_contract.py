@@ -6,19 +6,19 @@ import pytest
 from types import MappingProxyType
 from typing import cast
 
-from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_element import (
+from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulics.hydraulic_element import (
     HydraulicElement,
     PumpHydraulicElement,
     ValveHydraulicElement,
 )
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     ElementEquation,
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.runtime import (
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.runtime.runtime import (
     ConnectionRuntimeOrchestrator,
     ConnectionRuntimeStepResult,
 )

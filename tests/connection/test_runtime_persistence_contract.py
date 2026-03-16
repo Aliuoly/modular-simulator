@@ -6,17 +6,17 @@ from collections.abc import Mapping
 import pytest
 from typing import cast
 
-from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.runtime import (
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.runtime.runtime import (
     ConnectionRuntimeOrchestrator,
     ConnectionRuntimeStepResult,
 )
-from modular_simulation.connection.runtime_persistence import (
+from modular_simulation.connection.runtime.runtime_persistence import (
     RUNTIME_SNAPSHOT_SCHEMA_MARKER,
     RUNTIME_SNAPSHOT_SCHEMA_VERSION,
     restore_runtime_snapshot_contract,
@@ -24,7 +24,7 @@ from modular_simulation.connection.runtime_persistence import (
     save_runtime_snapshot_contract,
     validate_runtime_snapshot_contract,
 )
-from modular_simulation.connection.state import MaterialState, PortCondition
+from modular_simulation.connection.domain.state import MaterialState, PortCondition
 from modular_simulation.framework.system import checkpoint_payload_checksum
 
 
@@ -181,7 +181,9 @@ def test_runtime_snapshot_round_trip_preserves_port_condition_store() -> None:
     validated = validate_runtime_snapshot_contract(snapshot)
     # snapshot["snapshot"] is typed as object in some contexts; narrow it to a mapping before indexing
     snapshot_section = cast(dict[str, object], snapshot["snapshot"])
-    from modular_simulation.connection.runtime_port_snapshot_store import RuntimePortSnapshotPayload
+    from modular_simulation.connection.runtime.runtime_port_snapshot_store import (
+        RuntimePortSnapshotPayload,
+    )
 
     assert validated.port_condition_store == cast(
         RuntimePortSnapshotPayload, snapshot_section["port_condition_store"]

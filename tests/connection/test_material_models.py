@@ -2,7 +2,7 @@ import importlib
 
 import pytest
 
-material_models = importlib.import_module("modular_simulation.connection.material_models")
+material_models = importlib.import_module("modular_simulation.connection.domain.material_models")
 IdealGasDensityModel = material_models.IdealGasDensityModel
 IncompressibleDensityModel = material_models.IncompressibleDensityModel
 

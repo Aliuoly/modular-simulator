@@ -8,18 +8,18 @@ from dataclasses import dataclass
 import numpy as np
 import pytest
 
-from modular_simulation.connection.connected_plant_orchestrator import (
+from modular_simulation.connection.runtime.connected_plant_orchestrator import (
     ConnectedPlantOrchestrator,
     ConnectedPlantPhaseHooks,
 )
-from modular_simulation.connection.connection_layer import TransportAndMixingUpdate
-from modular_simulation.connection.hydraulic_solver import HydraulicSolveResult
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.runtime import (
+from modular_simulation.connection.runtime.connection_layer import TransportAndMixingUpdate
+from modular_simulation.connection.hydraulics.hydraulic_solver import HydraulicSolveResult
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.runtime.runtime import (
     CONNECTED_PLANT_PHASE_ORDER,
     ConnectionRuntimeOrchestrator,
 )
-from modular_simulation.connection.subsystem_descriptor import SubsystemRuntimeDescriptor
+from modular_simulation.connection.topology.subsystem_descriptor import SubsystemRuntimeDescriptor
 from modular_simulation.validation.exceptions import MeasurableConfigurationError
 
 

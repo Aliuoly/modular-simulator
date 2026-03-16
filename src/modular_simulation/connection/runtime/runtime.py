@@ -8,23 +8,23 @@ from importlib import import_module
 from math import isfinite
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from modular_simulation.connection.connection_layer import (
+from ..domain.error_catalog import (
+    VALIDATION_FAILURE_CODE,
+    diagnostic_value_error,
+)
+from ..domain.state import PortCondition
+from ..hydraulics.hydraulic_solver import HydraulicSolveResult
+from ..topology.network import ConnectionNetwork
+from .connection_layer import (
     MacroCoupler,
     MacroStepBookkeeping,
     PicardIterationGateConfig,
     TransportAndMixingUpdate,
 )
-from modular_simulation.connection.hydraulic_solver import HydraulicSolveResult
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.process_stream_io import ProcessStreamIO
-from modular_simulation.connection.runtime_snapshot_schema import (
+from .process_stream_io import ProcessStreamIO
+from .runtime_snapshot_schema import (
     validate_live_runtime_snapshot_payload,
 )
-from modular_simulation.connection.error_catalog import (
-    VALIDATION_FAILURE_CODE,
-    diagnostic_value_error,
-)
-from modular_simulation.connection.state import PortCondition
 
 if TYPE_CHECKING:
     from modular_simulation.framework.system import System
@@ -312,7 +312,7 @@ class ConnectionRuntimeOrchestrator:
             else self._default_transport_and_mixing_step
         )
         runtime_port_snapshot_store_module = import_module(
-            "modular_simulation.connection.runtime_port_snapshot_store"
+            "modular_simulation.connection.runtime.runtime_port_snapshot_store"
         )
         runtime_port_snapshot_store_factory = cast(
             type[_RuntimePortSnapshotStoreLike],
@@ -346,14 +346,14 @@ class ConnectionRuntimeOrchestrator:
         self._macro_step_active: bool = False
         self._committed_idempotency_keys: set[str] = set()
         self._committed_idempotency_payloads: dict[str, str] = {}
-        validator_module = import_module("modular_simulation.connection.invariant_validator")
+        validator_module = import_module("modular_simulation.connection.domain.invariant_validator")
         validator_factory = cast(
             _InvariantValidatorFactory,
             getattr(validator_module, "ConnectionMutationInvariantValidator"),
         )
         self._invariant_validator: _InvariantValidatorLike = validator_factory()
         processor_module = import_module(
-            "modular_simulation.connection.reconfiguration_barrier_processor"
+            "modular_simulation.connection.runtime.reconfiguration_barrier_processor"
         )
         processor_factory = cast(Any, getattr(processor_module, "ReconfigurationBarrierProcessor"))
         self._reconfiguration_barrier_processor: Any = processor_factory(runtime_owner=self)
@@ -534,7 +534,7 @@ class ConnectionRuntimeOrchestrator:
         if self._runtime_context is None:
             self._boundary_propagation_step = self._default_boundary_propagation_step
             return
-        from modular_simulation.connection.thermo_coupling import (
+        from modular_simulation.connection.runtime.thermo_coupling import (
             ThermoBoundaryPropagationConfig,
             ThermoBoundaryPropagationStep,
         )

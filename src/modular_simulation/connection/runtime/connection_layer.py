@@ -7,10 +7,10 @@ from dataclasses import dataclass, field
 from math import isfinite
 from typing import Protocol, SupportsFloat
 
-from modular_simulation.connection.hydraulic_solver import HydraulicSolveResult
-from modular_simulation.connection.junction import JunctionMixingResult
-from modular_simulation.connection.state import PortCondition
-from modular_simulation.connection.transport import LagTransportUpdateResult
+from ..domain.state import PortCondition
+from ..domain.transport import LagTransportUpdateResult
+from ..hydraulics.hydraulic_solver import HydraulicSolveResult
+from ..topology.junction import JunctionMixingResult
 
 
 MACRO_COUPLING_SEQUENCE: tuple[str, str, str] = (

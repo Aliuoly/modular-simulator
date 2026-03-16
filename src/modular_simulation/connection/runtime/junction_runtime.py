@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from modular_simulation.connection.junction import (
+from ..domain.state import MaterialState, PortCondition
+from ..topology.junction import (
     NEAR_ZERO_INCOMING_FLOW_EPSILON,
     JunctionMixingResult,
     mix_junction_state,
 )
-from modular_simulation.connection.state import MaterialState, PortCondition
-from modular_simulation.connection.topology import TopologyGraph
+from ..topology.topology import TopologyGraph
 
 
 def mix_junction_runtime_states(

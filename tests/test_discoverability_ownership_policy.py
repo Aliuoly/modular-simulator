@@ -5,7 +5,7 @@ POLICY_DOC = Path("docs/discoverability_ownership_policy.md")
 AUDIT_DOC = Path("docs/discoverability_ownership_audit.md")
 
 FORBIDDEN_PUBLIC_HELPERS = {
-    "modular_simulation.connection.hydraulic_solver": {
+    "modular_simulation.connection.hydraulics.hydraulic_solver": {
         "assemble_residual_vector",
         "assemble_sparse_jacobian_triplet",
         "assemble_unknown_vector",
@@ -13,14 +13,14 @@ FORBIDDEN_PUBLIC_HELPERS = {
         "triplet_to_dense",
         "solve_hydraulic_system",
     },
-    "modular_simulation.connection.hydraulic_compile": {
+    "modular_simulation.connection.hydraulics.hydraulic_compile": {
         "apply_valve_commands_to_compiled_graph",
         "build_hydraulic_solver_inputs",
         "solve_compiled_hydraulic_graph",
         "compile_hydraulic_graph",
     },
-    "modular_simulation.connection.connection_layer": {"run_macro_coupling_step"},
-    "modular_simulation.connection.transport_runtime": {"update_transport_runtime_states"},
+    "modular_simulation.connection.runtime.connection_layer": {"run_macro_coupling_step"},
+    "modular_simulation.connection.runtime.transport_runtime": {"update_transport_runtime_states"},
     "modular_simulation.cli.spec_workflow": {"apply_spec_delta"},
 }
 
@@ -51,7 +51,7 @@ def test_sanctioned_exceptions_documented() -> None:
 
 
 def test_density_material_models_expose_only_direct_concrete_types() -> None:
-    module = import_module("modular_simulation.connection.material_models")
+    module = import_module("modular_simulation.connection.domain.material_models")
     audit_text = AUDIT_DOC.read_text(encoding="utf-8")
     public_module_callables = {
         name
@@ -79,7 +79,7 @@ def test_density_material_models_expose_only_direct_concrete_types() -> None:
 
 
 def test_transport_public_surface_exposes_owner_only_types() -> None:
-    module = import_module("modular_simulation.connection.transport")
+    module = import_module("modular_simulation.connection.domain.transport")
     public_module_callables = {
         name
         for name, value in vars(module).items()

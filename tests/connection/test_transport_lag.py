@@ -6,7 +6,7 @@ from math import isfinite
 
 import pytest
 
-from modular_simulation.connection.transport import (
+from modular_simulation.connection.domain.transport import (
     LagTransportState,
     MVPLagTransportModel,
     TransportModel,

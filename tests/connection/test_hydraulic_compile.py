@@ -6,11 +6,11 @@ from types import MappingProxyType
 
 import pytest
 
-from modular_simulation.connection.hydraulic_compile import (
+from modular_simulation.connection.hydraulics.hydraulic_compile import (
     CompiledHydraulicGraph,
     HydraulicCompileLifecycle,
 )
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSystemDefinition,
     LinearResidualEquation,
     build_index_maps,

@@ -8,17 +8,20 @@ from typing import cast
 import numpy as np
 import pytest
 
-from modular_simulation.connection.connection_layer import (
+from modular_simulation.connection.runtime.connection_layer import (
     MACRO_COUPLING_SEQUENCE,
     MacroCoupler,
     PicardIterationGateConfig,
     TransportAndMixingUpdate,
 )
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSolveResult,
 )
-from modular_simulation.connection.state import MaterialState, PortCondition
-from modular_simulation.connection.transport import LagTransportState, LagTransportUpdateResult
+from modular_simulation.connection.domain.state import MaterialState, PortCondition
+from modular_simulation.connection.domain.transport import (
+    LagTransportState,
+    LagTransportUpdateResult,
+)
 
 
 def _hydraulic_result(*, edge_flow: float, residual_norm: float) -> HydraulicSolveResult:

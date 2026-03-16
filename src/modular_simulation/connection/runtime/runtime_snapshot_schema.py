@@ -6,7 +6,7 @@ from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from modular_simulation.connection.domain_contracts import (
+from ..domain.domain_contracts import (
     MutationCommand,
     ReconfigurationRequestMetadata,
 )

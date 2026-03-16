@@ -5,7 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from modular_simulation.connection.subsystem_descriptor import Subsystem, SubsystemRuntimeDescriptor
+from .subsystem_descriptor import (
+    Subsystem,
+    SubsystemRuntimeDescriptor,
+)
 from modular_simulation.framework.system import System
 from modular_simulation.measurables.process_model import ProcessModel, StateType
 from modular_simulation.thermodynamics.algebraic_process_model import UnitProcessPorts

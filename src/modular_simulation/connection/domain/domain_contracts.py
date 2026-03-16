@@ -14,7 +14,7 @@ from pydantic import (
     model_validator,
 )
 
-from modular_simulation.connection.topology import (
+from ..topology.topology import (
     ConnectionEdge,
     JunctionNode,
     PortReference,

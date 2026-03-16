@@ -7,9 +7,13 @@ from types import MappingProxyType
 
 import pytest
 
-hydraulic_compile = importlib.import_module("modular_simulation.connection.hydraulic_compile")
-hydraulic_solver = importlib.import_module("modular_simulation.connection.hydraulic_solver")
-network = importlib.import_module("modular_simulation.connection.network")
+hydraulic_compile = importlib.import_module(
+    "modular_simulation.connection.hydraulics.hydraulic_compile"
+)
+hydraulic_solver = importlib.import_module(
+    "modular_simulation.connection.hydraulics.hydraulic_solver"
+)
+network = importlib.import_module("modular_simulation.connection.topology.network")
 
 ConnectionNetwork = network.ConnectionNetwork
 HydraulicCompileLifecycle = hydraulic_compile.HydraulicCompileLifecycle

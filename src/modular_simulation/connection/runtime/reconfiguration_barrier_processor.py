@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import json
 from typing import Protocol
 
-from modular_simulation.connection.error_catalog import (
+from ..domain.error_catalog import (
     IDEMPOTENCY_CONFLICT_CODE,
     REVISION_MISMATCH_CODE,
     VALIDATION_FAILURE_CODE,
@@ -15,7 +15,7 @@ from modular_simulation.connection.error_catalog import (
     diagnostic_value_error,
     revision_details,
 )
-from modular_simulation.connection.network import (
+from ..topology.network import (
     ConnectionNetwork,
     QueuedReconfigurationTransaction,
 )

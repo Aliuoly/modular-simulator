@@ -5,7 +5,9 @@ from types import MappingProxyType
 
 import pytest
 
-hydraulic_element = importlib.import_module("modular_simulation.connection.hydraulic_element")
+hydraulic_element = importlib.import_module(
+    "modular_simulation.connection.hydraulics.hydraulic_element"
+)
 PumpHydraulicElement = hydraulic_element.PumpHydraulicElement
 
 

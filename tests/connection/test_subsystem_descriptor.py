@@ -2,8 +2,11 @@ import pytest
 from astropy.units import Unit
 
 from modular_simulation.components.point import DataValue, Point, PointRegistry
-from modular_simulation.connection.subsystem_descriptor import Subsystem, SubsystemRuntimeDescriptor
-from modular_simulation.connection.process_binding import ProcessBinding, BindingError
+from modular_simulation.connection.topology.subsystem_descriptor import (
+    Subsystem,
+    SubsystemRuntimeDescriptor,
+)
+from modular_simulation.connection.topology.process_binding import ProcessBinding, BindingError
 from modular_simulation.framework.system import System
 from modular_simulation.measurables.process_model import ProcessModel
 from modular_simulation.validation.exceptions import MeasurableConfigurationError

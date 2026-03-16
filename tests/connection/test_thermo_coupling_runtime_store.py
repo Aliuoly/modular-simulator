@@ -9,23 +9,26 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from modular_simulation.connection.connection_layer import TransportAndMixingUpdate
-from modular_simulation.connection.process_binding import BindingError
-from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.runtime.connection_layer import TransportAndMixingUpdate
+from modular_simulation.connection.topology.process_binding import BindingError
+from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSolveResult,
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )
 from modular_simulation.connection import ProcessOutletConditionResolver
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.process_stream_io import (
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.runtime.process_stream_io import (
     is_process_outlet_condition_resolver,
     resolve_process_outlet_condition,
 )
-from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
-from modular_simulation.connection.state import MaterialState, PortCondition
-from modular_simulation.connection.transport import LagTransportState, LagTransportUpdateResult
+from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
+from modular_simulation.connection.domain.state import MaterialState, PortCondition
+from modular_simulation.connection.domain.transport import (
+    LagTransportState,
+    LagTransportUpdateResult,
+)
 from modular_simulation.flowsheet import Flowsheet
 from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 from modular_simulation.thermodynamics.stream import StreamData

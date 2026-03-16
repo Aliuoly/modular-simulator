@@ -7,7 +7,9 @@ from typing import Callable, Protocol, cast
 
 import pytest
 
-hydraulic_element = importlib.import_module("modular_simulation.connection.hydraulic_element")
+hydraulic_element = importlib.import_module(
+    "modular_simulation.connection.hydraulics.hydraulic_element"
+)
 
 
 class _SmoothHydraulicElement(Protocol):

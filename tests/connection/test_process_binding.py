@@ -1,5 +1,5 @@
 import pytest
-from modular_simulation.connection.process_binding import BindingError, ProcessBinding
+from modular_simulation.connection.topology.process_binding import BindingError, ProcessBinding
 
 
 def test_happy_binding_path():

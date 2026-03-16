@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from modular_simulation.connection.pressure_inference import (
+from modular_simulation.connection.hydraulics.pressure_inference import (
     BoundaryEndpoint,
     ProcessPortEndpoint,
     build_topology_endpoint_context,
@@ -10,7 +10,7 @@ from modular_simulation.connection.pressure_inference import (
     hydrostatic_pressure_from_submerged_head_pa,
     resolve_edge_pressure_deltas_pa,
 )
-from modular_simulation.connection.topology import (
+from modular_simulation.connection.topology.topology import (
     BoundaryNode,
     ConnectionEdge,
     PortReference,

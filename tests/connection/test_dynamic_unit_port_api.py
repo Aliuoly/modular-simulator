@@ -7,14 +7,14 @@ from typing import Protocol
 
 import pytest
 
-from modular_simulation.connection.domain_contracts import JunctionProcess, Port, UnitProcess
-from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.domain.domain_contracts import JunctionProcess, Port, UnitProcess
+from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.runtime import (
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.runtime.runtime import (
     ConnectionRuntimeOrchestrator,
     ConnectionRuntimeStepResult,
 )
@@ -75,7 +75,7 @@ class _DynamicUnitPortApiFactory(Protocol):
 
 
 def _api(network: ConnectionNetwork) -> _DynamicUnitPortApi:
-    module = importlib.import_module("modular_simulation.connection.reconfiguration_api")
+    module = importlib.import_module("modular_simulation.connection.domain.reconfiguration_api")
     api_factory = cast(
         _DynamicUnitPortApiFactory,
         getattr(module, "DynamicUnitPortReconfigurationApi"),

@@ -1,41 +1,44 @@
 from __future__ import annotations
 
-from .hydraulic_compile import (
+from modular_simulation.connection.hydraulics.hydraulic_compile import (
     CompiledHydraulicGraph,
     HydraulicCompileLifecycle,
 )
-from .hydraulic_element import (
+from modular_simulation.connection.hydraulics.hydraulic_element import (
     ElementOutputSpec,
     ElementParameterSpec,
     ElementUnknownSpec,
     HydraulicElement,
 )
-from .connected_plant_orchestrator import (
+from modular_simulation.connection.runtime.connected_plant_orchestrator import (
     ConnectedPlantInitializationResult,
     ConnectedPlantOrchestrator,
     ConnectedPlantPhaseHooks,
     ConnectedPlantStepResult,
 )
-from .network import (
+from modular_simulation.connection.topology.network import (
     CompiledConnectionNetwork,
     ConnectionNetwork,
     NetworkBoundarySpec,
     NetworkLineHydraulicConfig,
     NetworkProcessSpec,
 )
-from .reconfiguration_api import (
+from modular_simulation.connection.domain.reconfiguration_api import (
     DynamicConnectionLineReconfigurationApi,
     DynamicUnitPortReconfigurationApi,
 )
-from .runtime import ConnectionRuntimeOrchestrator
-from .process_stream_io import ProcessOutletConditionResolver
-from .process_binding import (
+from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
+from modular_simulation.connection.runtime.process_stream_io import ProcessOutletConditionResolver
+from modular_simulation.connection.topology.process_binding import (
     BindingError,
     OutletBinding,
     OutletRole,
     ProcessBinding,
 )
-from .subsystem_descriptor import Subsystem, SubsystemRuntimeDescriptor
+from modular_simulation.connection.topology.subsystem_descriptor import (
+    Subsystem,
+    SubsystemRuntimeDescriptor,
+)
 
 __all__ = [
     "BindingError",

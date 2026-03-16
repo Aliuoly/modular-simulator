@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from modular_simulation.connection.domain_contracts import (
+from modular_simulation.connection.domain.domain_contracts import (
     CommandEnvelope,
     ConnectionLine,
     ControllerBinding,

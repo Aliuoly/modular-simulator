@@ -4,16 +4,16 @@ from __future__ import annotations
 
 import inspect
 
-import modular_simulation.connection.transport as transport
-import modular_simulation.connection.transport_runtime as transport_runtime
+import modular_simulation.connection.domain.transport as transport
+import modular_simulation.connection.runtime.transport_runtime as transport_runtime
 
-from modular_simulation.connection.transport import (
+from modular_simulation.connection.domain.transport import (
     LagTransportState,
     LagTransportUpdateResult,
     MVPLagTransportModel,
     TransportModel,
 )
-from modular_simulation.connection.transport_runtime import TransportRuntime
+from modular_simulation.connection.runtime.transport_runtime import TransportRuntime
 
 
 def test_mvp_lag_model_is_constructed_directly() -> None:
@@ -96,7 +96,7 @@ def test_transport_runtime_signature_stays_owner_led() -> None:
 
 
 def _single_edge_graph():
-    from modular_simulation.connection.topology import (
+    from modular_simulation.connection.topology.topology import (
         BoundaryNode,
         ConnectionEdge,
         PortReference,

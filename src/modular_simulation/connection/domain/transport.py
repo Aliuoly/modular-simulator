@@ -81,7 +81,7 @@ class TransportModel(ABC):
         if cls.__module__ != __name__:
             raise TypeError(
                 "TransportModel is framework-owned and may only be implemented "
-                "inside modular_simulation.connection.transport"
+                "inside modular_simulation.connection.domain.transport"
             )
 
     @property

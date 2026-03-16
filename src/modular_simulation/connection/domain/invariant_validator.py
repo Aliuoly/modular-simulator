@@ -5,17 +5,17 @@ from dataclasses import dataclass
 import json
 from typing import Literal
 
-from modular_simulation.connection.error_catalog import (
+from ..topology.network import ConnectionNetwork
+from .domain_contracts import (
+    ReconfigurationRequestMetadata,
+    validate_reconfiguration_request_metadata,
+)
+from .error_catalog import (
     INVARIANT_FAILURE_CODE,
     DiagnosticPayload,
     DiagnosticValueError,
     build_diagnostic_payload,
 )
-from modular_simulation.connection.domain_contracts import (
-    ReconfigurationRequestMetadata,
-    validate_reconfiguration_request_metadata,
-)
-from modular_simulation.connection.network import ConnectionNetwork
 
 DestructiveEditMode = Literal["hard_fail", "safe_detach"]
 RemovalClass = Literal["remove_unit", "remove_port", "remove_edge", "remove_junction"]

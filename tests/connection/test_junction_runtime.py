@@ -6,10 +6,10 @@ import importlib
 
 import pytest
 
-junction = importlib.import_module("modular_simulation.connection.junction")
-junction_runtime = importlib.import_module("modular_simulation.connection.junction_runtime")
-state = importlib.import_module("modular_simulation.connection.state")
-topology = importlib.import_module("modular_simulation.connection.topology")
+junction = importlib.import_module("modular_simulation.connection.topology.junction")
+junction_runtime = importlib.import_module("modular_simulation.connection.runtime.junction_runtime")
+state = importlib.import_module("modular_simulation.connection.domain.state")
+topology = importlib.import_module("modular_simulation.connection.topology.topology")
 
 BoundaryNode = topology.BoundaryNode
 ConnectionEdge = topology.ConnectionEdge

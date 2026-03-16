@@ -16,7 +16,7 @@ from modular_simulation.validation.exceptions import (
     MeasurableConfigurationError,
     SensorConfigurationError,
 )
-from .process_binding import ProcessBinding, BindingError
+from .process_binding import BindingError, ProcessBinding
 
 if TYPE_CHECKING:
     from modular_simulation.framework.system import System

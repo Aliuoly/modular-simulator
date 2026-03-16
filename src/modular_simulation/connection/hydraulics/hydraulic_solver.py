@@ -7,7 +7,7 @@ from typing import cast
 import numpy as np
 from numpy.typing import NDArray
 
-from modular_simulation.connection.hydraulic_element import HydraulicElement
+from .hydraulic_element import HydraulicElement
 
 
 @dataclass(frozen=True)

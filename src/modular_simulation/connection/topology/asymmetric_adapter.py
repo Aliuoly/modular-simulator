@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
-from modular_simulation.connection.process_binding import BindingError, ProcessBinding
+from .process_binding import BindingError, ProcessBinding
 
 
 @dataclass(frozen=True)

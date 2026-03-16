@@ -4,8 +4,8 @@ import importlib
 
 import pytest
 
-junction = importlib.import_module("modular_simulation.connection.junction")
-state = importlib.import_module("modular_simulation.connection.state")
+junction = importlib.import_module("modular_simulation.connection.topology.junction")
+state = importlib.import_module("modular_simulation.connection.domain.state")
 
 MaterialState = state.MaterialState
 PortCondition = state.PortCondition

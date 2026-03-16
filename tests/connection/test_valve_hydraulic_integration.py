@@ -5,19 +5,22 @@ from typing import cast
 
 import pytest
 
-from modular_simulation.connection.domain_contracts import ResistanceConfig, ValveConfig
-from modular_simulation.connection.hydraulic_compile import (
+from modular_simulation.connection.domain.domain_contracts import ResistanceConfig, ValveConfig
+from modular_simulation.connection.hydraulics.hydraulic_compile import (
     HydraulicCompileLifecycle,
     compile_valve_hydraulic_state,
     resolve_line_resistance,
 )
-from modular_simulation.connection.hydraulic_element import HydraulicElement, ValveHydraulicElement
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_element import (
+    HydraulicElement,
+    ValveHydraulicElement,
+)
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     ElementEquation,
     HydraulicSystemDefinition,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.runtime import (
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.runtime.runtime import (
     ConnectionRuntimeOrchestrator,
     ConnectionRuntimeStepResult,
 )

@@ -6,13 +6,13 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from math import isfinite
 
-from modular_simulation.connection.topology import TopologyGraph
-from modular_simulation.connection.transport import (
+from ..domain.transport import (
     LagTransportState,
     LagTransportUpdateResult,
     MVPLagTransportModel,
     TransportModel,
 )
+from ..topology.topology import TopologyGraph
 
 _COMPOSITION_ABS_TOL = 1.0e-9
 

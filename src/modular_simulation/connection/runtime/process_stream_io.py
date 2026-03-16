@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol, TypeGuard
 
-from modular_simulation.connection.state import PortCondition
+from ..domain.state import PortCondition
 
 if TYPE_CHECKING:
     from modular_simulation.thermodynamics.stream import StreamData

@@ -10,25 +10,25 @@ from typing import TYPE_CHECKING, Literal, Protocol, cast
 import numpy as np
 from numpy.typing import NDArray
 
-from modular_simulation.connection.connection_layer import TransportAndMixingUpdate
-from modular_simulation.connection.hydraulic_solver import HydraulicSolveResult
-from modular_simulation.connection.junction import (
+from ..domain.state import MaterialState, PortCondition
+from ..hydraulics.hydraulic_solver import HydraulicSolveResult
+from ..topology.junction import (
     NEAR_ZERO_INCOMING_FLOW_EPSILON,
     JunctionMixingResult,
     mix_junction_state,
     mix_junction_state_with_enthalpy,
 )
-from modular_simulation.connection.process_binding import BindingError
-from modular_simulation.connection.process_stream_io import (
+from ..topology.process_binding import BindingError
+from .connection_layer import TransportAndMixingUpdate
+from .process_stream_io import (
     ProcessStreamIO,
     resolve_process_outlet_condition,
 )
-from modular_simulation.connection.state import MaterialState, PortCondition
 from modular_simulation.thermodynamics.stream import StreamData
 from modular_simulation.thermodynamics.species import SpeciesProjection
 
 if TYPE_CHECKING:
-    from modular_simulation.connection.network import ConnectionNetwork
+    from ..topology.network import ConnectionNetwork
     from modular_simulation.thermodynamics.property_package import PropertyPackage
     from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 

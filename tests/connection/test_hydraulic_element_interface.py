@@ -6,8 +6,12 @@ from types import MappingProxyType
 
 import pytest
 
-hydraulic_element = importlib.import_module("modular_simulation.connection.hydraulic_element")
-hydraulic_solver = importlib.import_module("modular_simulation.connection.hydraulic_solver")
+hydraulic_element = importlib.import_module(
+    "modular_simulation.connection.hydraulics.hydraulic_element"
+)
+hydraulic_solver = importlib.import_module(
+    "modular_simulation.connection.hydraulics.hydraulic_solver"
+)
 ElementOutputSpec = hydraulic_element.ElementOutputSpec
 ElementParameterSpec = hydraulic_element.ElementParameterSpec
 ElementUnknownSpec = hydraulic_element.ElementUnknownSpec

@@ -8,7 +8,10 @@ from modular_simulation.components import (
     Trajectory,
 )
 from modular_simulation.components.point import DataValue, Point
-from modular_simulation.connection.subsystem_descriptor import Subsystem, SubsystemRuntimeDescriptor
+from modular_simulation.connection.topology.subsystem_descriptor import (
+    Subsystem,
+    SubsystemRuntimeDescriptor,
+)
 from modular_simulation.framework.system import System
 from modular_simulation.measurables.process_model import ProcessModel
 from modular_simulation.validation.exceptions import (

@@ -5,18 +5,18 @@ from __future__ import annotations
 import inspect
 from math import isfinite
 
-import modular_simulation.connection.transport_runtime as transport_runtime
-from modular_simulation.connection.topology import (
+import modular_simulation.connection.runtime.transport_runtime as transport_runtime
+from modular_simulation.connection.topology.topology import (
     BoundaryNode,
     ConnectionEdge,
     PortReference,
     TopologyGraph,
 )
-from modular_simulation.connection.transport import (
+from modular_simulation.connection.domain.transport import (
     LagTransportState,
     MVPLagTransportModel,
 )
-from modular_simulation.connection.transport_runtime import TransportRuntime
+from modular_simulation.connection.runtime.transport_runtime import TransportRuntime
 
 
 def _two_edge_graph_unsorted() -> TopologyGraph:

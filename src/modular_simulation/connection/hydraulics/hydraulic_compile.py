@@ -9,9 +9,9 @@ from typing import Literal, Protocol, cast
 import numpy as np
 from numpy.typing import NDArray
 
-import modular_simulation.connection.hydraulic_solver as hydraulic_solver
-from modular_simulation.connection.domain_contracts import ResistanceConfig, ValveConfig
-from modular_simulation.connection.hydraulic_solver import (
+from ..domain.domain_contracts import ResistanceConfig, ValveConfig
+from . import hydraulic_solver
+from .hydraulic_solver import (
     HydraulicSolveResult,
     HydraulicSystemDefinition,
     build_index_maps,

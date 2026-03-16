@@ -2,18 +2,18 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from modular_simulation.connection.domain_contracts import (
+from ..topology.network import ConnectionNetwork
+from .domain_contracts import (
     ConnectionLine,
     JunctionProcess,
     Port,
     UnitProcess,
     ValveConfig,
 )
-from modular_simulation.connection.error_catalog import (
+from .error_catalog import (
     VALIDATION_FAILURE_CODE,
     diagnostic_value_error,
 )
-from modular_simulation.connection.network import ConnectionNetwork
 
 
 class DynamicUnitPortReconfigurationApi:

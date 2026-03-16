@@ -4,26 +4,27 @@ from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from math import isfinite
 from typing import Protocol, cast, runtime_checkable
-from modular_simulation.connection.network import (
-    ConnectionNetwork,
-    QueuedReconfigurationTransaction,
-)
-from modular_simulation.connection.domain_contracts import (
+
+from ..domain.domain_contracts import (
     validate_reconfiguration_request_metadata,
 )
-from modular_simulation.connection.error_catalog import (
+from ..domain.error_catalog import (
     COMPATIBILITY_FAILURE_CODE,
     REVISION_MISMATCH_CODE,
     VALIDATION_FAILURE_CODE,
     diagnostic_value_error,
     revision_details,
 )
-from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
-from modular_simulation.connection.runtime_port_snapshot_store import (
+from ..topology.network import (
+    ConnectionNetwork,
+    QueuedReconfigurationTransaction,
+)
+from .runtime import ConnectionRuntimeOrchestrator
+from .runtime_port_snapshot_store import (
     RuntimePortSnapshotPayload,
     RuntimePortSnapshotStore,
 )
-from modular_simulation.connection.runtime_snapshot_schema import (
+from .runtime_snapshot_schema import (
     validate_runtime_checkpoint_envelope,
 )
 from modular_simulation.framework.system import (

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from modular_simulation.connection.topology import (
+from modular_simulation.connection.topology.topology import (
     BoundaryNode,
     ConnectionEdge,
     JunctionNode,

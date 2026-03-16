@@ -8,35 +8,35 @@ from math import isfinite
 from types import MappingProxyType
 from typing import Literal, Protocol, cast
 
-from modular_simulation.connection.hydraulic_compile import (
+from ..domain.domain_contracts import (
+    validate_reconfiguration_command_envelope,
+)
+from ..domain.error_catalog import (
+    VALIDATION_FAILURE_CODE,
+    diagnostic_value_error,
+)
+from ..hydraulics.hydraulic_compile import (
     CompiledHydraulicGraph,
     HydraulicCompileLifecycle,
 )
-from modular_simulation.connection.asymmetric_adapter import (
+from ..hydraulics.hydraulic_solver import (
+    ElementEquation,
+    HydraulicSystemDefinition,
+)
+from ..hydraulics.line_hydraulic_config_manager import (
+    LineHydraulicConfigManager,
+    LineHydraulicConfigManagerSnapshot,
+)
+from ..runtime.runtime_snapshot_schema import (
+    validate_live_runtime_snapshot_payload,
+)
+from .asymmetric_adapter import (
     AsymmetricPortAdapter,
     ConvergingPortAdapter,
     build_process_binding,
 )
-from modular_simulation.connection.domain_contracts import (
-    validate_reconfiguration_command_envelope,
-)
-from modular_simulation.connection.error_catalog import (
-    VALIDATION_FAILURE_CODE,
-    diagnostic_value_error,
-)
-from modular_simulation.connection.hydraulic_solver import (
-    ElementEquation,
-    HydraulicSystemDefinition,
-)
-from modular_simulation.connection.line_hydraulic_config_manager import (
-    LineHydraulicConfigManager,
-    LineHydraulicConfigManagerSnapshot,
-)
-from modular_simulation.connection.process_binding import ProcessBinding
-from modular_simulation.connection.runtime_snapshot_schema import (
-    validate_live_runtime_snapshot_payload,
-)
-from modular_simulation.connection.topology import (
+from .process_binding import ProcessBinding
+from .topology import (
     BoundaryNode,
     ConnectionEdge,
     PortReference,

@@ -4,18 +4,18 @@ from dataclasses import dataclass
 
 import pytest
 
-from modular_simulation.connection.connected_plant_orchestrator import (
+from modular_simulation.connection.runtime.connected_plant_orchestrator import (
     ConnectedPlantOrchestrator,
     ConnectedPlantPhaseHooks,
 )
-from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
-from modular_simulation.connection.subsystem_descriptor import SubsystemRuntimeDescriptor
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
+from modular_simulation.connection.topology.subsystem_descriptor import SubsystemRuntimeDescriptor
 
 
 def _linear_equation(

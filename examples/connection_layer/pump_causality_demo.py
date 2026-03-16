@@ -6,16 +6,19 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
-from modular_simulation.connection.hydraulic_compile import (
+from modular_simulation.connection.hydraulics.hydraulic_compile import (
     HydraulicCompileLifecycle,
 )
-from modular_simulation.connection.hydraulic_element import HydraulicElement, PumpHydraulicElement
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_element import (
+    HydraulicElement,
+    PumpHydraulicElement,
+)
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     ElementEquation,
     HydraulicSystemDefinition,
 )
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.topology import TopologyGraph
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.topology.topology import TopologyGraph
 
 
 @dataclass(frozen=True)

@@ -8,8 +8,8 @@ from types import MappingProxyType
 
 import pytest
 
-from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_element import (
+from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulics.hydraulic_element import (
     ElementOutputSpec,
     ElementParameterSpec,
     ElementUnknownSpec,
@@ -18,15 +18,15 @@ from modular_simulation.connection.hydraulic_element import (
     smooth_signed_quadratic_flow_term,
     smooth_signed_quadratic_flow_term_derivative,
 )
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     ElementEquation,
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )
-from modular_simulation.connection.junction import mix_junction_state
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.state import MaterialState, PortCondition
-from modular_simulation.connection.transport import LagTransportState, MVPLagTransportModel
+from modular_simulation.connection.topology.junction import mix_junction_state
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.domain.state import MaterialState, PortCondition
+from modular_simulation.connection.domain.transport import LagTransportState, MVPLagTransportModel
 
 
 def _single_pipe_system(

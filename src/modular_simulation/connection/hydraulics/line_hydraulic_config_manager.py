@@ -5,13 +5,13 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal
 
-from modular_simulation.connection.domain_contracts import ResistanceConfig, ValveConfig
-from modular_simulation.connection.hydraulic_compile import (
+from ..domain.domain_contracts import ResistanceConfig, ValveConfig
+from .hydraulic_compile import (
     CompiledValveHydraulicState,
     compile_valve_hydraulic_state,
     resolve_line_resistance,
 )
-from modular_simulation.connection.hydraulic_solver import (
+from .hydraulic_solver import (
     ElementEquation,
     HydraulicSystemDefinition,
 )

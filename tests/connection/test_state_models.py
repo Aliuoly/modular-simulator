@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from modular_simulation.connection.state import MaterialState, PortCondition
+from modular_simulation.connection.domain.state import MaterialState, PortCondition
 
 
 def test_material_state_valid_construction() -> None:

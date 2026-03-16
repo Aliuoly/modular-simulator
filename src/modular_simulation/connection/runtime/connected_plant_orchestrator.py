@@ -5,16 +5,16 @@ from dataclasses import dataclass
 from numbers import Real
 from typing import TYPE_CHECKING, Protocol, TypeAlias, cast
 
-from modular_simulation.connection.network import (
+from ..topology.network import (
     ConnectionNetwork,
     QueuedReconfigurationTransaction,
 )
-from modular_simulation.connection.runtime import (
+from ..topology.subsystem_descriptor import SubsystemRuntimeDescriptor
+from .runtime import (
     CONNECTED_PLANT_PHASE_ORDER,
     ConnectionRuntimeOrchestrator,
     ConnectionRuntimeStepResult,
 )
-from modular_simulation.connection.subsystem_descriptor import SubsystemRuntimeDescriptor
 from modular_simulation.validation.exceptions import MeasurableConfigurationError
 
 if TYPE_CHECKING:

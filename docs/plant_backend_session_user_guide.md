@@ -66,7 +66,7 @@ Mutations are queued, then applied at barrier (typically `step(0.0)` during comm
 
 ```python
 from modular_simulation.cli.backend_session import PlantBackendSession
-from modular_simulation.connection.network import ConnectionNetwork
+from modular_simulation.connection.topology.network import ConnectionNetwork
 
 # Build network as usual (compile lifecycle, hydraulic builder, runtime orchestrator, etc.)
 network = ConnectionNetwork(

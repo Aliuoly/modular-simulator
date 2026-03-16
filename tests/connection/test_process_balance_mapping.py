@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.process_binding import ProcessBinding
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.topology.process_binding import ProcessBinding
 
 
 def _compiled_reactor_binding() -> ProcessBinding:

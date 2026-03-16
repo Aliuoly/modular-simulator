@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from modular_simulation.connection.domain_contracts import ResistanceConfig
-from modular_simulation.connection.hydraulic_compile import (
+from modular_simulation.connection.domain.domain_contracts import ResistanceConfig
+from modular_simulation.connection.hydraulics.hydraulic_compile import (
     GraphCompileDiagnostic,
     GraphCompileError,
     resolve_line_resistance,

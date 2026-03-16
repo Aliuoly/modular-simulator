@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# pyright: reportAttributeAccessIssue=false, reportReturnType=false
+
 import argparse
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -10,18 +12,21 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.integrate import solve_ivp
 
-from modular_simulation.connection.connected_plant_orchestrator import (
+from modular_simulation.connection.runtime.connected_plant_orchestrator import (
     ConnectedPlantOrchestrator,
     ConnectedPlantPhaseHooks,
 )
-from modular_simulation.connection.connection_layer import TransportAndMixingUpdate
-from modular_simulation.connection.hydraulic_solver import HydraulicSolveResult
-from modular_simulation.connection.junction import mix_junction_state
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.process_binding import ProcessBinding
-from modular_simulation.connection.runtime import ConnectionRuntimeOrchestrator
-from modular_simulation.connection.state import MaterialState, PortCondition
-from modular_simulation.connection.subsystem_descriptor import Subsystem, SubsystemRuntimeDescriptor
+from modular_simulation.connection.runtime.connection_layer import TransportAndMixingUpdate
+from modular_simulation.connection.hydraulics.hydraulic_solver import HydraulicSolveResult
+from modular_simulation.connection.topology.junction import mix_junction_state
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.topology.process_binding import ProcessBinding
+from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
+from modular_simulation.connection.domain.state import MaterialState, PortCondition
+from modular_simulation.connection.topology.subsystem_descriptor import (
+    Subsystem,
+    SubsystemRuntimeDescriptor,
+)
 from modular_simulation.measurables.process_model import (
     ProcessModel,
     StateMetadata as M,

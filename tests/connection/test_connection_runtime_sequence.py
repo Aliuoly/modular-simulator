@@ -8,30 +8,33 @@ from typing import cast
 import numpy as np
 import pytest
 
-from modular_simulation.connection.connection_layer import (
+from modular_simulation.connection.runtime.connection_layer import (
     PicardIterationGateConfig,
     TransportAndMixingUpdate,
 )
-from modular_simulation.connection.connected_plant_orchestrator import (
+from modular_simulation.connection.runtime.connected_plant_orchestrator import (
     ConnectedPlantOrchestrator,
     ConnectedPlantPhaseHooks,
 )
-from modular_simulation.connection.hydraulic_compile import HydraulicCompileLifecycle
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSolveResult,
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )
-from modular_simulation.connection.junction import JunctionMixingResult
-from modular_simulation.connection.network import ConnectionNetwork
-from modular_simulation.connection.runtime import (
+from modular_simulation.connection.topology.junction import JunctionMixingResult
+from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.runtime.runtime import (
     CONNECTED_PLANT_PHASE_ORDER,
     ConnectionRuntimeOrchestrator,
     ConnectionRuntimeStepResult,
 )
-from modular_simulation.connection.state import MaterialState, PortCondition
-from modular_simulation.connection.subsystem_descriptor import SubsystemRuntimeDescriptor
-from modular_simulation.connection.transport import LagTransportState, LagTransportUpdateResult
+from modular_simulation.connection.domain.state import MaterialState, PortCondition
+from modular_simulation.connection.topology.subsystem_descriptor import SubsystemRuntimeDescriptor
+from modular_simulation.connection.domain.transport import (
+    LagTransportState,
+    LagTransportUpdateResult,
+)
 
 
 def _linear_equation(

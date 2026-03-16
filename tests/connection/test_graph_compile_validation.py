@@ -4,14 +4,14 @@ from types import MappingProxyType
 
 import pytest
 
-from modular_simulation.connection.domain_contracts import ResistanceConfig
-from modular_simulation.connection.hydraulic_compile import (
+from modular_simulation.connection.domain.domain_contracts import ResistanceConfig
+from modular_simulation.connection.hydraulics.hydraulic_compile import (
     GraphCompileDiagnostic,
     GraphCompileError,
     HydraulicCompileLifecycle,
     resolve_line_resistance,
 )
-from modular_simulation.connection.hydraulic_solver import (
+from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )

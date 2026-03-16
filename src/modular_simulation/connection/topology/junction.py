@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Final
 
 import numpy as np
 
-from modular_simulation.connection.state import MaterialState, PortCondition
+from ..domain.state import MaterialState, PortCondition
 from modular_simulation.thermodynamics.species import SpeciesProjection
 
 if TYPE_CHECKING:

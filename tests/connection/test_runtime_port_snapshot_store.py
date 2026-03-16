@@ -7,8 +7,10 @@ from typing import cast
 
 import pytest
 
-from modular_simulation.connection.runtime_port_snapshot_store import RuntimePortSnapshotStore
-from modular_simulation.connection.state import MaterialState, PortCondition
+from modular_simulation.connection.runtime.runtime_port_snapshot_store import (
+    RuntimePortSnapshotStore,
+)
+from modular_simulation.connection.domain.state import MaterialState, PortCondition
 
 
 def _condition(

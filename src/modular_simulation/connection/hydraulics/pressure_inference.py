@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Callable, Literal, TypeAlias
 
-from modular_simulation.connection.topology import TopologyGraph
+from ..topology.topology import TopologyGraph
 
 ProcessPortDirection: TypeAlias = Literal["inlet", "outlet"]
 BoundaryDirection: TypeAlias = Literal["source", "sink"]
