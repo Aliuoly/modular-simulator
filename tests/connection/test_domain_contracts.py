@@ -16,20 +16,48 @@ from modular_simulation.connection.domain.domain_contracts import (
 )
 
 
-def test_serialize_and_validate_junction_via_unit_process_path() -> None:
+def test_junction_process_converts_to_junction_node_only() -> None:
     junction = JunctionProcess(
         junction_id="junction_mix_a",
         inlet_port_ids=("inlet_a", "inlet_b"),
         outlet_port_id="outlet",
     )
 
-    as_unit = junction.as_unit_process()
-    assert as_unit.process_kind == "junction"
-    assert as_unit.as_process_node().process_id == "junction_mix_a"
-    assert as_unit.as_process_node().inlet_ports == ("inlet_a", "inlet_b")
-    assert as_unit.as_process_node().outlet_ports == ("outlet",)
-    assert as_unit.as_junction_node() is not None
-    assert as_unit.model_dump()["process_kind"] == "junction"
+    as_junction = junction.as_junction_node()
+    assert as_junction.junction_id == "junction_mix_a"
+    assert as_junction.port_names == ("inlet_a", "inlet_b", "outlet")
+    # Verify that DirectionalNodePorts helper does not expose as_process_node
+    # to prevent junction identity from being treated as process identity
+    node_ports = junction.node_ports()
+    assert not hasattr(node_ports, "as_process_node")
+
+
+def test_shared_node_port_helpers_preserve_unit_and_junction_identities() -> None:
+    unit = UnitProcess(
+        process_id="reactor_a",
+        ports=(
+            Port(port_id="feed", direction="inlet"),
+            Port(port_id="product", direction="outlet"),
+        ),
+    )
+    junction = JunctionProcess(
+        junction_id="mix_a",
+        inlet_port_ids=("feed_a", "feed_b"),
+        outlet_port_id="product",
+    )
+
+    unit_ports = unit.node_ports()
+    junction_ports = junction.node_ports()
+    process_node = unit.as_process_node()
+    junction_node = junction_ports.as_junction_node()
+
+    assert type(unit_ports) is type(junction_ports)
+    assert process_node.process_id == "reactor_a"
+    assert not hasattr(process_node, "junction_id")
+    assert junction_node.junction_id == "mix_a"
+    assert not hasattr(junction_node, "process_id")
+    assert unit_ports.all_port_ids() == ("feed", "product")
+    assert junction_ports.all_port_ids() == ("feed_a", "feed_b", "product")
 
 
 def test_serialize_and_validate_connection_and_binding_contracts() -> None:

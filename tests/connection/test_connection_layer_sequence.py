@@ -282,3 +282,57 @@ def test_macro_step_bookkeeping_marks_transport_and_junction_fallbacks() -> None
     assert result.bookkeeping.transport_fallback_keys == ("edge_zero",)
     assert result.bookkeeping.junction_fallback_keys == ("junction_a",)
     assert result.bookkeeping.used_fallback
+
+
+def test_macro_coupler_fails_loudly_before_downstream_propagation_on_non_converged_hydraulics() -> (
+    None
+):
+    call_counts = {"transport": 0, "boundary": 0}
+
+    def hydraulic_solve_step(*, macro_step_time_s: float) -> HydraulicSolveResult:
+        del macro_step_time_s
+        return HydraulicSolveResult(
+            converged=False,
+            iterations=7,
+            residual_norm=12.5,
+            solution_vector=np.asarray([0.0, 101325.0], dtype=np.float64),
+            unknowns={"edge_flow": 0.0, "node_pressure": 101325.0},
+            unknown_index_map={"edge_flow": 0, "node_pressure": 1},
+            residual_index_map={"mass_balance": 0, "pressure_reference": 1},
+        )
+
+    def transport_and_mixing_step(
+        *,
+        hydraulic_result: HydraulicSolveResult,
+        macro_step_time_s: float,
+    ) -> TransportAndMixingUpdate:
+        del hydraulic_result, macro_step_time_s
+        call_counts["transport"] += 1
+        return TransportAndMixingUpdate(transport_results={})
+
+    def boundary_propagation_step(
+        *,
+        hydraulic_result: HydraulicSolveResult,
+        transport_and_mixing_update: TransportAndMixingUpdate,
+        macro_step_time_s: float,
+    ) -> dict[str, PortCondition]:
+        del hydraulic_result, transport_and_mixing_update, macro_step_time_s
+        call_counts["boundary"] += 1
+        return {}
+
+    coupler = MacroCoupler(
+        hydraulic_solve_step=hydraulic_solve_step,
+        transport_update_step=transport_and_mixing_step,
+        boundary_propagation_step=boundary_propagation_step,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "hydraulic solve did not converge; aborting transport update and boundary propagation "
+            r"\(iterations=7, residual_norm=12.5\)"
+        ),
+    ):
+        _ = coupler.run(macro_step_time_s=1.0, macro_step_index=1)
+
+    assert call_counts == {"transport": 0, "boundary": 0}

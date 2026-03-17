@@ -135,7 +135,14 @@ class MacroCoupler:
             TransportAndMixingUpdate,
             Mapping[str, PortCondition],
         ]:
-            hydraulic_result = self._hydraulic_solve_step(macro_step_time_s=macro_step_time_s)
+            try:
+                hydraulic_result = self._hydraulic_solve_step(macro_step_time_s=macro_step_time_s)
+            except Exception as exc:
+                raise RuntimeError(
+                    "hydraulic solve failed before transport update and boundary propagation: "
+                    + f"{exc}"
+                ) from exc
+            _raise_if_invalid_hydraulic_result(hydraulic_result)
             transport_and_mixing_update = self._transport_update_step(
                 hydraulic_result=hydraulic_result,
                 macro_step_time_s=macro_step_time_s,
@@ -211,6 +218,15 @@ class MacroCoupler:
             port_conditions=port_conditions,
             bookkeeping=bookkeeping,
         )
+
+
+def _raise_if_invalid_hydraulic_result(hydraulic_result: HydraulicSolveResult) -> None:
+    if hydraulic_result.converged:
+        return
+    raise RuntimeError(
+        "hydraulic solve did not converge; aborting transport update and boundary propagation "
+        + f"(iterations={hydraulic_result.iterations}, residual_norm={hydraulic_result.residual_norm})."
+    )
 
 
 def _extract_gate_residual(hydraulic_result: HydraulicSolveResult) -> float:

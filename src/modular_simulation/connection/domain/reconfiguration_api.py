@@ -22,18 +22,17 @@ class DynamicUnitPortReconfigurationApi:
 
     def add_unit_process(
         self,
-        process: UnitProcess | JunctionProcess,
+        process: UnitProcess,
         *,
         idempotency_key: str | None = None,
         expected_revision: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> str:
-        unit_process = self._normalize_to_unit_process(process)
         payload: dict[str, object] = {
             "operation": "add_process",
-            "process_id": unit_process.process_id,
-            "inlet_ports": list(unit_process.inlet_port_ids()),
-            "outlet_ports": list(unit_process.outlet_port_ids()),
+            "process_id": process.process_id,
+            "inlet_ports": list(process.inlet_port_ids()),
+            "outlet_ports": list(process.outlet_port_ids()),
         }
         return self._queue_request(
             payload=payload,
@@ -63,14 +62,20 @@ class DynamicUnitPortReconfigurationApi:
 
     def add_junction_process(
         self,
-        process: UnitProcess | JunctionProcess,
+        process: JunctionProcess,
         *,
         idempotency_key: str | None = None,
         expected_revision: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> str:
-        return self.add_unit_process(
-            process,
+        payload: dict[str, object] = {
+            "operation": "add_junction",
+            "junction_id": process.junction_id,
+            "inlet_ports": list(process.inlet_port_ids),
+            "outlet_ports": [process.outlet_port_id],
+        }
+        return self._queue_request(
+            payload=payload,
             idempotency_key=idempotency_key,
             expected_revision=expected_revision,
             metadata=metadata,
@@ -84,8 +89,11 @@ class DynamicUnitPortReconfigurationApi:
         expected_revision: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> str:
-        return self.remove_unit_process(
-            process_id=process_id,
+        return self._queue_request(
+            payload={
+                "operation": "remove_junction",
+                "junction_id": process_id,
+            },
             idempotency_key=idempotency_key,
             expected_revision=expected_revision,
             metadata=metadata,
@@ -273,11 +281,6 @@ class DynamicUnitPortReconfigurationApi:
         if metadata is not None:
             request_payload["metadata"] = dict(metadata)
         return self._network.queue_reconfiguration(request_payload)
-
-    def _normalize_to_unit_process(self, process: UnitProcess | JunctionProcess) -> UnitProcess:
-        if isinstance(process, UnitProcess):
-            return process
-        return process.as_unit_process()
 
 
 class DynamicConnectionLineReconfigurationApi:

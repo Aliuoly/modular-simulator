@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false, reportAny=false
+# pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownArgumentType=false
 
 import importlib
 
@@ -227,3 +227,90 @@ def test_runtime_preserves_near_zero_fallback_and_sorted_junction_keys() -> None
     assert result_a["junction_b"].total_incoming_flow_rate == pytest.approx(7.0e-13)
     assert result_a["junction_a"].state == previous_states["junction_a"]
     assert result_a["junction_b"].state == previous_states["junction_b"]
+
+
+def test_runtime_uses_only_positive_junction_inflow_before_near_zero_fallback() -> None:
+    graph = _single_junction_graph()
+    previous = MaterialState(
+        pressure=111000.0,
+        temperature=311.0,
+        mole_fractions=(0.5, 0.5),
+    )
+    edge_states = {
+        "edge_feed_a": MaterialState(
+            pressure=100000.0,
+            temperature=300.0,
+            mole_fractions=(0.9, 0.1),
+        ),
+        "edge_feed_b": MaterialState(
+            pressure=130000.0,
+            temperature=330.0,
+            mole_fractions=(0.4, 0.6),
+        ),
+        "edge_product": MaterialState(
+            pressure=150000.0,
+            temperature=345.0,
+            mole_fractions=(0.1, 0.9),
+        ),
+    }
+
+    runtime_results = mix_junction_runtime_states(
+        topology=graph,
+        edge_states=edge_states,
+        edge_flow_rates={
+            "edge_feed_a": -2.0,
+            "edge_feed_b": 5.0e-13,
+            "edge_product": 1.0,
+        },
+        previous_junction_states={"mix": previous},
+        near_zero_incoming_flow_epsilon=1.0e-12,
+    )
+
+    mixed = runtime_results["mix"]
+    assert mixed.total_incoming_flow_rate == pytest.approx(5.0e-13)
+    assert mixed.used_fallback
+    assert mixed.state == previous
+
+
+def test_runtime_classifies_reverse_flow_from_solved_sign_relative_to_junction() -> None:
+    graph = _single_junction_graph()
+    previous = MaterialState(
+        pressure=111000.0,
+        temperature=311.0,
+        mole_fractions=(0.5, 0.5),
+    )
+    edge_states = {
+        "edge_feed_a": MaterialState(
+            pressure=100000.0,
+            temperature=300.0,
+            mole_fractions=(0.9, 0.1),
+        ),
+        "edge_feed_b": MaterialState(
+            pressure=130000.0,
+            temperature=330.0,
+            mole_fractions=(0.4, 0.6),
+        ),
+        "edge_product": MaterialState(
+            pressure=150000.0,
+            temperature=345.0,
+            mole_fractions=(0.1, 0.9),
+        ),
+    }
+
+    runtime_results = mix_junction_runtime_states(
+        topology=graph,
+        edge_states=edge_states,
+        edge_flow_rates={
+            "edge_feed_a": -2.0,
+            "edge_feed_b": 3.0,
+            "edge_product": 1.0,
+        },
+        previous_junction_states={"mix": previous},
+    )
+
+    mixed = runtime_results["mix"]
+    assert mixed.total_incoming_flow_rate == pytest.approx(3.0)
+    assert not mixed.used_fallback
+    assert mixed.state.pressure == pytest.approx(130000.0)
+    assert mixed.state.temperature == pytest.approx(330.0)
+    assert mixed.state.mole_fractions == pytest.approx((0.4, 0.6))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from math import isfinite
 
 from ..domain.state import MaterialState, PortCondition
 from ..topology.junction import (
@@ -31,11 +32,12 @@ def mix_junction_runtime_states(
         junction_port_conditions: dict[str, PortCondition] = {}
         for edge_id in sorted(edge_by_id):
             edge = edge_by_id[edge_id]
-            if edge.target.node_id == junction_id:
-                junction_flow_sign = 1.0
-            elif edge.source.node_id == junction_id:
-                junction_flow_sign = -1.0
-            else:
+            local_flow = _classify_local_node_flow(
+                edge=edge,
+                local_node_id=junction_id,
+                solved_line_flow=edge_flow_rates.get(edge_id),
+            )
+            if local_flow is None:
                 continue
 
             edge_state = edge_states.get(edge_id)
@@ -49,7 +51,7 @@ def mix_junction_runtime_states(
 
             junction_port_conditions[edge_id] = PortCondition(
                 state=edge_state,
-                through_molar_flow_rate=junction_flow_sign * edge_flow_rate,
+                through_molar_flow_rate=local_flow,
             )
 
         if missing_data:
@@ -63,6 +65,30 @@ def mix_junction_runtime_states(
         )
 
     return results
+
+
+def _classify_local_node_flow(
+    *,
+    edge: object,
+    local_node_id: str,
+    solved_line_flow: float | None,
+) -> float | None:
+    source = getattr(edge, "source")
+    target = getattr(edge, "target")
+    source_node_id = getattr(source, "node_id")
+    target_node_id = getattr(target, "node_id")
+    if source_node_id != local_node_id and target_node_id != local_node_id:
+        return None
+    if solved_line_flow is None:
+        return None
+    if not isfinite(solved_line_flow):
+        raise ValueError(
+            f"solved line flow for edge '{getattr(edge, 'edge_id')}' at node '{local_node_id}' must be finite"
+        )
+
+    if target_node_id == local_node_id:
+        return float(solved_line_flow)
+    return float(-solved_line_flow)
 
 
 __all__ = ["mix_junction_runtime_states"]

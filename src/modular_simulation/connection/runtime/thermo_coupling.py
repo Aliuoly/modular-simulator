@@ -11,6 +11,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from ..domain.state import MaterialState, PortCondition
+from ..hydraulics.hydraulic_compile import CompiledHydraulicGraph
 from ..hydraulics.hydraulic_solver import HydraulicSolveResult
 from ..topology.junction import (
     NEAR_ZERO_INCOMING_FLOW_EPSILON,
@@ -19,6 +20,7 @@ from ..topology.junction import (
     mix_junction_state_with_enthalpy,
 )
 from ..topology.process_binding import BindingError
+from ..topology.topology import ConnectionEdge
 from .connection_layer import TransportAndMixingUpdate
 from .process_stream_io import (
     ProcessStreamIO,
@@ -121,80 +123,138 @@ class ThermoBoundaryPropagationStep:
         )
         species_ids = self._runtime_context.species_registry.cas_list
         transport_results = transport_and_mixing_update.transport_results
+        junction_results = transport_and_mixing_update.junction_results
         incoming_conditions_by_target: dict[str, list[PortCondition]] = {}
         target_bindings: dict[str, tuple[str, object, str]] = {}
         target_stream_port_ios: dict[str, ProcessStreamIO] = {}
+        edge_by_id = {edge.edge_id: edge for edge in compiled.topology.edges}
 
         for edge in sorted(compiled.topology.edges, key=lambda item: item.edge_id):
-            source_binding = compiled.process_bindings.get(edge.source.node_id)
-            target_binding = compiled.process_bindings.get(edge.target.node_id)
+            provider_node_id = edge.source.node_id
+            provider_port_name = edge.source.port_name
+            receiver_node_id = edge.target.node_id
+            receiver_port_name = edge.target.port_name
+            resolved_hydraulic_flow = self._resolve_hydraulic_flow(
+                edge_id=edge.edge_id,
+                compiled_hydraulic=compiled.hydraulic,
+                hydraulic_result=hydraulic_result,
+            )
+            if resolved_hydraulic_flow is not None and resolved_hydraulic_flow < 0.0:
+                provider_node_id = edge.target.node_id
+                provider_port_name = edge.target.port_name
+                receiver_node_id = edge.source.node_id
+                receiver_port_name = edge.source.port_name
 
-            source_projection = self._lookup_projection(edge.source.node_id)
-            target_projection = self._lookup_projection(edge.target.node_id)
+            provider_binding = compiled.process_bindings.get(provider_node_id)
+            receiver_binding = compiled.process_bindings.get(receiver_node_id)
+
+            provider_projection = self._lookup_projection(provider_node_id)
+            receiver_projection = self._lookup_projection(receiver_node_id)
             stream_condition = self._build_stream_port_condition(
                 edge_id=edge.edge_id,
-                source_node_id=edge.source.node_id,
-                target_node_id=edge.target.node_id,
-                source_port_name=edge.source.port_name,
+                source_node_id=provider_node_id,
+                target_node_id=receiver_node_id,
+                source_port_name=provider_port_name,
+                target_port_name=receiver_port_name,
+                compiled_hydraulic=compiled.hydraulic,
                 hydraulic_result=hydraulic_result,
                 macro_step_time_s=macro_step_time_s,
-                source_binding=source_binding,
-                source_projection=source_projection,
-                target_projection=target_projection,
+                source_binding=provider_binding,
+                source_projection=provider_projection,
+                target_projection=receiver_projection,
                 global_species_ids=species_ids,
             )
             if stream_condition is not None:
-                target_key = f"{edge.target.node_id}.{edge.target.port_name}"
+                target_key = f"{receiver_node_id}.{receiver_port_name}"
                 incoming_conditions_by_target.setdefault(target_key, []).append(stream_condition)
-                if target_binding is not None:
+                if receiver_binding is not None:
                     target_bindings[target_key] = (
-                        edge.target.node_id,
-                        target_binding,
-                        edge.target.port_name,
+                        receiver_node_id,
+                        receiver_binding,
+                        receiver_port_name,
                     )
                 target_stream_port_io = self._resolve_stream_port_io(
-                    node_id=edge.target.node_id,
-                    binding=target_binding,
+                    node_id=receiver_node_id,
+                    binding=receiver_binding,
                 )
                 if target_stream_port_io is not None:
                     target_stream_port_ios[target_key] = target_stream_port_io
                 continue
 
-            if source_binding is None or target_binding is None:
+            if provider_binding is None and provider_node_id in compiled.process_bindings:
+                continue
+            if receiver_binding is None and receiver_node_id in compiled.process_bindings:
                 continue
 
-            outlet_payload = self._safe_get_outlet_payload(source_binding, edge.source.port_name)
+            outlet_payload = (
+                self._safe_get_outlet_payload(provider_binding, provider_port_name)
+                if provider_binding is not None
+                else None
+            )
             transport_result = transport_results.get(edge.edge_id)
             state = self._build_material_state(
                 edge_id=edge.edge_id,
-                source_node_id=edge.source.node_id,
+                source_node_id=provider_node_id,
+                target_node_id=receiver_node_id,
+                compiled_hydraulic=compiled.hydraulic,
                 hydraulic_result=hydraulic_result,
                 property_package=property_package,
                 species_ids=species_ids,
-                source_projection=source_projection,
+                source_projection=provider_projection,
                 outlet_payload=outlet_payload,
                 transport_result=transport_result,
             )
+            outgoing_junction_state = self._resolve_outgoing_junction_state(
+                edge=edge,
+                provider_node_id=provider_node_id,
+                provider_port_name=provider_port_name,
+                edge_by_id=edge_by_id,
+                compiled_hydraulic=compiled.hydraulic,
+                hydraulic_result=hydraulic_result,
+                junction_results=junction_results,
+            )
+            if outgoing_junction_state is not None:
+                state = outgoing_junction_state
             if state is None:
                 continue
+
+            receiver_pressure = self._resolve_endpoint_hydraulic_pressure(
+                edge=edge,
+                edge_id=edge.edge_id,
+                node_id=receiver_node_id,
+                port_name=receiver_port_name,
+                compiled_hydraulic=compiled.hydraulic,
+                hydraulic_result=hydraulic_result,
+            )
+            if receiver_pressure is not None:
+                state = MaterialState(
+                    pressure=receiver_pressure,
+                    temperature=state.temperature,
+                    mole_fractions=state.mole_fractions,
+                    species_ids=state.species_ids,
+                    phase=state.phase,
+                    enthalpy_molar=state.enthalpy_molar,
+                    entropy_molar=state.entropy_molar,
+                )
 
             if self._config.auto_propagate_species:
                 state = self._project_state_for_target(
                     edge_id=edge.edge_id,
-                    source_node_id=edge.source.node_id,
-                    target_node_id=edge.target.node_id,
+                    source_node_id=provider_node_id,
+                    target_node_id=receiver_node_id,
                     state=state,
-                    source_projection=source_projection,
-                    target_projection=target_projection,
+                    source_projection=provider_projection,
+                    target_projection=receiver_projection,
                     global_species_ids=species_ids,
                 )
 
             flow_rate = self._resolve_flow_rate(
                 edge_id=edge.edge_id,
+                compiled_hydraulic=compiled.hydraulic,
                 hydraulic_result=hydraulic_result,
                 outlet_payload=outlet_payload,
             )
-            target_key = f"{edge.target.node_id}.{edge.target.port_name}"
+            target_key = f"{receiver_node_id}.{receiver_port_name}"
             condition = PortCondition(
                 state=state,
                 species_ids=state.species_ids,
@@ -203,11 +263,12 @@ class ThermoBoundaryPropagationStep:
             )
 
             incoming_conditions_by_target.setdefault(target_key, []).append(condition)
-            target_bindings[target_key] = (
-                edge.target.node_id,
-                target_binding,
-                edge.target.port_name,
-            )
+            if receiver_binding is not None:
+                target_bindings[target_key] = (
+                    receiver_node_id,
+                    receiver_binding,
+                    receiver_port_name,
+                )
 
         self._record_all_process_outlet_snapshots(
             network=network,
@@ -317,6 +378,8 @@ class ThermoBoundaryPropagationStep:
         source_node_id: str,
         target_node_id: str,
         source_port_name: str,
+        target_port_name: str,
+        compiled_hydraulic: CompiledHydraulicGraph | None,
         hydraulic_result: HydraulicSolveResult,
         macro_step_time_s: float,
         source_binding: object | None,
@@ -344,20 +407,41 @@ class ThermoBoundaryPropagationStep:
                 global_species_ids=global_species_ids,
             )
 
-        flow_rate = self._resolve_hydraulic_flow(edge_id=edge_id, hydraulic_result=hydraulic_result)
+        flow_rate = self._resolve_hydraulic_flow(
+            edge_id=edge_id,
+            compiled_hydraulic=compiled_hydraulic,
+            hydraulic_result=hydraulic_result,
+        )
         if flow_rate is None and source_binding is not None:
             return None
         if flow_rate is None:
             flow_rate = float(source_condition.through_molar_flow_rate)
-        elif (
-            abs(float(flow_rate)) <= 1.0e-12
-            and abs(float(source_condition.through_molar_flow_rate)) > 1.0e-12
-        ):
-            flow_rate = float(source_condition.through_molar_flow_rate)
+        else:
+            flow_rate = abs(flow_rate)
+
+        target_state = state
+        hydraulic_pressure = self._resolve_endpoint_hydraulic_pressure(
+            edge=None,
+            edge_id=edge_id,
+            node_id=target_node_id,
+            port_name=target_port_name,
+            compiled_hydraulic=compiled_hydraulic,
+            hydraulic_result=hydraulic_result,
+        )
+        if hydraulic_pressure is not None:
+            target_state = MaterialState(
+                pressure=hydraulic_pressure,
+                temperature=state.temperature,
+                mole_fractions=state.mole_fractions,
+                species_ids=state.species_ids,
+                phase=state.phase,
+                enthalpy_molar=state.enthalpy_molar,
+                entropy_molar=state.entropy_molar,
+            )
 
         resolved_condition = PortCondition(
-            state=state,
-            species_ids=state.species_ids,
+            state=target_state,
+            species_ids=target_state.species_ids,
             through_molar_flow_rate=flow_rate,
             macro_step_time_s=macro_step_time_s,
         )
@@ -367,7 +451,12 @@ class ThermoBoundaryPropagationStep:
             runtime_port_snapshot_store.record_outlet(
                 node_id=source_node_id,
                 port_name=source_port_name,
-                condition=resolved_condition,
+                condition=PortCondition(
+                    state=state,
+                    species_ids=state.species_ids,
+                    through_molar_flow_rate=flow_rate,
+                    macro_step_time_s=macro_step_time_s,
+                ),
             )
 
         return resolved_condition
@@ -495,6 +584,8 @@ class ThermoBoundaryPropagationStep:
         *,
         edge_id: str,
         source_node_id: str,
+        target_node_id: str,
+        compiled_hydraulic: CompiledHydraulicGraph | None,
         hydraulic_result: HydraulicSolveResult,
         property_package: PropertyPackage | None,
         species_ids: tuple[str, ...],
@@ -540,6 +631,7 @@ class ThermoBoundaryPropagationStep:
 
         pressure = self._resolve_pressure(
             edge_id=edge_id,
+            compiled_hydraulic=compiled_hydraulic,
             hydraulic_result=hydraulic_result,
             outlet_payload=outlet_payload,
             transport_result=transport_result,
@@ -693,10 +785,19 @@ class ThermoBoundaryPropagationStep:
         self,
         *,
         edge_id: str,
+        compiled_hydraulic: CompiledHydraulicGraph | None,
         hydraulic_result: HydraulicSolveResult,
         outlet_payload: Mapping[str, object] | None,
         transport_result: object,
     ) -> float:
+        hydraulic_pressure = self._resolve_hydraulic_pressure(
+            edge_id=edge_id,
+            compiled_hydraulic=compiled_hydraulic,
+            hydraulic_result=hydraulic_result,
+        )
+        if hydraulic_pressure is not None:
+            return hydraulic_pressure
+
         outlet_pressure = self._pressure_from_outlet_payload(outlet_payload)
         if outlet_pressure is not None:
             return outlet_pressure
@@ -704,12 +805,6 @@ class ThermoBoundaryPropagationStep:
         transport_pressure = self._pressure_from_transport_state(transport_result)
         if transport_pressure is not None:
             return transport_pressure
-
-        hydraulic_pressure = self._resolve_hydraulic_pressure(
-            edge_id=edge_id, hydraulic_result=hydraulic_result
-        )
-        if hydraulic_pressure is not None:
-            return hydraulic_pressure
 
         return self._config.default_pressure_pa
 
@@ -751,31 +846,43 @@ class ThermoBoundaryPropagationStep:
         self,
         *,
         edge_id: str,
+        compiled_hydraulic: CompiledHydraulicGraph | None,
         hydraulic_result: HydraulicSolveResult,
     ) -> float | None:
-        unknowns = hydraulic_result.unknowns
-        candidate_keys = [
-            f"{edge_id}.pressure",
-            f"{edge_id}:pressure",
-            f"{edge_id}_pressure",
-            f"pressure_{edge_id}",
-            "pressure",
-        ]
-        for key in candidate_keys:
-            value = unknowns.get(key)
-            if isinstance(value, (float, int)) and isfinite(float(value)) and float(value) > 0.0:
-                return float(value)
+        if compiled_hydraulic is not None:
+            pressure = compiled_hydraulic.resolve_line_target_pressure(
+                line_id=edge_id,
+                hydraulic_result=hydraulic_result,
+            )
+            if pressure is not None and pressure > 0.0:
+                return pressure
         return None
 
     def _resolve_flow_rate(
         self,
         *,
         edge_id: str,
+        compiled_hydraulic: CompiledHydraulicGraph | None,
         hydraulic_result: HydraulicSolveResult,
         outlet_payload: Mapping[str, object] | None,
     ) -> float:
+        if compiled_hydraulic is not None:
+            hydraulic_flow = self._resolve_hydraulic_flow(
+                edge_id=edge_id,
+                compiled_hydraulic=compiled_hydraulic,
+                hydraulic_result=hydraulic_result,
+            )
+            if hydraulic_flow is not None:
+                return abs(hydraulic_flow)
+
+            topology_lookup = compiled_hydraulic.topology_lookup
+            if edge_id in topology_lookup.line_flow_unknown_by_line:
+                return 0.0
+
         hydraulic_flow = self._resolve_hydraulic_flow(
-            edge_id=edge_id, hydraulic_result=hydraulic_result
+            edge_id=edge_id,
+            compiled_hydraulic=compiled_hydraulic,
+            hydraulic_result=hydraulic_result,
         )
         if hydraulic_flow is not None:
             return hydraulic_flow
@@ -785,40 +892,180 @@ class ThermoBoundaryPropagationStep:
 
         fallback = outlet_payload.get("outlet_flow")
         if isinstance(fallback, (float, int)) and isfinite(float(fallback)):
-            return float(fallback)
+            return abs(float(fallback))
         fallback = outlet_payload.get("flow")
         if isinstance(fallback, (float, int)) and isfinite(float(fallback)):
             return abs(float(fallback))
         return 0.0
 
+    def _resolve_endpoint_hydraulic_pressure(
+        self,
+        *,
+        edge: ConnectionEdge | None = None,
+        edge_id: str,
+        node_id: str,
+        port_name: str,
+        compiled_hydraulic: CompiledHydraulicGraph | None,
+        hydraulic_result: HydraulicSolveResult,
+    ) -> float | None:
+        if compiled_hydraulic is None:
+            return None
+        endpoint_pressure = compiled_hydraulic.resolve_endpoint_pressure(
+            endpoint_id=f"{node_id}.{port_name}",
+            hydraulic_result=hydraulic_result,
+        )
+        if endpoint_pressure is not None and endpoint_pressure > 0.0:
+            return endpoint_pressure
+
+        line_source_pressure = compiled_hydraulic.resolve_line_source_pressure(
+            line_id=edge_id,
+            hydraulic_result=hydraulic_result,
+        )
+        line_target_pressure = compiled_hydraulic.resolve_line_target_pressure(
+            line_id=edge_id,
+            hydraulic_result=hydraulic_result,
+        )
+        if edge is not None:
+            if edge.source.node_id == node_id and edge.source.port_name == port_name:
+                if line_source_pressure is not None and line_source_pressure > 0.0:
+                    return line_source_pressure
+                if line_target_pressure is not None and line_target_pressure > 0.0:
+                    return line_target_pressure
+                return None
+            if edge.target.node_id == node_id and edge.target.port_name == port_name:
+                if line_target_pressure is not None and line_target_pressure > 0.0:
+                    return line_target_pressure
+                if line_source_pressure is not None and line_source_pressure > 0.0:
+                    return line_source_pressure
+                return None
+        if line_target_pressure is not None and line_target_pressure > 0.0:
+            return line_target_pressure
+        if line_source_pressure is not None and line_source_pressure > 0.0:
+            return line_source_pressure
+        return None
+
+    def _resolve_outgoing_junction_state(
+        self,
+        *,
+        edge: ConnectionEdge,
+        provider_node_id: str,
+        provider_port_name: str,
+        edge_by_id: Mapping[str, ConnectionEdge],
+        compiled_hydraulic: CompiledHydraulicGraph | None,
+        hydraulic_result: HydraulicSolveResult,
+        junction_results: Mapping[str, JunctionMixingResult],
+    ) -> MaterialState | None:
+        provider_junction_result = junction_results.get(provider_node_id)
+        if provider_junction_result is None:
+            return None
+        local_flow = self._classify_local_node_flow(
+            edge=edge,
+            local_node_id=provider_node_id,
+            compiled_hydraulic=compiled_hydraulic,
+            hydraulic_result=hydraulic_result,
+        )
+        if local_flow is None or local_flow >= 0.0:
+            return None
+
+        pressure = self._resolve_source_node_pressure(
+            edge=edge,
+            node_id=provider_node_id,
+            port_name=provider_port_name,
+            edge_by_id=edge_by_id,
+            compiled_hydraulic=compiled_hydraulic,
+            hydraulic_result=hydraulic_result,
+        )
+        if pressure is None:
+            return provider_junction_result.state
+        return MaterialState(
+            pressure=pressure,
+            temperature=provider_junction_result.state.temperature,
+            mole_fractions=provider_junction_result.state.mole_fractions,
+            species_ids=provider_junction_result.state.species_ids,
+            phase=provider_junction_result.state.phase,
+            enthalpy_molar=provider_junction_result.state.enthalpy_molar,
+            entropy_molar=provider_junction_result.state.entropy_molar,
+        )
+
+    def _resolve_source_node_pressure(
+        self,
+        *,
+        edge: ConnectionEdge,
+        node_id: str,
+        port_name: str,
+        edge_by_id: Mapping[str, ConnectionEdge],
+        compiled_hydraulic: CompiledHydraulicGraph | None,
+        hydraulic_result: HydraulicSolveResult,
+    ) -> float | None:
+        if compiled_hydraulic is None:
+            return None
+        junction_pressure = compiled_hydraulic.resolve_junction_pressure(
+            junction_id=node_id,
+            hydraulic_result=hydraulic_result,
+        )
+        if junction_pressure is not None and junction_pressure > 0.0:
+            return junction_pressure
+
+        endpoint_id = f"{node_id}.{port_name}"
+        endpoint_pressure = compiled_hydraulic.resolve_endpoint_pressure(
+            endpoint_id=endpoint_id,
+            hydraulic_result=hydraulic_result,
+        )
+        if endpoint_pressure is not None and endpoint_pressure > 0.0:
+            return endpoint_pressure
+
+        for candidate_edge in edge_by_id.values():
+            if candidate_edge.source.node_id == node_id:
+                pressure = compiled_hydraulic.resolve_line_source_pressure(
+                    line_id=candidate_edge.edge_id,
+                    hydraulic_result=hydraulic_result,
+                )
+                if pressure is not None and pressure > 0.0:
+                    return pressure
+            if candidate_edge.target.node_id == node_id:
+                pressure = compiled_hydraulic.resolve_line_target_pressure(
+                    line_id=candidate_edge.edge_id,
+                    hydraulic_result=hydraulic_result,
+                )
+                if pressure is not None and pressure > 0.0:
+                    return pressure
+        return None
+
+    def _classify_local_node_flow(
+        self,
+        *,
+        edge: ConnectionEdge,
+        local_node_id: str,
+        compiled_hydraulic: CompiledHydraulicGraph | None,
+        hydraulic_result: HydraulicSolveResult,
+    ) -> float | None:
+        solved_line_flow = self._resolve_hydraulic_flow(
+            edge_id=edge.edge_id,
+            compiled_hydraulic=compiled_hydraulic,
+            hydraulic_result=hydraulic_result,
+        )
+        if solved_line_flow is None:
+            return None
+        if edge.target.node_id == local_node_id:
+            return solved_line_flow
+        if edge.source.node_id == local_node_id:
+            return -solved_line_flow
+        return None
+
     def _resolve_hydraulic_flow(
         self,
         *,
         edge_id: str,
+        compiled_hydraulic: CompiledHydraulicGraph | None,
         hydraulic_result: HydraulicSolveResult,
     ) -> float | None:
-        unknowns = hydraulic_result.unknowns
-        candidate_keys = [
-            edge_id,
-            f"flow_{edge_id}",
-            f"{edge_id}_flow",
-            f"{edge_id}:flow",
-            f"{edge_id}.flow",
-        ]
-        for key in candidate_keys:
-            value = unknowns.get(key)
-            if isinstance(value, (float, int)) and isfinite(float(value)):
-                return float(value)
-
-        flow_like_values = [
-            float(value)
-            for key, value in unknowns.items()
-            if "flow" in key.casefold()
-            and isinstance(value, (float, int))
-            and isfinite(float(value))
-        ]
-        if len(flow_like_values) == 1:
-            return flow_like_values[0]
+        if compiled_hydraulic is not None:
+            flow = compiled_hydraulic.resolve_line_flow(
+                line_id=edge_id,
+                hydraulic_result=hydraulic_result,
+            )
+            if flow is not None:
+                return flow
         return None
 
     def _safe_get_outlet_payload(

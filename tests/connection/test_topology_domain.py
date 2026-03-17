@@ -9,6 +9,7 @@ from modular_simulation.connection.topology.topology import (
     ProcessNode,
     TopologyGraph,
 )
+from modular_simulation.connection.topology.network import ConnectionNetwork
 
 
 def _valid_graph() -> TopologyGraph:
@@ -144,3 +145,31 @@ def test_invalid_self_link_is_rejected() -> None:
         )
 
     assert str(error.value) == "invalid self-links are not allowed: ['edge_1:unit.out']"
+
+
+def test_connection_network_compile_emits_explicit_junction_nodes() -> None:
+    network = ConnectionNetwork()
+    network.add_process("reactor", inlet_ports=("feed",), outlet_ports=("product",))
+    network.add_junction(
+        "mix", inlet_ports=("feed_a", "feed_b"), outlet_ports=("product_a", "product_b")
+    )
+    network.add_boundary_source("upstream_a")
+    network.add_boundary_source("upstream_b")
+    network.add_boundary_sink("downstream_a")
+    network.add_boundary_sink("downstream_b")
+    network.connect("upstream_a", "mix.feed_a")
+    network.connect("upstream_b", "mix.feed_b")
+    network.connect("mix.product_a", "reactor.feed")
+    network.connect("reactor.product", "downstream_a")
+    network.connect("mix.product_b", "downstream_b")
+
+    compiled = network.compile()
+
+    assert tuple(node.process_id for node in compiled.topology.process_nodes) == ("reactor",)
+    assert tuple(node.junction_id for node in compiled.topology.junction_nodes) == ("mix",)
+    assert compiled.topology.junction_nodes[0].port_names == (
+        "feed_a",
+        "feed_b",
+        "product_a",
+        "product_b",
+    )

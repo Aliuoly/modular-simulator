@@ -134,6 +134,108 @@ class HydraulicElement(ABC):
         return None
 
 
+@dataclass(frozen=True)
+class CanonicalNodePressureHydraulicElement(HydraulicElement):
+    wrapped: HydraulicElement
+    pressure_step: float = 1.0
+
+    @property
+    def parameter_spec(self) -> ElementParameterSpec:
+        return self.wrapped.parameter_spec
+
+    @property
+    def unknown_spec(self) -> ElementUnknownSpec:
+        return ElementUnknownSpec(names=("flow_rate", "upstream_pressure", "downstream_pressure"))
+
+    @property
+    def output_spec(self) -> ElementOutputSpec:
+        return self.wrapped.output_spec
+
+    def residuals(
+        self,
+        *,
+        inputs: Mapping[str, float],
+        unknowns: Mapping[str, float],
+        parameters: Mapping[str, float],
+    ) -> ElementValues:
+        del inputs
+        return self.wrapped.residuals(
+            inputs=MappingProxyType(
+                {
+                    "upstream_pressure": unknowns["upstream_pressure"],
+                    "downstream_pressure": unknowns["downstream_pressure"],
+                }
+            ),
+            unknowns=MappingProxyType({"flow_rate": unknowns["flow_rate"]}),
+            parameters=parameters,
+        )
+
+    def jacobian(
+        self,
+        *,
+        inputs: Mapping[str, float],
+        unknowns: Mapping[str, float],
+        parameters: Mapping[str, float],
+    ) -> JacobianValues:
+        del inputs
+        base_inputs = MappingProxyType(
+            {
+                "upstream_pressure": unknowns["upstream_pressure"],
+                "downstream_pressure": unknowns["downstream_pressure"],
+            }
+        )
+        wrapped_unknowns = MappingProxyType({"flow_rate": unknowns["flow_rate"]})
+        jacobian: dict[tuple[str, str], float] = dict(
+            self.wrapped.jacobian(
+                inputs=base_inputs,
+                unknowns=wrapped_unknowns,
+                parameters=parameters,
+            )
+        )
+
+        pressure_step = float(self.pressure_step)
+        for local_residual in self.output_spec.residual_names:
+            upstream_plus = dict(unknowns)
+            upstream_plus["upstream_pressure"] = unknowns["upstream_pressure"] + pressure_step
+            upstream_minus = dict(unknowns)
+            upstream_minus["upstream_pressure"] = unknowns["upstream_pressure"] - pressure_step
+            upstream_derivative = (
+                self.residuals(
+                    inputs=MappingProxyType({}),
+                    unknowns=MappingProxyType(upstream_plus),
+                    parameters=parameters,
+                )[local_residual]
+                - self.residuals(
+                    inputs=MappingProxyType({}),
+                    unknowns=MappingProxyType(upstream_minus),
+                    parameters=parameters,
+                )[local_residual]
+            ) / (2.0 * pressure_step)
+            jacobian[(local_residual, "upstream_pressure")] = float(upstream_derivative)
+
+            downstream_plus = dict(unknowns)
+            downstream_plus["downstream_pressure"] = unknowns["downstream_pressure"] + pressure_step
+            downstream_minus = dict(unknowns)
+            downstream_minus["downstream_pressure"] = (
+                unknowns["downstream_pressure"] - pressure_step
+            )
+            downstream_derivative = (
+                self.residuals(
+                    inputs=MappingProxyType({}),
+                    unknowns=MappingProxyType(downstream_plus),
+                    parameters=parameters,
+                )[local_residual]
+                - self.residuals(
+                    inputs=MappingProxyType({}),
+                    unknowns=MappingProxyType(downstream_minus),
+                    parameters=parameters,
+                )[local_residual]
+            ) / (2.0 * pressure_step)
+            jacobian[(local_residual, "downstream_pressure")] = float(downstream_derivative)
+
+        return MappingProxyType(jacobian)
+
+
 def smooth_signed_quadratic_flow_term(*, m_dot: float, delta: float) -> float:
     if delta <= 0.0:
         raise ValueError("delta must be positive")
@@ -514,6 +616,7 @@ def _resolve_valve_hydraulic_seed_values(
 
 
 __all__ = [
+    "CanonicalNodePressureHydraulicElement",
     "ElementParameterSpec",
     "ElementUnknownSpec",
     "ElementOutputSpec",

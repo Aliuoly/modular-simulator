@@ -8,6 +8,7 @@ from math import isfinite
 from types import MappingProxyType
 from typing import Literal, Protocol, cast
 
+from ..domain.node_port_helpers import DirectionalNodePorts
 from ..domain.domain_contracts import (
     validate_reconfiguration_command_envelope,
 )
@@ -39,6 +40,7 @@ from .process_binding import ProcessBinding
 from .topology import (
     BoundaryNode,
     ConnectionEdge,
+    JunctionNode,
     PortReference,
     ProcessNode,
     TopologyGraph,
@@ -65,6 +67,13 @@ class NetworkBoundarySpec:
     boundary_id: str
     direction: Literal["source", "sink"]
     port_name: str
+
+
+@dataclass(frozen=True)
+class NetworkJunctionSpec:
+    junction_id: str
+    inlet_ports: tuple[str, ...]
+    outlet_ports: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -100,6 +109,13 @@ class _ProcessSpec:
 
 
 @dataclass(frozen=True)
+class _JunctionSpec:
+    junction_id: str
+    inlet_ports: tuple[str, ...]
+    outlet_ports: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class _QueuedReconfigurationTransaction:
     request_id: str
     idempotency_key: str | None
@@ -116,6 +132,7 @@ class _NetworkReconfigurationState:
     """Rollback snapshot for network-owned reconfiguration state."""
 
     process_specs: dict[str, _ProcessSpec]
+    junction_specs: dict[str, _JunctionSpec]
     boundary_specs: dict[str, _BoundarySpec]
     edges: list[ConnectionEdge]
     manager_snapshot: LineHydraulicConfigManagerSnapshot
@@ -210,6 +227,7 @@ class ConnectionNetwork:
         self._runtime_orchestrator: _RuntimeOrchestrator | None = runtime_orchestrator
 
         self._process_specs: dict[str, _ProcessSpec] = {}
+        self._junction_specs: dict[str, _JunctionSpec] = {}
         self._boundary_specs: dict[str, _BoundarySpec] = {}
         self._edges: list[ConnectionEdge] = []
         self._line_hydraulic_manager = LineHydraulicConfigManager()
@@ -227,23 +245,37 @@ class ConnectionNetwork:
         inlet_ports: Sequence[str],
         outlet_ports: Sequence[str],
     ) -> None:
-        self._validate_node_id(process_id)
-        self._ensure_node_id_is_available(process_id)
+        normalized_ports = DirectionalNodePorts.build(
+            node_id=process_id,
+            inlet_port_ids=tuple(inlet_ports),
+            outlet_port_ids=tuple(outlet_ports),
+            node_kind="process",
+        )
+        self._ensure_node_id_is_available(normalized_ports.node_id)
+        self._process_specs[normalized_ports.node_id] = _ProcessSpec(
+            process_id=normalized_ports.node_id,
+            inlet_ports=normalized_ports.inlet_port_ids,
+            outlet_ports=normalized_ports.outlet_port_ids,
+        )
 
-        normalized_inlets = self._normalize_port_names(
-            node_id=process_id,
-            port_names=inlet_ports,
-            role="inlet",
+    def add_junction(
+        self,
+        junction_id: str,
+        *,
+        inlet_ports: Sequence[str],
+        outlet_ports: Sequence[str],
+    ) -> None:
+        normalized_ports = DirectionalNodePorts.build(
+            node_id=junction_id,
+            inlet_port_ids=tuple(inlet_ports),
+            outlet_port_ids=tuple(outlet_ports),
+            node_kind="junction",
         )
-        normalized_outlets = self._normalize_port_names(
-            node_id=process_id,
-            port_names=outlet_ports,
-            role="outlet",
-        )
-        self._process_specs[process_id] = _ProcessSpec(
-            process_id=process_id,
-            inlet_ports=normalized_inlets,
-            outlet_ports=normalized_outlets,
+        self._ensure_node_id_is_available(normalized_ports.node_id)
+        self._junction_specs[normalized_ports.node_id] = _JunctionSpec(
+            junction_id=normalized_ports.node_id,
+            inlet_ports=normalized_ports.inlet_port_ids,
+            outlet_ports=normalized_ports.outlet_port_ids,
         )
 
     def add_boundary_source(self, boundary_id: str, *, port_name: str = "outlet") -> None:
@@ -295,6 +327,12 @@ class ConnectionNetwork:
             return None
         return (*spec.inlet_ports, *spec.outlet_ports)
 
+    def junction_ports(self, *, junction_id: str) -> tuple[str, ...] | None:
+        spec = self._junction_specs.get(junction_id)
+        if spec is None:
+            return None
+        return (*spec.inlet_ports, *spec.outlet_ports)
+
     def list_process_specs(self) -> tuple[NetworkProcessSpec, ...]:
         return tuple(
             NetworkProcessSpec(
@@ -313,6 +351,16 @@ class ConnectionNetwork:
                 port_name=spec.port_name,
             )
             for spec in sorted(self._boundary_specs.values(), key=lambda item: item.boundary_id)
+        )
+
+    def list_junction_specs(self) -> tuple[NetworkJunctionSpec, ...]:
+        return tuple(
+            NetworkJunctionSpec(
+                junction_id=spec.junction_id,
+                inlet_ports=tuple(spec.inlet_ports),
+                outlet_ports=tuple(spec.outlet_ports),
+            )
+            for spec in sorted(self._junction_specs.values(), key=lambda item: item.junction_id)
         )
 
     def list_connection_edges(self) -> tuple[ConnectionEdge, ...]:
@@ -438,7 +486,13 @@ class ConnectionNetwork:
                 )
                 for spec in sorted(self._boundary_specs.values(), key=lambda item: item.boundary_id)
             ),
-            junction_nodes=(),
+            junction_nodes=tuple(
+                JunctionNode(
+                    junction_id=spec.junction_id,
+                    port_names=(*spec.inlet_ports, *spec.outlet_ports),
+                )
+                for spec in sorted(self._junction_specs.values(), key=lambda item: item.junction_id)
+            ),
             edges=tuple(self._edges),
         )
 
@@ -746,6 +800,9 @@ class ConnectionNetwork:
     def remove_process(self, *, process_id: object) -> None:
         self._remove_process(process_id=process_id)
 
+    def remove_junction(self, *, junction_id: object) -> None:
+        self._remove_junction(junction_id=junction_id)
+
     def add_process_port(
         self,
         *,
@@ -1005,6 +1062,28 @@ class ConnectionNetwork:
 
         del self._process_specs[process_id]
 
+    def _remove_junction(self, *, junction_id: object) -> None:
+        if not isinstance(junction_id, str) or not junction_id.strip():
+            raise ValueError("remove_junction requires non-empty string field 'junction_id'")
+        normalized_junction_id = junction_id.strip()
+        if normalized_junction_id not in self._junction_specs:
+            raise ValueError(f"unknown junction '{normalized_junction_id}'")
+
+        incident_edges = tuple(
+            sorted(
+                edge.edge_id
+                for edge in self._edges
+                if edge.source.node_id == normalized_junction_id
+                or edge.target.node_id == normalized_junction_id
+            )
+        )
+        if incident_edges:
+            raise ValueError(
+                f"cannot remove junction '{normalized_junction_id}': connected edges exist {incident_edges!r}"
+            )
+
+        del self._junction_specs[normalized_junction_id]
+
     def _remove_boundary(self, *, boundary_id: object) -> None:
         if not isinstance(boundary_id, str) or not boundary_id.strip():
             raise ValueError("remove_boundary requires non-empty string field 'boundary_id'")
@@ -1226,6 +1305,7 @@ class ConnectionNetwork:
         manager_snapshot = self._line_hydraulic_manager.capture_snapshot()
         return _NetworkReconfigurationState(
             process_specs=dict(self._process_specs),
+            junction_specs=dict(self._junction_specs),
             boundary_specs=dict(self._boundary_specs),
             edges=list(self._edges),
             manager_snapshot=manager_snapshot,
@@ -1239,6 +1319,7 @@ class ConnectionNetwork:
 
     def _restore_reconfiguration_state(self, state: _NetworkReconfigurationState) -> None:
         self._process_specs = dict(state.process_specs)
+        self._junction_specs = dict(state.junction_specs)
         self._boundary_specs = dict(state.boundary_specs)
         self._edges = list(state.edges)
         self._edge_lookup = dict(state.edge_lookup)
@@ -1297,9 +1378,9 @@ class ConnectionNetwork:
         node_kind = self._node_kind(node_id)
         if node_kind is None:
             raise ValueError(f"unknown endpoint node '{node_id}'")
-        if node_kind == "process":
+        if node_kind in {"process", "junction"}:
             raise ValueError(
-                f"invalid endpoint '{endpoint}': process endpoints must use '<process_id>.<port_name>' format"
+                f"invalid endpoint '{endpoint}': {node_kind} endpoints must use '<node_id>.<port_name>' format"
             )
         boundary = self._boundary_specs[node_id]
         return PortReference(node_id=node_id, port_name=boundary.port_name)
@@ -1314,6 +1395,15 @@ class ConnectionNetwork:
                 )
             return
 
+        junction_spec = self._junction_specs.get(node_id)
+        if junction_spec is not None:
+            known_ports = set(junction_spec.inlet_ports) | set(junction_spec.outlet_ports)
+            if port_name not in known_ports:
+                raise ValueError(
+                    f"unknown junction endpoint '{node_id}.{port_name}': available ports are {sorted(known_ports)!r}"
+                )
+            return
+
         boundary_spec = self._boundary_specs.get(node_id)
         if boundary_spec is not None and port_name != boundary_spec.port_name:
             raise ValueError(
@@ -1323,6 +1413,8 @@ class ConnectionNetwork:
     def _node_kind(self, node_id: str) -> str | None:
         if node_id in self._process_specs:
             return "process"
+        if node_id in self._junction_specs:
+            return "junction"
         if node_id in self._boundary_specs:
             return "boundary"
         return None
@@ -1335,6 +1427,14 @@ class ConnectionNetwork:
             if port_name in process_spec.outlet_ports:
                 return "outlet"
             raise ValueError(f"unknown process endpoint '{node_id}.{port_name}'")
+
+        junction_spec = self._junction_specs.get(node_id)
+        if junction_spec is not None:
+            if port_name in junction_spec.inlet_ports:
+                return "inlet"
+            if port_name in junction_spec.outlet_ports:
+                return "outlet"
+            raise ValueError(f"unknown junction endpoint '{node_id}.{port_name}'")
 
         boundary_spec = self._boundary_specs.get(node_id)
         if boundary_spec is not None:
@@ -1506,6 +1606,8 @@ class ConnectionNetwork:
                 linear_residual_equations=hydraulic.system.linear_residual_equations,
                 unknown_order=hydraulic.unknown_order,
                 residual_order=hydraulic.residual_order,
+                topology_lookup=hydraulic.system.topology_lookup,
+                pressure_anchor_metadata=hydraulic.system.pressure_anchor_metadata,
             ),
             unknown_order=hydraulic.unknown_order,
             residual_order=hydraulic.residual_order,
@@ -1513,7 +1615,7 @@ class ConnectionNetwork:
         )
 
     def _default_equation_name_for_line(self, line_id: str) -> str:
-        return f"eq_{line_id}"
+        return line_id
 
     def _require_non_empty_string_value(self, *, value: object, error_message: str) -> str:
         if not isinstance(value, str) or not value.strip():
@@ -1579,6 +1681,7 @@ __all__ = [
     "CompiledConnectionNetwork",
     "ConnectionNetwork",
     "NetworkBoundarySpec",
+    "NetworkJunctionSpec",
     "NetworkLineHydraulicConfig",
     "NetworkProcessSpec",
     "QueuedReconfigurationTransaction",

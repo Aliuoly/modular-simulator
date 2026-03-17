@@ -23,7 +23,7 @@ from modular_simulation.connection.runtime.runtime import (
 class _DynamicUnitPortApi(Protocol):
     def add_unit_process(
         self,
-        process: UnitProcess | JunctionProcess,
+        process: UnitProcess,
         *,
         idempotency_key: str | None = None,
         expected_revision: str | None = None,
@@ -32,8 +32,17 @@ class _DynamicUnitPortApi(Protocol):
 
     def add_junction_process(
         self,
-        process: UnitProcess | JunctionProcess,
+        process: JunctionProcess,
         *,
+        idempotency_key: str | None = None,
+        expected_revision: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> str: ...
+
+    def remove_junction_process(
+        self,
+        *,
+        process_id: str,
         idempotency_key: str | None = None,
         expected_revision: str | None = None,
         metadata: Mapping[str, object] | None = None,
@@ -157,6 +166,14 @@ def test_add_unit_and_ports_commit_through_transaction_api() -> None:
         add_purge_outlet_request,
         add_junction_request,
     ) == ("rq_0001", "rq_0002", "rq_0003", "rq_0004")
+    queued_mutations = tuple(item.mutations[0] for item in network.queued_reconfigurations)
+    assert queued_mutations[3] == {
+        "command_id": None,
+        "operation": "add_junction",
+        "junction_id": "mixing_junction",
+        "inlet_ports": ["inlet_a"],
+        "outlet_ports": ["outlet"],
+    }
 
     result = cast(ConnectionRuntimeStepResult, network.step(macro_step_time_s=0.25))
     assert result.graph_revision == "graph_rev_0002"
@@ -171,13 +188,37 @@ def test_add_unit_and_ports_commit_through_transaction_api() -> None:
     compiled = network.compiled
     assert compiled is not None
     process_nodes = {node.process_id: node for node in compiled.topology.process_nodes}
+    junction_nodes = {node.junction_id: node for node in compiled.topology.junction_nodes}
     assert process_nodes["separator"].inlet_ports == ("feed",)
     assert process_nodes["separator"].outlet_ports == ("product",)
     assert process_nodes["reactor"].inlet_ports == ("feed", "recycle")
     assert process_nodes["reactor"].outlet_ports == ("product", "purge")
-    assert process_nodes["mixing_junction"].inlet_ports == ("inlet_a",)
-    assert process_nodes["mixing_junction"].outlet_ports == ("outlet",)
+    assert "mixing_junction" not in process_nodes
+    assert junction_nodes["mixing_junction"].port_names == ("inlet_a", "outlet")
     assert network.queued_reconfigurations == ()
+
+
+def test_remove_junction_process_queues_explicit_junction_removal() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network(runtime)
+    network.add_junction("mixing_junction", inlet_ports=("inlet_a",), outlet_ports=("outlet",))
+    _ = network.compile()
+    api = _api(network)
+
+    request_id = api.remove_junction_process(process_id="mixing_junction")
+
+    assert request_id == "rq_0001"
+    assert network.queued_reconfigurations[0].mutations[0] == {
+        "command_id": None,
+        "operation": "remove_junction",
+        "junction_id": "mixing_junction",
+    }
+
+    result = cast(ConnectionRuntimeStepResult, network.step(macro_step_time_s=0.25))
+    assert result.barrier_reconfiguration.applied_request_ids == ("rq_0001",)
+    compiled = network.compiled
+    assert compiled is not None
+    assert tuple(node.junction_id for node in compiled.topology.junction_nodes) == ()
 
 
 def test_remove_connected_port_fails_without_queue_mutation() -> None:

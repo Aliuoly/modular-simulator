@@ -461,3 +461,93 @@ def test_connected_plant_step_defers_queue_mutations_enqueued_in_coupling_hook()
         ("subsystem_process_step", 2, 2.0),
         ("connection_runtime_coupling", 2, 2.0),
     ]
+
+
+def test_runtime_add_junction_mutation_compiles_explicit_junction_node() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network(runtime)
+
+    request_id = network.queue_reconfiguration(
+        {
+            "operation": "batch_update",
+            "mutations": [
+                {
+                    "operation": "add_junction",
+                    "junction_id": "mixing_junction",
+                    "inlet_ports": ["feed_a", "feed_b"],
+                    "outlet_ports": ["product_a", "product_b"],
+                }
+            ],
+        }
+    )
+
+    assert request_id == "rq_0001"
+
+    result = cast(ConnectionRuntimeStepResult, network.step(macro_step_time_s=0.5))
+
+    assert result.barrier_reconfiguration.applied_request_ids == ("rq_0001",)
+    compiled = network.compiled
+    assert compiled is not None
+    assert tuple(node.process_id for node in compiled.topology.process_nodes) == ("reactor",)
+    assert tuple(node.junction_id for node in compiled.topology.junction_nodes) == (
+        "mixing_junction",
+    )
+
+
+def test_runtime_step_fails_before_transport_and_boundary_on_non_converged_hydraulics() -> None:
+    call_counts = {"transport": 0, "boundary": 0}
+
+    def hydraulic_solve_step(
+        *,
+        network: ConnectionNetwork,
+        macro_step_time_s: float,
+    ) -> HydraulicSolveResult:
+        del network, macro_step_time_s
+        return HydraulicSolveResult(
+            converged=False,
+            iterations=4,
+            residual_norm=9.5,
+            solution_vector=np.asarray([0.0, 5.0], dtype=np.float64),
+            unknowns={"flow": 0.0, "pressure": 5.0},
+            unknown_index_map={"flow": 0, "pressure": 1},
+            residual_index_map={"balance": 0, "ref": 1},
+        )
+
+    def transport_and_mixing_step(
+        *,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+        macro_step_time_s: float,
+    ) -> TransportAndMixingUpdate:
+        del network, hydraulic_result, macro_step_time_s
+        call_counts["transport"] += 1
+        return TransportAndMixingUpdate(transport_results={})
+
+    def boundary_propagation_step(
+        *,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+        transport_and_mixing_update: TransportAndMixingUpdate,
+        macro_step_time_s: float,
+    ) -> dict[str, PortCondition]:
+        del network, hydraulic_result, transport_and_mixing_update, macro_step_time_s
+        call_counts["boundary"] += 1
+        return {}
+
+    runtime = ConnectionRuntimeOrchestrator(
+        hydraulic_solve_step=hydraulic_solve_step,
+        transport_and_mixing_step=transport_and_mixing_step,
+        boundary_propagation_step=boundary_propagation_step,
+    )
+    network = _network(runtime)
+
+    with pytest.raises(
+        RuntimeError,
+        match=(
+            "hydraulic solve did not converge; aborting transport update and boundary propagation "
+            r"\(iterations=4, residual_norm=9.5\)"
+        ),
+    ):
+        _ = cast(ConnectionRuntimeStepResult, network.step(macro_step_time_s=1.0))
+
+    assert call_counts == {"transport": 0, "boundary": 0}

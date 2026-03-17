@@ -17,6 +17,7 @@ network = importlib.import_module("modular_simulation.connection.topology.networ
 
 ConnectionNetwork = network.ConnectionNetwork
 HydraulicCompileLifecycle = hydraulic_compile.HydraulicCompileLifecycle
+HydraulicPressureAnchorMetadata = hydraulic_solver.HydraulicPressureAnchorMetadata
 HydraulicSystemDefinition = hydraulic_solver.HydraulicSystemDefinition
 LinearResidualEquation = hydraulic_solver.LinearResidualEquation
 
@@ -145,3 +146,37 @@ def test_singular_jacobian_fails_with_actionable_message() -> None:
     message = str(error.value)
     assert "Jacobian is singular or underdetermined" in message
     assert "rank" in message
+
+
+def test_conflicting_anchor_metadata_fails_with_actionable_message() -> None:
+    system = HydraulicSystemDefinition(
+        equations=(),
+        linear_residual_equations=(
+            _linear_equation("head_a", {"pressure_node": 1.0, "flow_a": -1.0}),
+            _linear_equation("head_b", {"pressure_node": 1.0, "flow_b": -1.0}),
+            _linear_equation("closure", {"flow_a": 1.0, "flow_b": -1.0}),
+        ),
+        pressure_anchor_metadata=(
+            HydraulicPressureAnchorMetadata(
+                pressure_unknown_name="pressure_node",
+                residual_name="anchor_a",
+                pressure_value=110.0,
+                topology_label="feed.outlet",
+            ),
+            HydraulicPressureAnchorMetadata(
+                pressure_unknown_name="pressure_node",
+                residual_name="anchor_b",
+                pressure_value=130.0,
+                topology_label="unit.inlet",
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError) as error:
+        _ = _compile_hydraulic_via_network(system)
+
+    message = str(error.value)
+    assert "conflicting hydraulic anchors" in message
+    assert "pressure_node" in message
+    assert "feed.outlet=110" in message
+    assert "unit.inlet=130" in message

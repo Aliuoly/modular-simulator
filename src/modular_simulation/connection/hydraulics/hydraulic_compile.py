@@ -14,6 +14,7 @@ from . import hydraulic_solver
 from .hydraulic_solver import (
     HydraulicSolveResult,
     HydraulicSystemDefinition,
+    HydraulicTopologyLookup,
     build_index_maps,
     solve_hydraulic_system,
 )
@@ -74,6 +75,8 @@ class CompiledHydraulicGraph:
             linear_residual_equations=self.system.linear_residual_equations,
             unknown_order=self.unknown_order,
             residual_order=self.residual_order,
+            topology_lookup=self.system.topology_lookup,
+            pressure_anchor_metadata=self.system.pressure_anchor_metadata,
         )
         unknown_index_map, residual_index_map = build_index_maps(system)
         unknown_order = tuple(sorted(unknown_index_map, key=unknown_index_map.__getitem__))
@@ -163,6 +166,65 @@ class CompiledHydraulicGraph:
             residual_order=self.residual_order,
             valve_state_by_line=normalized_next_valve_state_by_line,
         )
+
+    @property
+    def topology_lookup(self) -> HydraulicTopologyLookup:
+        return self.system.topology_lookup
+
+    def resolve_line_flow(
+        self, *, line_id: str, hydraulic_result: HydraulicSolveResult
+    ) -> float | None:
+        unknown_name = self.topology_lookup.line_flow_unknown_by_line.get(line_id)
+        if unknown_name is None:
+            return None
+        value = hydraulic_result.unknowns.get(unknown_name)
+        if isinstance(value, (float, int)) and isfinite(float(value)):
+            return float(value)
+        return None
+
+    def resolve_line_source_pressure(
+        self, *, line_id: str, hydraulic_result: HydraulicSolveResult
+    ) -> float | None:
+        unknown_name = self.topology_lookup.edge_source_pressure_unknown_by_line.get(line_id)
+        if unknown_name is None:
+            return None
+        value = hydraulic_result.unknowns.get(unknown_name)
+        if isinstance(value, (float, int)) and isfinite(float(value)):
+            return float(value)
+        return None
+
+    def resolve_line_target_pressure(
+        self, *, line_id: str, hydraulic_result: HydraulicSolveResult
+    ) -> float | None:
+        unknown_name = self.topology_lookup.edge_target_pressure_unknown_by_line.get(line_id)
+        if unknown_name is None:
+            return None
+        value = hydraulic_result.unknowns.get(unknown_name)
+        if isinstance(value, (float, int)) and isfinite(float(value)):
+            return float(value)
+        return None
+
+    def resolve_endpoint_pressure(
+        self, *, endpoint_id: str, hydraulic_result: HydraulicSolveResult
+    ) -> float | None:
+        unknown_name = self.topology_lookup.node_pressure_unknown_by_endpoint.get(endpoint_id)
+        if unknown_name is None:
+            return None
+        value = hydraulic_result.unknowns.get(unknown_name)
+        if isinstance(value, (float, int)) and isfinite(float(value)):
+            return float(value)
+        return None
+
+    def resolve_junction_pressure(
+        self, *, junction_id: str, hydraulic_result: HydraulicSolveResult
+    ) -> float | None:
+        unknown_name = self.topology_lookup.node_pressure_unknown_by_junction.get(junction_id)
+        if unknown_name is None:
+            return None
+        value = hydraulic_result.unknowns.get(unknown_name)
+        if isinstance(value, (float, int)) and isfinite(float(value)):
+            return float(value)
+        return None
 
 
 @dataclass(frozen=True)
@@ -473,6 +535,10 @@ def _solvability_error_to_diagnostic(*, message: str) -> GraphCompileDiagnostic:
     normalized = message.lower()
     if "missing pressure reference" in normalized:
         code = "missing_pressure_reference"
+    elif "conflicting hydraulic anchors" in normalized:
+        code = "conflicting_hydraulic_anchors"
+    elif "over-constrained hydraulic boundary conditions" in normalized:
+        code = "overconstrained_hydraulic_boundary_conditions"
     elif "dof mismatch" in normalized:
         code = "invalid_topology"
     else:
@@ -614,6 +680,8 @@ def _apply_compiled_valve_states_to_system(
         linear_residual_equations=system.linear_residual_equations,
         unknown_order=system.unknown_order,
         residual_order=system.residual_order,
+        topology_lookup=system.topology_lookup,
+        pressure_anchor_metadata=system.pressure_anchor_metadata,
     )
 
 

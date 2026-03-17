@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from math import isfinite
+from math import isclose, isfinite
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, cast
 import warnings
@@ -17,12 +17,17 @@ from modular_simulation.connection.runtime.connected_plant_orchestrator import (
 )
 from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
 from modular_simulation.connection.hydraulics.hydraulic_element import (
+    CanonicalNodePressureHydraulicElement,
     HydraulicElement,
+    PipeHydraulicElement,
     resolve_hydraulic_element,
 )
 from modular_simulation.connection.hydraulics.hydraulic_solver import (
     ElementEquation,
+    HydraulicPressureAnchorMetadata,
     HydraulicSystemDefinition,
+    HydraulicTopologyLookup,
+    LinearResidualEquation,
 )
 from modular_simulation.connection.topology.network import ConnectionNetwork
 from modular_simulation.connection.runtime.process_stream_io import ProcessStreamIO
@@ -37,6 +42,8 @@ if TYPE_CHECKING:
     from modular_simulation.framework.system import System
     from modular_simulation.connection.topology.topology import TopologyGraph
     from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
+
+from modular_simulation.measurables.process_model import StateType
 
 
 @dataclass(frozen=True)
@@ -150,6 +157,28 @@ class _ResolvedConnection:
     target_port_name: str
 
 
+@dataclass(frozen=True)
+class _HydraulicNodeCompileSpec:
+    node_key: str
+    topology_label: str
+    pressure_unknown_name: str
+    endpoint_ids: tuple[str, ...]
+    anchor_pressure_pa: float | None
+
+
+@dataclass(frozen=True)
+class _UnitFlowBalanceEquationCandidate:
+    residual_name: str
+    coefficients: Mapping[str, float]
+
+
+@dataclass(frozen=True)
+class _UnitPressureRelation:
+    inlet_port_name: str
+    outlet_port_name: str
+    pressure_drop_pa: float
+
+
 class Flowsheet:
     def __init__(self, context: SimulationRuntimeContext, dt: float = 0.1):
         if not isfinite(dt) or dt <= 0.0:
@@ -158,6 +187,8 @@ class Flowsheet:
         self._context: SimulationRuntimeContext = context
         self._dt: float = float(dt)
         self._units: dict[str, ProcessModel] = {}
+        self._user_declared_fields_by_unit_object_id: dict[int, frozenset[str]] = {}
+        self._user_declared_field_values_by_unit_object_id: dict[int, Mapping[str, object]] = {}
         self._feeds: dict[str, StreamData] = {}
         self._connections: list[_ConnectionSpec] = []
         self._subsystems: dict[str, Subsystem] = {}
@@ -167,6 +198,26 @@ class Flowsheet:
     def add_unit(self, unit_id: str, unit: ProcessModel) -> None:
         normalized_unit_id = self._normalize_node_id(unit_id=unit_id, field_name="unit_id")
         self._assert_available_node_id(node_id=normalized_unit_id)
+        model_fields_set = getattr(unit, "model_fields_set", None)
+        if isinstance(model_fields_set, set):
+            explicit_fields = frozenset(model_fields_set)
+            self._user_declared_fields_by_unit_object_id[id(unit)] = explicit_fields
+            snapshot_values: dict[str, object] = {}
+            for field_name in explicit_fields:
+                try:
+                    raw_value = getattr(unit, field_name)
+                except Exception:
+                    continue
+                if isinstance(raw_value, np.ndarray):
+                    snapshot_values[field_name] = np.asarray(raw_value, dtype=float).copy()
+                else:
+                    snapshot_values[field_name] = raw_value
+            self._user_declared_field_values_by_unit_object_id[id(unit)] = MappingProxyType(
+                snapshot_values
+            )
+        else:
+            self._user_declared_fields_by_unit_object_id[id(unit)] = frozenset()
+            self._user_declared_field_values_by_unit_object_id[id(unit)] = MappingProxyType({})
         self._units[normalized_unit_id] = unit
         self._subsystems[normalized_unit_id] = create_subsystem_for_unit(
             unit=unit,
@@ -260,19 +311,40 @@ class Flowsheet:
         return plant
 
     def _validate_compile_configuration(self) -> None:
-        self._validate_pressure_boundary_presence()
         resolved_connections = self._resolved_connections_for_validation()
+        self._validate_pressure_boundary_presence(resolved_connections=resolved_connections)
         self._validate_mandatory_inlets(resolved_connections=resolved_connections)
         self._validate_species_compatibility(resolved_connections=resolved_connections)
         self._warn_dangling_outlets(resolved_connections=resolved_connections)
         self._warn_on_topology_issues(resolved_connections=resolved_connections)
 
-    def _validate_pressure_boundary_presence(self) -> None:
+    def _validate_pressure_boundary_presence(
+        self, *, resolved_connections: tuple[_ResolvedConnection, ...]
+    ) -> None:
         if self._feeds:
+            return
+        connected_process_ports = {
+            (connection.target_node_id, connection.target_port_name)
+            for connection in resolved_connections
+        }
+        connected_process_ports.update(
+            (connection.source_node_id, connection.source_port_name)
+            for connection in resolved_connections
+            if not connection.source_is_feed
+        )
+        if any(
+            self._resolve_hydraulic_anchor_pressure(
+                node_id=node_id,
+                port_name=port_name,
+                topology=None,
+            )
+            is not None
+            for node_id, port_name in sorted(connected_process_ports)
+        ):
             return
         raise ValueError(
             "flowsheet compile validation failed: at least one feed boundary is required "
-            + "to anchor pressure and material flow"
+            + "unless an explicit unit-port pressure declaration anchors pressure and material flow"
         )
 
     def _resolved_connections_for_validation(self) -> tuple[_ResolvedConnection, ...]:
@@ -723,42 +795,179 @@ class Flowsheet:
 
     def _build_hydraulic_system(self, topology: TopologyGraph) -> HydraulicSystemDefinition:
         equations: list[ElementEquation] = []
+        linear_residual_equations: list[LinearResidualEquation] = []
+        pressure_anchor_metadata: list[HydraulicPressureAnchorMetadata] = []
+        node_specs_by_key = self._build_hydraulic_node_specs(topology=topology)
+        line_flow_unknown_by_line: dict[str, str] = {}
+        edge_source_pressure_unknown_by_line: dict[str, str] = {}
+        edge_target_pressure_unknown_by_line: dict[str, str] = {}
+        node_pressure_unknown_by_endpoint: dict[str, str] = {}
+        node_pressure_unknown_by_junction: dict[str, str] = {}
+
         for edge in sorted(topology.edges, key=lambda item: item.edge_id):
-            element = self._resolve_hydraulic_element(
-                source_node_id=edge.source.node_id,
-                source_port_name=edge.source.port_name,
-                target_node_id=edge.target.node_id,
+            source_key = self._hydraulic_node_key(
+                node_id=edge.source.node_id,
+                port_name=edge.source.port_name,
+                topology=topology,
+            )
+            target_key = self._hydraulic_node_key(
+                node_id=edge.target.node_id,
+                port_name=edge.target.port_name,
+                topology=topology,
+            )
+            source_node_spec = node_specs_by_key[source_key]
+            target_node_spec = node_specs_by_key[target_key]
+
+            element = CanonicalNodePressureHydraulicElement(
+                wrapped=self._resolve_hydraulic_element(
+                    source_node_id=edge.source.node_id,
+                    source_port_name=edge.source.port_name,
+                    target_node_id=edge.target.node_id,
+                )
             )
             parameters = self._resolve_element_parameters(
-                element=element,
                 source_node_id=edge.source.node_id,
                 source_port_name=edge.source.port_name,
                 target_node_id=edge.target.node_id,
+                element=element.wrapped,
             )
             equations.append(
                 ElementEquation(
                     name=edge.edge_id,
                     element=element,
-                    inputs=MappingProxyType(
+                    inputs=MappingProxyType({}),
+                    parameters=parameters,
+                    unknown_name_map=MappingProxyType(
                         {
-                            "upstream_pressure": self._source_pressure(
-                                node_id=edge.source.node_id,
-                                port_name=edge.source.port_name,
-                            ),
-                            "downstream_pressure": self._target_pressure(
-                                node_id=edge.target.node_id,
-                                port_name=edge.target.port_name,
-                            ),
+                            "flow_rate": edge.edge_id,
+                            "upstream_pressure": source_node_spec.pressure_unknown_name,
+                            "downstream_pressure": target_node_spec.pressure_unknown_name,
                         }
                     ),
-                    parameters=parameters,
-                    unknown_name_map=MappingProxyType({"flow_rate": edge.edge_id}),
                     residual_name_map=MappingProxyType(
                         {"head_balance": f"{edge.edge_id}_head_balance"}
                     ),
                 )
             )
-        return HydraulicSystemDefinition(equations=tuple(equations))
+            line_flow_unknown_by_line[edge.edge_id] = edge.edge_id
+            edge_source_pressure_unknown_by_line[edge.edge_id] = (
+                source_node_spec.pressure_unknown_name
+            )
+            edge_target_pressure_unknown_by_line[edge.edge_id] = (
+                target_node_spec.pressure_unknown_name
+            )
+
+        incidence_by_node_key: dict[str, list[tuple[str, float]]] = {
+            node_key: [] for node_key in node_specs_by_key
+        }
+        for edge in sorted(topology.edges, key=lambda item: item.edge_id):
+            source_key = self._hydraulic_node_key(
+                node_id=edge.source.node_id,
+                port_name=edge.source.port_name,
+                topology=topology,
+            )
+            target_key = self._hydraulic_node_key(
+                node_id=edge.target.node_id,
+                port_name=edge.target.port_name,
+                topology=topology,
+            )
+            incidence_by_node_key[source_key].append((edge.edge_id, -1.0))
+            incidence_by_node_key[target_key].append((edge.edge_id, 1.0))
+
+        self._append_inferred_unit_hydraulic_relations(
+            topology=topology,
+            node_specs_by_key=node_specs_by_key,
+            incidence_by_node_key=incidence_by_node_key,
+            linear_residual_equations=linear_residual_equations,
+        )
+
+        for node_key in sorted(node_specs_by_key):
+            node_spec = node_specs_by_key[node_key]
+            incidence_count = len(incidence_by_node_key[node_key])
+            for endpoint_id in node_spec.endpoint_ids:
+                node_pressure_unknown_by_endpoint[endpoint_id] = node_spec.pressure_unknown_name
+            if node_key.startswith("junction:"):
+                node_pressure_unknown_by_junction[node_key.removeprefix("junction:")] = (
+                    node_spec.pressure_unknown_name
+                )
+
+            if node_key.startswith("process:") and incidence_count > 1:
+                node_id, port_name = node_key.removeprefix("process:").split(".", maxsplit=1)
+                if not self._process_port_supports_direct_multi_edge_balancing(
+                    node_id=node_id,
+                    port_name=port_name,
+                    incidence_count=incidence_count,
+                ):
+                    raise ValueError(
+                        "direct unit-port fan-in/fan-out is illegal at {}: {} incident lines attach to one unit port; add an explicit junction or use a unit model that declares the required hydraulic balancing semantics".format(
+                            node_spec.topology_label,
+                            incidence_count,
+                        )
+                    )
+
+            if node_spec.anchor_pressure_pa is not None and incidence_count > 1:
+                raise ValueError(
+                    "over-constrained hydraulic boundary conditions at {}: {} incident lines share one anchored hydraulic node; add an explicit junction or remove the fixed-pressure anchor".format(
+                        node_spec.topology_label,
+                        incidence_count,
+                    )
+                )
+
+            needs_mass_balance = incidence_count > 1 or node_key.startswith("junction:")
+            if needs_mass_balance:
+                coefficients = {
+                    line_id: coefficient for line_id, coefficient in incidence_by_node_key[node_key]
+                }
+                linear_residual_equations.append(
+                    LinearResidualEquation(
+                        residual_name=f"{node_spec.pressure_unknown_name}__mass_balance",
+                        coefficients=MappingProxyType(coefficients),
+                        constant=0.0,
+                    )
+                )
+
+            anchor_pressure_pa = node_spec.anchor_pressure_pa
+            if anchor_pressure_pa is not None:
+                residual_name = f"{node_spec.pressure_unknown_name}__anchor"
+                linear_residual_equations.append(
+                    LinearResidualEquation(
+                        residual_name=residual_name,
+                        coefficients=MappingProxyType({node_spec.pressure_unknown_name: 1.0}),
+                        constant=-anchor_pressure_pa,
+                    )
+                )
+                pressure_anchor_metadata.append(
+                    HydraulicPressureAnchorMetadata(
+                        pressure_unknown_name=node_spec.pressure_unknown_name,
+                        residual_name=residual_name,
+                        pressure_value=anchor_pressure_pa,
+                        topology_label=node_spec.topology_label,
+                    )
+                )
+
+        topology_lookup = HydraulicTopologyLookup(
+            line_flow_unknown_by_line=MappingProxyType(
+                dict(sorted(line_flow_unknown_by_line.items()))
+            ),
+            edge_source_pressure_unknown_by_line=MappingProxyType(
+                dict(sorted(edge_source_pressure_unknown_by_line.items()))
+            ),
+            edge_target_pressure_unknown_by_line=MappingProxyType(
+                dict(sorted(edge_target_pressure_unknown_by_line.items()))
+            ),
+            node_pressure_unknown_by_endpoint=MappingProxyType(
+                dict(sorted(node_pressure_unknown_by_endpoint.items()))
+            ),
+            node_pressure_unknown_by_junction=MappingProxyType(
+                dict(sorted(node_pressure_unknown_by_junction.items()))
+            ),
+        )
+        return HydraulicSystemDefinition(
+            equations=tuple(equations),
+            linear_residual_equations=tuple(linear_residual_equations),
+            topology_lookup=topology_lookup,
+            pressure_anchor_metadata=tuple(pressure_anchor_metadata),
+        )
 
     def _configure_edge_hydraulic_actuator_state(
         self,
@@ -854,6 +1063,620 @@ class Flowsheet:
             target_unit=self._units.get(target_node_id),
             target_node_id=target_node_id,
         )
+
+    def _build_hydraulic_node_specs(
+        self, *, topology: TopologyGraph
+    ) -> dict[str, _HydraulicNodeCompileSpec]:
+        endpoint_ids_by_key: dict[str, set[str]] = {}
+        for edge in sorted(topology.edges, key=lambda item: item.edge_id):
+            for endpoint in (edge.source, edge.target):
+                node_key = self._hydraulic_node_key(
+                    node_id=endpoint.node_id,
+                    port_name=endpoint.port_name,
+                    topology=topology,
+                )
+                endpoint_ids_by_key.setdefault(node_key, set()).add(
+                    f"{endpoint.node_id}.{endpoint.port_name}"
+                )
+
+        specs: dict[str, _HydraulicNodeCompileSpec] = {}
+        for node_key in sorted(endpoint_ids_by_key):
+            pressure_unknown_name = self._pressure_unknown_name(node_key=node_key)
+            endpoint_ids = tuple(sorted(endpoint_ids_by_key[node_key]))
+
+            if node_key.startswith("junction:"):
+                junction_id = node_key.removeprefix("junction:")
+                specs[node_key] = _HydraulicNodeCompileSpec(
+                    node_key=node_key,
+                    topology_label=f"junction:{junction_id}",
+                    pressure_unknown_name=pressure_unknown_name,
+                    endpoint_ids=endpoint_ids,
+                    anchor_pressure_pa=None,
+                )
+                continue
+
+            endpoint_id = endpoint_ids[0]
+            node_id, port_name = endpoint_id.split(".", maxsplit=1)
+            specs[node_key] = _HydraulicNodeCompileSpec(
+                node_key=node_key,
+                topology_label=endpoint_id,
+                pressure_unknown_name=pressure_unknown_name,
+                endpoint_ids=endpoint_ids,
+                anchor_pressure_pa=self._resolve_hydraulic_anchor_pressure(
+                    node_id=node_id,
+                    port_name=port_name,
+                    topology=topology,
+                ),
+            )
+        return specs
+
+    def _hydraulic_node_key(self, *, node_id: str, port_name: str, topology: TopologyGraph) -> str:
+        if any(junction.junction_id == node_id for junction in topology.junction_nodes):
+            return f"junction:{node_id}"
+        if any(boundary.boundary_id == node_id for boundary in topology.boundary_nodes):
+            return f"boundary:{node_id}.{port_name}"
+        return f"process:{node_id}.{port_name}"
+
+    def _pressure_unknown_name(self, *, node_key: str) -> str:
+        sanitized = "".join(
+            character if character.isalnum() else "_" for character in node_key.strip()
+        ).strip("_")
+        return f"pressure__{sanitized}"
+
+    def _resolve_hydraulic_anchor_pressure(
+        self, *, node_id: str, port_name: str, topology: TopologyGraph | None
+    ) -> float | None:
+        if topology is not None and any(
+            boundary.boundary_id == node_id for boundary in topology.boundary_nodes
+        ):
+            return self._boundary_pressure(node_id=node_id)
+        return self._process_port_pressure(node_id=node_id, port_name=port_name)
+
+    def _boundary_pressure(self, *, node_id: str) -> float:
+        feed_stream = self._feeds.get(node_id)
+        if feed_stream is not None:
+            return float(feed_stream.pressure)
+        return 101325.0
+
+    def _process_port_pressure(self, *, node_id: str, port_name: str) -> float | None:
+        unit = self._units.get(node_id)
+        if unit is None:
+            return None
+
+        outlet_ports = self._available_unit_ports(unit_id=node_id, role="source")
+        inlet_ports = self._available_unit_ports(unit_id=node_id, role="target")
+
+        if port_name in outlet_ports:
+            for attribute_name in self._pressure_attribute_candidates(
+                port_name=port_name,
+                role="source",
+            ):
+                value = self._explicit_pressure_attribute_value(
+                    unit=unit,
+                    attribute_name=attribute_name,
+                )
+                if value is not None:
+                    return value
+            for attribute_name in self._pressure_vector_attribute_candidates(role="source"):
+                value = self._explicit_pressure_vector_value(
+                    unit=unit,
+                    attribute_name=attribute_name,
+                    port_name=port_name,
+                    ordered_ports=outlet_ports,
+                )
+                if value is not None:
+                    return value
+
+        if port_name in inlet_ports:
+            for attribute_name in self._pressure_attribute_candidates(
+                port_name=port_name,
+                role="target",
+            ):
+                value = self._explicit_pressure_attribute_value(
+                    unit=unit,
+                    attribute_name=attribute_name,
+                )
+                if value is not None:
+                    return value
+            for attribute_name in self._pressure_vector_attribute_candidates(role="target"):
+                value = self._explicit_pressure_vector_value(
+                    unit=unit,
+                    attribute_name=attribute_name,
+                    port_name=port_name,
+                    ordered_ports=inlet_ports,
+                )
+                if value is not None:
+                    return value
+
+        return None
+
+    def _pressure_attribute_candidates(
+        self, *, port_name: str, role: Literal["source", "target"]
+    ) -> tuple[str, ...]:
+        stripped_suffix = "_outlet" if role == "source" else "_inlet"
+        stripped_port_name = port_name.removesuffix(stripped_suffix)
+        candidates = [f"{port_name}_pressure"]
+        if stripped_port_name and stripped_port_name != port_name:
+            candidates.append(f"{stripped_port_name}_pressure")
+        candidates.append("outlet_pressure" if role == "source" else "inlet_pressure")
+        return tuple(dict.fromkeys(candidates))
+
+    def _pressure_vector_attribute_candidates(
+        self, *, role: Literal["source", "target"]
+    ) -> tuple[str, ...]:
+        return ("outlet_pressures",) if role == "source" else ("inlet_pressures",)
+
+    def _explicit_pressure_attribute_value(
+        self, *, unit: ProcessModel, attribute_name: str
+    ) -> float | None:
+        if not self._pressure_attribute_was_explicitly_declared(
+            unit=unit,
+            attribute_name=attribute_name,
+        ):
+            return None
+        raw_value = self._explicit_declared_field_value(unit=unit, attribute_name=attribute_name)
+        return self._pressure_value_from_object(raw_value)
+
+    def _explicit_pressure_vector_value(
+        self,
+        *,
+        unit: ProcessModel,
+        attribute_name: str,
+        port_name: str,
+        ordered_ports: tuple[str, ...],
+    ) -> float | None:
+        if not self._pressure_attribute_was_explicitly_declared(
+            unit=unit,
+            attribute_name=attribute_name,
+        ):
+            return None
+        raw_vector = self._explicit_declared_field_value(unit=unit, attribute_name=attribute_name)
+        return self._pressure_vector_object_value(
+            raw_vector=raw_vector,
+            port_name=port_name,
+            ordered_ports=ordered_ports,
+        )
+
+    def _explicit_declared_field_value(self, *, unit: ProcessModel, attribute_name: str) -> object:
+        snapshots = self._user_declared_field_values_by_unit_object_id.get(id(unit))
+        if snapshots is not None and attribute_name in snapshots:
+            return snapshots[attribute_name]
+        return getattr(unit, attribute_name, None)
+
+    def _pressure_attribute_was_explicitly_declared(
+        self, *, unit: ProcessModel, attribute_name: str
+    ) -> bool:
+        if not self._field_was_explicitly_declared(unit=unit, attribute_name=attribute_name):
+            return False
+        state_metadata = unit.state_metadata_dict.get(attribute_name)
+        if state_metadata is None:
+            return False
+        return state_metadata.type in {StateType.BOUNDARY, StateType.ALGEBRAIC}
+
+    def _field_was_explicitly_declared(self, *, unit: ProcessModel, attribute_name: str) -> bool:
+        explicit_fields = self._user_declared_fields_by_unit_object_id.get(id(unit))
+        if explicit_fields is None:
+            model_fields_set = getattr(unit, "model_fields_set", None)
+            if not isinstance(model_fields_set, set):
+                return False
+            explicit_fields = frozenset(model_fields_set)
+        return attribute_name in explicit_fields
+
+    def _pressure_attribute_value(self, *, unit: ProcessModel, attribute_name: str) -> float | None:
+        value = getattr(unit, attribute_name, None)
+        return self._pressure_value_from_object(value)
+
+    def _pressure_value_from_object(self, value: object) -> float | None:
+        if isinstance(value, (int, float)) and isfinite(float(value)) and float(value) > 0.0:
+            return float(value)
+        return None
+
+    def _pressure_vector_value(
+        self,
+        *,
+        unit: ProcessModel,
+        attribute_name: str,
+        port_name: str,
+        ordered_ports: tuple[str, ...],
+    ) -> float | None:
+        raw_vector = getattr(unit, attribute_name, None)
+        return self._pressure_vector_object_value(
+            raw_vector=raw_vector,
+            port_name=port_name,
+            ordered_ports=ordered_ports,
+        )
+
+    def _pressure_vector_object_value(
+        self,
+        *,
+        raw_vector: object,
+        port_name: str,
+        ordered_ports: tuple[str, ...],
+    ) -> float | None:
+        if raw_vector is None or port_name not in ordered_ports:
+            return None
+        try:
+            vector = np.asarray(raw_vector, dtype=float).reshape(-1)
+        except Exception:
+            return None
+        port_index = ordered_ports.index(port_name)
+        if port_index >= vector.size:
+            return None
+        value = float(vector[port_index])
+        if isfinite(value) and value > 0.0:
+            return value
+        return None
+
+    def _append_inferred_unit_hydraulic_relations(
+        self,
+        *,
+        topology: TopologyGraph,
+        node_specs_by_key: Mapping[str, _HydraulicNodeCompileSpec],
+        incidence_by_node_key: Mapping[str, list[tuple[str, float]]],
+        linear_residual_equations: list[LinearResidualEquation],
+    ) -> None:
+        self._append_inferred_unit_flow_balance_equations(
+            topology=topology,
+            incidence_by_node_key=incidence_by_node_key,
+            linear_residual_equations=linear_residual_equations,
+        )
+        self._append_inferred_unit_pressure_relation_equations(
+            topology=topology,
+            node_specs_by_key=node_specs_by_key,
+            linear_residual_equations=linear_residual_equations,
+        )
+
+    def _append_inferred_unit_flow_balance_equations(
+        self,
+        *,
+        topology: TopologyGraph,
+        incidence_by_node_key: Mapping[str, list[tuple[str, float]]],
+        linear_residual_equations: list[LinearResidualEquation],
+    ) -> None:
+        candidates: list[_UnitFlowBalanceEquationCandidate] = []
+        for unit_id in sorted(self._units):
+            for group_index, port_group in enumerate(
+                self._infer_unit_flow_balance_groups(unit_id=unit_id),
+                start=1,
+            ):
+                coefficients: dict[str, float] = {}
+                connected_port_count = 0
+                for port_name in port_group:
+                    node_key = self._hydraulic_node_key(
+                        node_id=unit_id,
+                        port_name=port_name,
+                        topology=topology,
+                    )
+                    incidences = incidence_by_node_key.get(node_key, [])
+                    if incidences:
+                        connected_port_count += 1
+                    for line_id, coefficient in incidences:
+                        coefficients[line_id] = coefficients.get(line_id, 0.0) + coefficient
+                normalized_coefficients = {
+                    line_id: coefficient
+                    for line_id, coefficient in sorted(coefficients.items())
+                    if coefficient != 0.0
+                }
+                if connected_port_count <= 1 or not normalized_coefficients:
+                    continue
+                candidates.append(
+                    _UnitFlowBalanceEquationCandidate(
+                        residual_name=(f"unit__{unit_id}__flow_balance__{group_index:02d}"),
+                        coefficients=MappingProxyType(normalized_coefficients),
+                    )
+                )
+
+        for candidate in self._prune_redundant_unit_flow_balance_equations(candidates):
+            linear_residual_equations.append(
+                LinearResidualEquation(
+                    residual_name=candidate.residual_name,
+                    coefficients=candidate.coefficients,
+                    constant=0.0,
+                )
+            )
+
+    def _prune_redundant_unit_flow_balance_equations(
+        self,
+        candidates: tuple[_UnitFlowBalanceEquationCandidate, ...]
+        | list[_UnitFlowBalanceEquationCandidate],
+    ) -> tuple[_UnitFlowBalanceEquationCandidate, ...]:
+        if len(candidates) <= 1:
+            return tuple(candidates)
+
+        line_to_candidate_indexes: dict[str, set[int]] = {}
+        for index, candidate in enumerate(candidates):
+            for line_id in candidate.coefficients:
+                line_to_candidate_indexes.setdefault(line_id, set()).add(index)
+
+        adjacency: dict[int, set[int]] = {index: set() for index in range(len(candidates))}
+        for indexes in line_to_candidate_indexes.values():
+            for index in indexes:
+                adjacency[index].update(other for other in indexes if other != index)
+
+        visited: set[int] = set()
+        omitted_indexes: set[int] = set()
+        for start_index in range(len(candidates)):
+            if start_index in visited:
+                continue
+            stack = [start_index]
+            component_indexes: set[int] = set()
+            while stack:
+                current_index = stack.pop()
+                if current_index in visited:
+                    continue
+                visited.add(current_index)
+                component_indexes.add(current_index)
+                stack.extend(sorted(adjacency[current_index] - visited))
+
+            component_line_ids = {
+                line_id
+                for candidate_index in component_indexes
+                for line_id in candidates[candidate_index].coefficients
+            }
+            if not component_line_ids:
+                continue
+
+            is_closed_component = all(
+                len(line_to_candidate_indexes[line_id] & component_indexes) == 2
+                for line_id in component_line_ids
+            )
+            if not is_closed_component:
+                continue
+
+            omitted_indexes.add(max(component_indexes))
+
+        return tuple(
+            candidate for index, candidate in enumerate(candidates) if index not in omitted_indexes
+        )
+
+    def _append_inferred_unit_pressure_relation_equations(
+        self,
+        *,
+        topology: TopologyGraph,
+        node_specs_by_key: Mapping[str, _HydraulicNodeCompileSpec],
+        linear_residual_equations: list[LinearResidualEquation],
+    ) -> None:
+        for unit_id in sorted(self._units):
+            relation = self._infer_unit_pressure_relation(unit_id=unit_id)
+            if relation is None:
+                continue
+
+            inlet_key = self._hydraulic_node_key(
+                node_id=unit_id,
+                port_name=relation.inlet_port_name,
+                topology=topology,
+            )
+            outlet_key = self._hydraulic_node_key(
+                node_id=unit_id,
+                port_name=relation.outlet_port_name,
+                topology=topology,
+            )
+            inlet_node_spec = node_specs_by_key.get(inlet_key)
+            outlet_node_spec = node_specs_by_key.get(outlet_key)
+            if inlet_node_spec is None or outlet_node_spec is None:
+                continue
+
+            self._validate_unit_pressure_relation_anchor_consistency(
+                unit_id=unit_id,
+                relation=relation,
+                inlet_node_spec=inlet_node_spec,
+                outlet_node_spec=outlet_node_spec,
+            )
+            if (
+                inlet_node_spec.anchor_pressure_pa is not None
+                and outlet_node_spec.anchor_pressure_pa is not None
+            ):
+                continue
+
+            linear_residual_equations.append(
+                LinearResidualEquation(
+                    residual_name=f"unit__{unit_id}__pressure_relation",
+                    coefficients=MappingProxyType(
+                        {
+                            inlet_node_spec.pressure_unknown_name: 1.0,
+                            outlet_node_spec.pressure_unknown_name: -1.0,
+                        }
+                    ),
+                    constant=-relation.pressure_drop_pa,
+                )
+            )
+
+    def _infer_unit_flow_balance_groups(self, *, unit_id: str) -> tuple[tuple[str, ...], ...]:
+        inlet_ports = self._available_unit_ports(unit_id=unit_id, role="target")
+        outlet_ports = self._available_unit_ports(unit_id=unit_id, role="source")
+        if not inlet_ports or not outlet_ports:
+            return ()
+
+        pairwise_groups = self._infer_pairwise_unit_flow_balance_groups(
+            unit_id=unit_id,
+            inlet_ports=inlet_ports,
+            outlet_ports=outlet_ports,
+        )
+        if pairwise_groups:
+            return pairwise_groups
+
+        if len(inlet_ports) == 1 or len(outlet_ports) == 1:
+            combined_group = tuple((*inlet_ports, *outlet_ports))
+            if all(
+                self._port_exposes_flow_metadata(
+                    unit_id=unit_id,
+                    port_name=port_name,
+                    role="target" if port_name in inlet_ports else "source",
+                )
+                for port_name in combined_group
+            ):
+                return (combined_group,)
+        return ()
+
+    def _infer_pairwise_unit_flow_balance_groups(
+        self,
+        *,
+        unit_id: str,
+        inlet_ports: tuple[str, ...],
+        outlet_ports: tuple[str, ...],
+    ) -> tuple[tuple[str, ...], ...]:
+        if len(inlet_ports) != len(outlet_ports) or len(inlet_ports) <= 1:
+            return ()
+
+        inlet_by_prefix: dict[str, str] = {}
+        for port_name in inlet_ports:
+            prefix = self._paired_port_prefix(port_name=port_name, suffix="_inlet")
+            if prefix is None or prefix in inlet_by_prefix:
+                return ()
+            inlet_by_prefix[prefix] = port_name
+
+        outlet_by_prefix: dict[str, str] = {}
+        for port_name in outlet_ports:
+            prefix = self._paired_port_prefix(port_name=port_name, suffix="_outlet")
+            if prefix is None or prefix in outlet_by_prefix:
+                return ()
+            outlet_by_prefix[prefix] = port_name
+
+        if set(inlet_by_prefix) != set(outlet_by_prefix):
+            return ()
+
+        groups: list[tuple[str, ...]] = []
+        for prefix in sorted(inlet_by_prefix):
+            inlet_port_name = inlet_by_prefix[prefix]
+            outlet_port_name = outlet_by_prefix[prefix]
+            if not self._port_exposes_flow_metadata(
+                unit_id=unit_id,
+                port_name=inlet_port_name,
+                role="target",
+            ) or not self._port_exposes_flow_metadata(
+                unit_id=unit_id,
+                port_name=outlet_port_name,
+                role="source",
+            ):
+                return ()
+            groups.append((inlet_port_name, outlet_port_name))
+        return tuple(groups)
+
+    def _paired_port_prefix(self, *, port_name: str, suffix: str) -> str | None:
+        if not port_name.endswith(suffix):
+            return None
+        prefix = port_name.removesuffix(suffix).strip("_")
+        if not prefix:
+            return None
+        return prefix
+
+    def _port_exposes_flow_metadata(
+        self,
+        *,
+        unit_id: str,
+        port_name: str,
+        role: Literal["source", "target"],
+    ) -> bool:
+        unit = self._units[unit_id]
+        expected_state_type = StateType.ALGEBRAIC if role == "source" else StateType.BOUNDARY
+        for attribute_name in self._flow_attribute_candidates(
+            unit_id=unit_id,
+            port_name=port_name,
+            role=role,
+        ):
+            metadata = unit.state_metadata_dict.get(attribute_name)
+            if metadata is not None and metadata.type == expected_state_type:
+                return True
+        return False
+
+    def _flow_attribute_candidates(
+        self,
+        *,
+        unit_id: str,
+        port_name: str,
+        role: Literal["source", "target"],
+    ) -> tuple[str, ...]:
+        stripped_suffix = "_outlet" if role == "source" else "_inlet"
+        stripped_port_name = port_name.removesuffix(stripped_suffix)
+        ordered_ports = self._available_unit_ports(unit_id=unit_id, role=role)
+        candidates = [f"{port_name}_flow"]
+        if stripped_port_name and stripped_port_name != port_name:
+            candidates.append(f"{stripped_port_name}_flow")
+        if role == "source":
+            candidates.append("outlet_flow")
+            if len(ordered_ports) > 1:
+                candidates.append("outlet_flows")
+        else:
+            candidates.append("inlet_flow")
+            if len(ordered_ports) > 1:
+                candidates.append("inlet_flows")
+        return tuple(dict.fromkeys(candidates))
+
+    def _infer_unit_pressure_relation(self, *, unit_id: str) -> _UnitPressureRelation | None:
+        unit = self._units[unit_id]
+        inlet_ports = self._available_unit_ports(unit_id=unit_id, role="target")
+        outlet_ports = self._available_unit_ports(unit_id=unit_id, role="source")
+        if len(inlet_ports) != 1 or len(outlet_ports) != 1:
+            return None
+
+        inlet_pressure_metadata = unit.state_metadata_dict.get("inlet_pressure")
+        outlet_pressure_metadata = unit.state_metadata_dict.get("outlet_pressure")
+        if inlet_pressure_metadata is None or inlet_pressure_metadata.type != StateType.BOUNDARY:
+            return None
+        if outlet_pressure_metadata is None or outlet_pressure_metadata.type != StateType.ALGEBRAIC:
+            return None
+        outlet_element = self._resolve_hydraulic_element(
+            source_node_id=unit_id,
+            source_port_name=outlet_ports[0],
+            target_node_id=unit_id,
+        )
+        if not isinstance(outlet_element, PipeHydraulicElement):
+            return None
+
+        pressure_drop_value = 0.0
+        metadata = unit.state_metadata_dict.get("pressure_drop")
+        if metadata is not None and metadata.type == StateType.CONSTANT:
+            pressure_drop = getattr(unit, "pressure_drop", None)
+            if isinstance(pressure_drop, (int, float)):
+                candidate_value = float(pressure_drop)
+                if isfinite(candidate_value) and candidate_value >= 0.0:
+                    pressure_drop_value = candidate_value
+        return _UnitPressureRelation(
+            inlet_port_name=inlet_ports[0],
+            outlet_port_name=outlet_ports[0],
+            pressure_drop_pa=pressure_drop_value,
+        )
+
+    def _validate_unit_pressure_relation_anchor_consistency(
+        self,
+        *,
+        unit_id: str,
+        relation: _UnitPressureRelation,
+        inlet_node_spec: _HydraulicNodeCompileSpec,
+        outlet_node_spec: _HydraulicNodeCompileSpec,
+    ) -> None:
+        inlet_anchor = inlet_node_spec.anchor_pressure_pa
+        outlet_anchor = outlet_node_spec.anchor_pressure_pa
+        if inlet_anchor is None or outlet_anchor is None:
+            return
+        observed_pressure_drop = inlet_anchor - outlet_anchor
+        if isclose(
+            observed_pressure_drop,
+            relation.pressure_drop_pa,
+            rel_tol=1.0e-9,
+            abs_tol=1.0e-9,
+        ):
+            return
+        raise ValueError(
+            "conflicting unit hydraulic boundary conditions for '{}': explicit anchors {}={} Pa and {}={} Pa conflict with inferred pressure_drop={} Pa; remove one fixed-pressure declaration or add an explicit junction/unit model with the intended hydraulic semantics".format(
+                unit_id,
+                inlet_node_spec.topology_label,
+                inlet_anchor,
+                outlet_node_spec.topology_label,
+                outlet_anchor,
+                relation.pressure_drop_pa,
+            )
+        )
+
+    def _process_port_supports_direct_multi_edge_balancing(
+        self,
+        *,
+        node_id: str,
+        port_name: str,
+        incidence_count: int,
+    ) -> bool:
+        del node_id, port_name
+        return incidence_count <= 1
 
     def _source_pressure(self, *, node_id: str, port_name: str) -> float:
         feed_stream = self._feeds.get(node_id)

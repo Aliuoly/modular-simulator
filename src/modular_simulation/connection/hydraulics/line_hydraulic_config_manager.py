@@ -245,6 +245,8 @@ class LineHydraulicConfigManager:
                 linear_residual_equations=system.linear_residual_equations,
                 unknown_order=system.unknown_order,
                 residual_order=system.residual_order,
+                topology_lookup=system.topology_lookup,
+                pressure_anchor_metadata=system.pressure_anchor_metadata,
             ),
             valve_state_by_line,
         )

@@ -14,21 +14,13 @@ from pydantic import (
     model_validator,
 )
 
+from .node_port_helpers import DirectionalNodePorts, normalize_non_empty_token, normalize_port_ids
 from ..topology.topology import (
     ConnectionEdge,
     JunctionNode,
     PortReference,
     ProcessNode,
 )
-
-
-def _normalize_non_empty_token(value: str, *, field_name: str) -> str:
-    normalized = value.strip()
-    if not normalized:
-        raise ValueError(f"{field_name} must be a non-empty string")
-    if any(ch.isspace() for ch in normalized):
-        raise ValueError(f"{field_name} must not contain whitespace")
-    return normalized
 
 
 def _validation_error_message(error: ValidationError) -> str:
@@ -49,12 +41,11 @@ class Port(BaseModel):
     @classmethod
     def _validate_port_id(cls, value: str, info: ValidationInfo) -> str:
         del info
-        return _normalize_non_empty_token(value, field_name="port_id")
+        return normalize_non_empty_token(value, field_name="port_id")
 
 
 class UnitProcess(BaseModel):
     process_id: str
-    process_kind: Literal["unit", "junction"] = "unit"
     ports: tuple[Port, ...] = Field(min_length=1)
     metadata: dict[str, object] = Field(default_factory=dict)
 
@@ -64,26 +55,11 @@ class UnitProcess(BaseModel):
     @classmethod
     def _validate_process_id(cls, value: str, info: ValidationInfo) -> str:
         del info
-        return _normalize_non_empty_token(value, field_name="process_id")
+        return normalize_non_empty_token(value, field_name="process_id")
 
     @model_validator(mode="after")
     def _validate_unique_ports(self) -> "UnitProcess":
-        duplicate_port_ids = sorted(
-            port_id
-            for port_id, count in Counter(port.port_id for port in self.ports).items()
-            if count > 1
-        )
-        if duplicate_port_ids:
-            raise ValueError(
-                f"duplicate process port ids are not allowed for '{self.process_id}': {duplicate_port_ids!r}"
-            )
-
-        inlet_port_ids = tuple(port.port_id for port in self.ports if port.direction == "inlet")
-        outlet_port_ids = tuple(port.port_id for port in self.ports if port.direction == "outlet")
-        if not inlet_port_ids:
-            raise ValueError(f"process '{self.process_id}' requires at least one inlet port")
-        if not outlet_port_ids:
-            raise ValueError(f"process '{self.process_id}' requires at least one outlet port")
+        _ = self.node_ports()
         return self
 
     def inlet_port_ids(self) -> tuple[str, ...]:
@@ -92,19 +68,19 @@ class UnitProcess(BaseModel):
     def outlet_port_ids(self) -> tuple[str, ...]:
         return tuple(port.port_id for port in self.ports if port.direction == "outlet")
 
+    def node_ports(self) -> DirectionalNodePorts:
+        return DirectionalNodePorts.build(
+            node_id=self.process_id,
+            inlet_port_ids=self.inlet_port_ids(),
+            outlet_port_ids=self.outlet_port_ids(),
+            node_kind="process",
+        )
+
     def as_process_node(self) -> ProcessNode:
         return ProcessNode(
             process_id=self.process_id,
             inlet_ports=self.inlet_port_ids(),
             outlet_ports=self.outlet_port_ids(),
-        )
-
-    def as_junction_node(self) -> JunctionNode | None:
-        if self.process_kind != "junction":
-            return None
-        return JunctionNode(
-            junction_id=self.process_id,
-            port_names=tuple(port.port_id for port in self.ports),
         )
 
 
@@ -120,7 +96,7 @@ class JunctionProcess(BaseModel):
     @classmethod
     def _validate_token_fields(cls, value: str, info: ValidationInfo) -> str:
         field_name = info.field_name if info.field_name is not None else "token"
-        return _normalize_non_empty_token(
+        return normalize_non_empty_token(
             value,
             field_name=field_name,
         )
@@ -131,32 +107,26 @@ class JunctionProcess(BaseModel):
         cls, value: tuple[str, ...], info: ValidationInfo
     ) -> tuple[str, ...]:
         del info
-        return tuple(
-            _normalize_non_empty_token(item, field_name="inlet_port_ids") for item in value
+        return normalize_port_ids(
+            value,
+            field_name="inlet_port_ids",
         )
 
     @model_validator(mode="after")
     def _validate_unique_port_ids(self) -> "JunctionProcess":
-        all_port_ids = (*self.inlet_port_ids, self.outlet_port_id)
-        duplicates = sorted(
-            port_id for port_id, count in Counter(all_port_ids).items() if count > 1
-        )
-        if duplicates:
-            raise ValueError(
-                f"duplicate process port ids are not allowed for '{self.junction_id}': {duplicates!r}"
-            )
+        _ = self.node_ports()
         return self
 
-    def as_unit_process(self) -> UnitProcess:
-        return UnitProcess(
-            process_id=self.junction_id,
-            process_kind="junction",
-            ports=tuple(
-                [Port(port_id=port_id, direction="inlet") for port_id in self.inlet_port_ids]
-                + [Port(port_id=self.outlet_port_id, direction="outlet")]
-            ),
-            metadata=dict(self.metadata),
+    def node_ports(self) -> DirectionalNodePorts:
+        return DirectionalNodePorts.build(
+            node_id=self.junction_id,
+            inlet_port_ids=self.inlet_port_ids,
+            outlet_port_ids=(self.outlet_port_id,),
+            node_kind="junction",
         )
+
+    def as_junction_node(self) -> JunctionNode:
+        return self.node_ports().as_junction_node()
 
 
 class ResistanceConfig(BaseModel):
@@ -192,7 +162,7 @@ class ValveConfig(BaseModel):
     @classmethod
     def _validate_valve_id(cls, value: str, info: ValidationInfo) -> str:
         del info
-        return _normalize_non_empty_token(value, field_name="valve_id")
+        return normalize_non_empty_token(value, field_name="valve_id")
 
     @model_validator(mode="after")
     def _validate_ranges(self) -> "ValveConfig":
@@ -223,7 +193,7 @@ class SensorBinding(BaseModel):
     @classmethod
     def _validate_sensor_fields(cls, value: str, info: ValidationInfo) -> str:
         field_name = info.field_name if info.field_name is not None else "token"
-        return _normalize_non_empty_token(
+        return normalize_non_empty_token(
             value,
             field_name=field_name,
         )
@@ -256,7 +226,7 @@ class ControllerBinding(BaseModel):
     @classmethod
     def _validate_controller_fields(cls, value: str, info: ValidationInfo) -> str:
         field_name = info.field_name if info.field_name is not None else "token"
-        return _normalize_non_empty_token(
+        return normalize_non_empty_token(
             value,
             field_name=field_name,
         )
@@ -284,7 +254,7 @@ class ConnectionLine(BaseModel):
     @classmethod
     def _validate_connection_fields(cls, value: str, info: ValidationInfo) -> str:
         field_name = info.field_name if info.field_name is not None else "token"
-        return _normalize_non_empty_token(
+        return normalize_non_empty_token(
             value,
             field_name=field_name,
         )
@@ -324,7 +294,7 @@ class MutationCommand(BaseModel):
     @classmethod
     def _validate_operation(cls, value: str, info: ValidationInfo) -> str:
         del info
-        return _normalize_non_empty_token(value, field_name="operation")
+        return normalize_non_empty_token(value, field_name="operation")
 
     @field_validator("command_id")
     @classmethod
@@ -332,7 +302,7 @@ class MutationCommand(BaseModel):
         del info
         if value is None:
             return None
-        return _normalize_non_empty_token(value, field_name="command_id")
+        return normalize_non_empty_token(value, field_name="command_id")
 
     def as_mapping(self) -> dict[str, object]:
         return dict(self.model_dump(mode="python", by_alias=False))
@@ -352,7 +322,7 @@ class CommandEnvelope(BaseModel):
         if value is None:
             return None
         field_name = info.field_name if info.field_name is not None else "token"
-        return _normalize_non_empty_token(
+        return normalize_non_empty_token(
             value,
             field_name=field_name,
         )

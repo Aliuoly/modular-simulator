@@ -155,6 +155,7 @@ class RuntimeBarrierStateSnapshot:
 @dataclass(frozen=True)
 class _HydraulicTopologyGuardSnapshot:
     process_specs: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]
+    junction_specs: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...]
     boundary_specs: tuple[tuple[str, str, str], ...]
     edge_specs: tuple[tuple[str, str, str, str, str], ...]
     line_hydraulic_configs: tuple[
@@ -838,9 +839,12 @@ class ConnectionRuntimeOrchestrator:
             network.add_boundary_sink(boundary_id, port_name=port_name.strip())
             return
 
-        if operation in {"remove_boundary", "remove_junction"}:
-            removal_boundary_id = mutation.get("boundary_id", mutation.get("junction_id"))
-            network.remove_boundary(boundary_id=removal_boundary_id)
+        if operation == "remove_boundary":
+            network.remove_boundary(boundary_id=mutation.get("boundary_id"))
+            return
+
+        if operation == "remove_junction":
+            network.remove_junction(junction_id=mutation.get("junction_id"))
             return
 
         if operation in {"add_process_port", "add_inlet", "add_outlet"}:
@@ -869,7 +873,13 @@ class ConnectionRuntimeOrchestrator:
             )
             return
 
-        if operation in {"remove_process", "remove_unit", "remove_junction_process"}:
+        if operation == "remove_junction_process":
+            network.remove_junction(
+                junction_id=mutation.get("junction_id", mutation.get("process_id"))
+            )
+            return
+
+        if operation in {"remove_process", "remove_unit"}:
             network.remove_process(process_id=mutation.get("process_id"))
             return
 
@@ -995,11 +1005,18 @@ class ConnectionRuntimeOrchestrator:
             )
             return
 
-        if operation in {"add_process", "add_unit", "add_junction"}:
+        if operation in {"add_process", "add_unit"}:
             process_id = self._require_non_empty_string(mutation, "process_id", operation)
             inlet_ports = self._require_string_sequence(mutation, "inlet_ports", operation)
             outlet_ports = self._require_string_sequence(mutation, "outlet_ports", operation)
             network.add_process(process_id, inlet_ports=inlet_ports, outlet_ports=outlet_ports)
+            return
+
+        if operation == "add_junction":
+            junction_id = self._require_non_empty_string(mutation, "junction_id", operation)
+            inlet_ports = self._require_string_sequence(mutation, "inlet_ports", operation)
+            outlet_ports = self._require_string_sequence(mutation, "outlet_ports", operation)
+            network.add_junction(junction_id, inlet_ports=inlet_ports, outlet_ports=outlet_ports)
             return
 
         raise diagnostic_value_error(
@@ -1040,6 +1057,14 @@ class ConnectionRuntimeOrchestrator:
                 process_spec.outlet_ports,
             )
             for process_spec in network.list_process_specs()
+        )
+        junction_specs = tuple(
+            (
+                junction_spec.junction_id,
+                junction_spec.inlet_ports,
+                junction_spec.outlet_ports,
+            )
+            for junction_spec in network.list_junction_specs()
         )
         boundary_specs = tuple(
             (
@@ -1113,6 +1138,7 @@ class ConnectionRuntimeOrchestrator:
 
         return _HydraulicTopologyGuardSnapshot(
             process_specs=process_specs,
+            junction_specs=junction_specs,
             boundary_specs=boundary_specs,
             edge_specs=edge_specs,
             line_hydraulic_configs=tuple(line_hydraulic_configs),

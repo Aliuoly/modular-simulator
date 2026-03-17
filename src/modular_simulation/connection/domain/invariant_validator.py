@@ -104,7 +104,7 @@ class ConnectionMutationInvariantValidator:
     _operation_to_removal_class: dict[str, RemovalClass] = {
         "remove_process": "remove_unit",
         "remove_unit": "remove_unit",
-        "remove_junction_process": "remove_unit",
+        "remove_junction_process": "remove_junction",
         "remove_process_port": "remove_port",
         "remove_port": "remove_port",
         "remove_inlet": "remove_port",
@@ -240,12 +240,14 @@ class ConnectionMutationInvariantValidator:
                 return "edge:<unknown>"
             return f"edge:{source}->{target}"
 
-        boundary_id = self._non_empty_string(mutation.get("boundary_id"))
-        if boundary_id is None:
-            boundary_id = self._non_empty_string(mutation.get("junction_id"))
-        if boundary_id is None:
+        junction_id = self._non_empty_string(mutation.get("junction_id"))
+        if junction_id is None:
+            junction_id = self._non_empty_string(mutation.get("process_id"))
+        if junction_id is None:
+            junction_id = self._non_empty_string(mutation.get("boundary_id"))
+        if junction_id is None:
             return "junction:<unknown>"
-        return f"junction:{boundary_id}"
+        return f"junction:{junction_id}"
 
     def _collect_topology_edge_dependents(
         self,
@@ -270,12 +272,14 @@ class ConnectionMutationInvariantValidator:
         if removal_class == "remove_edge":
             return ()
 
-        boundary_id = self._non_empty_string(mutation.get("boundary_id"))
-        if boundary_id is None:
-            boundary_id = self._non_empty_string(mutation.get("junction_id"))
-        if boundary_id is None:
+        junction_id = self._non_empty_string(mutation.get("junction_id"))
+        if junction_id is None:
+            junction_id = self._non_empty_string(mutation.get("process_id"))
+        if junction_id is None:
+            junction_id = self._non_empty_string(mutation.get("boundary_id"))
+        if junction_id is None:
             return ()
-        return network.list_incident_edge_ids(node_id=boundary_id)
+        return network.list_incident_edge_ids(node_id=junction_id)
 
     def _collect_control_dependents(
         self,
@@ -314,11 +318,17 @@ class ConnectionMutationInvariantValidator:
             if edge_id is not None:
                 lookup_keys.add(f"edge:{edge_id}")
         else:
-            boundary_id = self._non_empty_string(mutation.get("boundary_id"))
-            if boundary_id is None:
-                boundary_id = self._non_empty_string(mutation.get("junction_id"))
-            if boundary_id is not None:
-                lookup_keys.update((f"junction:{boundary_id}", f"boundary:{boundary_id}"))
+            junction_id = self._non_empty_string(mutation.get("junction_id"))
+            if junction_id is None:
+                junction_id = self._non_empty_string(mutation.get("process_id"))
+            if junction_id is None:
+                junction_id = self._non_empty_string(mutation.get("boundary_id"))
+            if junction_id is not None:
+                lookup_keys.update((f"junction:{junction_id}", f"boundary:{junction_id}"))
+                junction_ports = network.junction_ports(junction_id=junction_id)
+                if junction_ports is not None:
+                    for port_name in junction_ports:
+                        lookup_keys.add(f"port:{junction_id}.{port_name}")
 
         lookup_keys.update(f"edge:{edge_id}" for edge_id in topology_edge_ids)
         normalized_dependents: set[str] = set()

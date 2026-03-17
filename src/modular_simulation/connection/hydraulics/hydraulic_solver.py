@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from math import isclose, isfinite
+from types import MappingProxyType
 from typing import cast
 
 import numpy as np
@@ -58,12 +60,50 @@ class LinearResidualEquation:
     constant: float = 0.0
 
 
+def _empty_string_mapping() -> Mapping[str, str]:
+    return MappingProxyType({})
+
+
+def _empty_pressure_anchor_metadata() -> tuple["HydraulicPressureAnchorMetadata", ...]:
+    return ()
+
+
+@dataclass(frozen=True)
+class HydraulicTopologyLookup:
+    line_flow_unknown_by_line: Mapping[str, str] = field(default_factory=_empty_string_mapping)
+    edge_source_pressure_unknown_by_line: Mapping[str, str] = field(
+        default_factory=_empty_string_mapping
+    )
+    edge_target_pressure_unknown_by_line: Mapping[str, str] = field(
+        default_factory=_empty_string_mapping
+    )
+    node_pressure_unknown_by_endpoint: Mapping[str, str] = field(
+        default_factory=_empty_string_mapping
+    )
+    node_pressure_unknown_by_junction: Mapping[str, str] = field(
+        default_factory=_empty_string_mapping
+    )
+
+
+@dataclass(frozen=True)
+class HydraulicPressureAnchorMetadata:
+    pressure_unknown_name: str
+    residual_name: str
+    pressure_value: float
+    topology_label: str
+    anchor_kind: str = "pressure_boundary"
+
+
 @dataclass(frozen=True)
 class HydraulicSystemDefinition:
     equations: Sequence[ElementEquation]
     linear_residual_equations: Sequence[LinearResidualEquation] = ()
     unknown_order: Sequence[str] | None = None
     residual_order: Sequence[str] | None = None
+    topology_lookup: HydraulicTopologyLookup = field(default_factory=HydraulicTopologyLookup)
+    pressure_anchor_metadata: Sequence[HydraulicPressureAnchorMetadata] = field(
+        default_factory=_empty_pressure_anchor_metadata
+    )
 
     def build_index_maps(self) -> tuple[dict[str, int], dict[str, int]]:
         return build_index_maps(self)
@@ -356,6 +396,8 @@ def _connected_components(
 
 def _pressure_reference_unknowns(system: HydraulicSystemDefinition) -> set[str]:
     references: set[str] = set()
+    if system.pressure_anchor_metadata:
+        return {anchor.pressure_unknown_name for anchor in system.pressure_anchor_metadata}
     for equation in system.linear_residual_equations:
         if len(equation.coefficients) != 1:
             continue
@@ -365,6 +407,87 @@ def _pressure_reference_unknowns(system: HydraulicSystemDefinition) -> set[str]:
         if _is_pressure_unknown_name(unknown_name):
             references.add(unknown_name)
     return references
+
+
+def _iter_pressure_anchor_metadata(
+    system: HydraulicSystemDefinition,
+) -> tuple[HydraulicPressureAnchorMetadata, ...]:
+    if system.pressure_anchor_metadata:
+        return tuple(system.pressure_anchor_metadata)
+
+    anchors: list[HydraulicPressureAnchorMetadata] = []
+    for equation in system.linear_residual_equations:
+        if len(equation.coefficients) != 1:
+            continue
+        unknown_name, coefficient = next(iter(equation.coefficients.items()))
+        coefficient_value = float(coefficient)
+        if coefficient_value == 0.0 or not _is_pressure_unknown_name(unknown_name):
+            continue
+        pressure_value = -float(equation.constant) / coefficient_value
+        anchors.append(
+            HydraulicPressureAnchorMetadata(
+                pressure_unknown_name=unknown_name,
+                residual_name=equation.residual_name,
+                pressure_value=pressure_value,
+                topology_label=unknown_name,
+                anchor_kind="derived_reference",
+            )
+        )
+    return tuple(anchors)
+
+
+def _validate_pressure_anchor_consistency(
+    system: HydraulicSystemDefinition,
+    *,
+    components: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...],
+) -> None:
+    anchors = _iter_pressure_anchor_metadata(system)
+    if not anchors:
+        return
+
+    component_by_unknown: dict[str, int] = {}
+    for component_number, (component_unknowns, _) in enumerate(components, start=1):
+        for unknown_name in component_unknowns:
+            component_by_unknown[unknown_name] = component_number
+
+    anchors_by_unknown: dict[str, list[HydraulicPressureAnchorMetadata]] = {}
+    for anchor in anchors:
+        anchors_by_unknown.setdefault(anchor.pressure_unknown_name, []).append(anchor)
+
+    for pressure_unknown_name in sorted(anchors_by_unknown):
+        definitions = sorted(
+            anchors_by_unknown[pressure_unknown_name],
+            key=lambda item: (item.pressure_value, item.residual_name, item.topology_label),
+        )
+        if len(definitions) <= 1:
+            continue
+
+        reference_value = definitions[0].pressure_value
+        conflicting = [
+            anchor
+            for anchor in definitions[1:]
+            if not isclose(anchor.pressure_value, reference_value, rel_tol=1.0e-9, abs_tol=1.0e-9)
+        ]
+        component_number = component_by_unknown.get(pressure_unknown_name, 0)
+        anchor_labels = [
+            f"{anchor.topology_label}={anchor.pressure_value:.12g}" for anchor in definitions
+        ]
+        if conflicting:
+            raise ValueError(
+                "conflicting hydraulic anchors in connected component {} for pressure unknown {!r}: {}".format(
+                    component_number,
+                    pressure_unknown_name,
+                    anchor_labels,
+                )
+            )
+
+        raise ValueError(
+            "over-constrained hydraulic boundary conditions in connected component {} for pressure unknown {!r}: duplicate anchors {}".format(
+                component_number,
+                pressure_unknown_name,
+                anchor_labels,
+            )
+        )
 
 
 def _validate_solvability(
@@ -377,6 +500,7 @@ def _validate_solvability(
 
     pressure_references = _pressure_reference_unknowns(system)
     components = _connected_components(system)
+    _validate_pressure_anchor_consistency(system, components=components)
     for component_number, (component_unknowns, component_residuals) in enumerate(
         components, start=1
     ):
@@ -540,8 +664,10 @@ def solve_hydraulic_system(
 
 __all__ = [
     "ElementEquation",
+    "HydraulicPressureAnchorMetadata",
     "HydraulicSolveResult",
     "HydraulicSystemDefinition",
+    "HydraulicTopologyLookup",
     "LinearResidualEquation",
     "SparseJacobianTriplet",
 ]
