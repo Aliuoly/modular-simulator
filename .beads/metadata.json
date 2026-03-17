@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "ModularSimulator",
+  "project_id": "50668914-e71b-435e-9ed6-c52ff36a3649"
+}

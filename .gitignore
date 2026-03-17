@@ -187,3 +187,10 @@ cython_debug/
 # data files
 .pkl
 .csv
+
+# spec-gen analysis artifacts
+.spec-gen/
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db
