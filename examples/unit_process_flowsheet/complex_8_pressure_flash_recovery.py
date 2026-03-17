@@ -1,18 +1,30 @@
+"""Reference flowsheet example: pressure-driven flash with vapor/liquid separation and remixing."""
+
 from __future__ import annotations
 
-from pathlib import Path
-
 from modular_simulation.flowsheet import Flowsheet
-from modular_simulation.unit_processes import CSTR, FlashDrum, HeaterCooler, Mixer
+from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
+from modular_simulation.unit_processes import FlashDrum, HeaterCooler, Mixer
+
+
+def _print_report(title: str, report: dict[str, float]) -> None:
+    print(title)
+    for key, value in report.items():
+        print(f"- {key}: {value}")
 
 
 def run_example(*, steps: int = 55, dt: float = 0.15, make_plot: bool = True) -> dict[str, float]:
-    flowsheet = Flowsheet.create(dt=dt)
+    flowsheet = Flowsheet(
+        context=SimulationRuntimeContext.create(species_names=["ethane", "propane"]),
+        dt=dt,
+    )
 
     flowsheet.add_unit(
         "preheat", HeaterCooler(mode="temperature", external_outlet_temperature=360.0)
     )
-    flowsheet.add_unit("reactor", CSTR())
+    flowsheet.add_unit(
+        "reactor", HeaterCooler(mode="temperature", external_outlet_temperature=370.0)
+    )
     flowsheet.add_unit(
         "interstage_cool", HeaterCooler(mode="temperature", external_outlet_temperature=344.0)
     )
@@ -23,6 +35,7 @@ def run_example(*, steps: int = 55, dt: float = 0.15, make_plot: bool = True) ->
     flowsheet.add_unit(
         "liquid_trim", HeaterCooler(mode="temperature", external_outlet_temperature=318.0)
     )
+    flowsheet.add_unit("product_mixer", Mixer(n_inlets=2, n_species=2))
     flowsheet.add_unit(
         "final_polish", HeaterCooler(mode="temperature", external_outlet_temperature=320.0)
     )
@@ -36,9 +49,9 @@ def run_example(*, steps: int = 55, dt: float = 0.15, make_plot: bool = True) ->
     flowsheet.connect("liquid_trim", "product_mixer.inlet_2")
     flowsheet.connect("product_mixer", "final_polish")
 
-    results = flowsheet.step(steps=steps, dt=dt)
+    results = flowsheet.run(steps=steps, dt=dt)
     flash = results.get_unit("flash")
-    product = results.get_unit("product_mixer").outlet_streams["outlet"]
+    product = results.get_stream("product_mixer", "final_polish")
     feed_to_preheat = results.get_stream("feed", "preheat")
     vapor_fraction_history = flash.state_history.get("vapor_fraction")
     vapor_fraction = (
@@ -55,31 +68,16 @@ def run_example(*, steps: int = 55, dt: float = 0.15, make_plot: bool = True) ->
         "flash_vapor_fraction": vapor_fraction,
         "estimated_flash_vapor_flow_mol_s": estimated_vapor_flow,
         "flash_liquid_flow_mol_s": float(flash.outlet_streams["liquid_outlet"].molar_flow_rate),
-        "mixed_product_temperature_K": float(product.temperature),
+        "mixed_product_temperature_K": float(product.temperature[-1]),
         "final_product_temperature_K": float(
             results.get_unit("final_polish").outlet_streams["outlet"].temperature
         ),
-        "mixed_product_flow_mol_s": float(product.molar_flow_rate),
+        "mixed_product_flow_mol_s": float(product.flow_rate[-1]),
     }
-    results.print_report("COMPLEX (8 PROCESSES): FLASH RECOVERY + RECOMBINE TRAIN", report)
+    _print_report("COMPLEX (8 PROCESSES): FLASH RECOVERY + RECOMBINE TRAIN", report)
 
     if make_plot:
-        plot_file = results.plot_stream_metric(
-            {
-                "feed to preheat": ("feed", "preheat"),
-                "reactor to interstage cool": ("reactor", "interstage_cool"),
-                "interstage cool to flash": ("interstage_cool", "flash"),
-                "flash vapor branch": ("flash.vapor_outlet", "vapor_trim"),
-                "flash liquid branch": ("flash.liquid_outlet", "liquid_trim"),
-                "mixed product": ("vapor_trim", "product_mixer.inlet_1"),
-                "final polish feed": ("product_mixer", "final_polish"),
-            },
-            metric="temperature",
-            title="complex_8_pressure_flash_recovery: stream temperatures",
-            output_path=Path(__file__).with_suffix(".png"),
-        )
-        if plot_file is not None:
-            print(f"- plot_file: {plot_file}")
+        print("- plotting is not implemented for the current canonical flowsheet API")
 
     return report
 

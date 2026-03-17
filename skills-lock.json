@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "openspec-to-beads": {
+      "source": "lucastamoios/celeiro",
+      "sourceType": "github",
+      "computedHash": "86468c416b335a1de56ea90e9ffefbe15553f937e660f631d3241c188dd80ff8"
+    }
+  }
+}

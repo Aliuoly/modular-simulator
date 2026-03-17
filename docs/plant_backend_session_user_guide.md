@@ -25,6 +25,19 @@ Key benefits:
 API location:
 - `src/modular_simulation/cli/backend_session.py`
 
+## Recommended Starting Examples
+
+If you want runnable companions while reading this guide, use this order:
+
+1. `examples/dynamic_api_cli/minimal_command_quickstart.py`
+   - smallest command-first path for topology edits, barrier apply, and graph revision changes.
+2. `examples/dynamic_api_cli/minimal_control_loop_save_load.py`
+   - adds runtime sensor/controller wiring plus save/load/continue on a still-minimal setup.
+3. `examples/dynamic_api_cli/minimal_spec_quickstart.py`
+   - keep as reference only when you specifically need `spec_diff` / `spec_apply`; it is no longer the primary onboarding path.
+
+For the broader curated example list, see [Examples Catalog](examples_catalog.md).
+
 ## Core Concepts
 
 ### Graph Revision
@@ -279,13 +292,20 @@ For user-facing applications, a clean pattern is:
 
 ## Related Examples
 
-Run these examples for concrete behavior:
+Run these primary examples for concrete behavior:
 
 ```bash
 uv run python examples/dynamic_api_cli/minimal_command_quickstart.py
-uv run python examples/dynamic_api_cli/minimal_spec_quickstart.py
 uv run python examples/dynamic_api_cli/minimal_control_loop_save_load.py
 ```
+
+Reference-only example:
+
+```bash
+uv run python examples/dynamic_api_cli/minimal_spec_quickstart.py
+```
+
+Use the spec quickstart when you need declarative spec diff/apply behavior; otherwise prefer the command-first path above.
 
 ## Troubleshooting
 

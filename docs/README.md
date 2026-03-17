@@ -38,61 +38,83 @@ uv sync
 
 ## Quick Start
 
-The project includes several example systems in the `examples/` directory. To run the simplified gas phase system:
+The repository still contains many examples, but the canonical user-facing set is intentionally small after the refactor. Start with these and use the rest of `examples/` as advanced/reference material.
+
+The current high-level `Flowsheet` API exposes boundary feeds/sources; product handoff in the curated flowsheet examples is documented at terminal unit outlets rather than high-level boundary sinks.
+
+### Canonical example set
+
+| Example | Why it is in the canonical path |
+| --- | --- |
+| `examples/unit_process_flowsheet/easy_2_heater_flash.py` | Smallest grounded flowsheet with explicit feed, heater, flash, and product split |
+| `examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py` | Compact multi-branch flowsheet with explicit boundary feeds and exchanger ports |
+| `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` | Advanced recycle-topology flowsheet with separation, purge, and terminal product recovery |
+| `examples/connection_layer/two_tank_reaction_comparison.py --no-show` | Connected-plant fidelity/parity benchmark with clear metrics |
+
+
+See the curated [Examples Catalog](examples_catalog.md) for the primary/advanced split.
+
+### Fastest starting points
 
 ```bash
-uv run python examples/dynamic_api_cli/minimal_command_quickstart.py
+uv run python examples/unit_process_flowsheet/easy_2_heater_flash.py
+uv run python examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py
+uv run python examples/connection_layer/two_tank_reaction_comparison.py --no-show
 ```
 
-This will execute the simulation and generate plots and logs demonstrating the system's behavior.
+These cover the shortest path to grounded flowsheet modeling, explicit multi-branch port wiring, and connected-plant fidelity checks.
 
-For connection-layer work, use the connected-plant flow as the default:
+## Canonical flowsheet examples
+
+These are the preferred first examples because they keep topology explicit and the educational intent narrow.
+
+### Heater + flash (smallest grounded path)
+
+```bash
+uv run python examples/unit_process_flowsheet/easy_2_heater_flash.py
+```
+
+What it covers:
+
+- Single-feed flowsheet authoring
+- Explicit heater-to-flash unit connectivity
+- Vapor/liquid split from a compact process train
+
+### Dual-feed heat exchange
+
+```bash
+uv run python examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py
+```
+
+What it covers:
+
+- Two explicit boundary feeds
+- Port-specific exchanger wiring
+- Compact multistream energy exchange behavior
+
+### Ammonia recycle loop
+
+```bash
+uv run python examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py
+```
+
+What it covers:
+
+- Fresh-feed plus an explicit recycle return edge in the topology
+- Downstream separation, purge, and liquid product recovery through terminal unit outlets
+- A larger but still canonical example of flowsheet composability with the current high-level `Flowsheet` helpers
+
+## Grounded Process Examples
+
+### Connected-plant fidelity benchmark
 
 ```bash
 uv run python examples/connection_layer/two_tank_reaction_comparison.py --no-show
 ```
 
-This command runs the migrated subsystem-based two-tank benchmark and prints CSV-style trajectory rows plus parity metrics such as `max_abs_error_a`, `max_abs_error_b`, `rmse_b`, and `b_lag_steps`.
+This runs the migrated subsystem-based two-tank benchmark and prints CSV-style trajectory rows plus parity metrics such as `max_abs_error_a`, `max_abs_error_b`, `rmse_b`, and `b_lag_steps`.
 
-## Dynamic API and CLI Quickstarts
-
-These examples are operator-first and minimal boilerplate. Run them with UV.
-
-### Command-based path
-
-```bash
-uv run python examples/dynamic_api_cli/minimal_command_quickstart.py
-```
-
-What it covers:
-
-- Two-process wiring with `ModularCli` commands
-- Junction-as-unit setup with `JunctionProcess`
-- Barrier apply confirmation and graph revision bump
-
-### Spec-based path
-
-```bash
-uv run python examples/dynamic_api_cli/minimal_spec_quickstart.py
-```
-
-What it covers:
-
-- `spec_diff` preview against `examples/dynamic_api_cli/minimal_spec.json`
-- `spec_apply` execution through explicit transaction batches
-- Deterministic applied request ids and resulting topology shape
-
-### Valve + sensor + controller loop, plus save/load/continue
-
-```bash
-uv run python examples/dynamic_api_cli/minimal_control_loop_save_load.py
-```
-
-What it covers:
-
-- Runtime valve configuration and controller activation from queued mutations
-- Sensor binding and control loop response (`heater_power` moves above zero)
-- Save/load/continue round trip for both direct API (`ConnectionNetwork`) and CLI (`ModularCli`)
+See the curated [Examples Catalog](examples_catalog.md) for the migration map from older examples to these canonical replacements.
 
 ### Pytest `-k` filter note
 

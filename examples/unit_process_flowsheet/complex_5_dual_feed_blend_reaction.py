@@ -1,14 +1,23 @@
+"""Reference flowsheet example: dual-feed blending into a reactor and product polishing train."""
+
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, cast
-
 from modular_simulation.flowsheet import Flowsheet
+from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 from modular_simulation.unit_processes import CSTR, HeaterCooler, Mixer
 
 
+def _print_report(title: str, report: dict[str, float]) -> None:
+    print(title)
+    for key, value in report.items():
+        print(f"- {key}: {value}")
+
+
 def run_example(*, steps: int = 48, dt: float = 0.15, make_plot: bool = True) -> dict[str, float]:
-    flowsheet = cast(Any, Flowsheet).create(dt=dt)
+    flowsheet = Flowsheet(
+        context=SimulationRuntimeContext.create(species_names=["methane", "n-heptane"]),
+        dt=dt,
+    )
 
     flowsheet.add_unit(
         "hot_preheat", HeaterCooler(mode="temperature", external_outlet_temperature=365.0)
@@ -31,7 +40,7 @@ def run_example(*, steps: int = 48, dt: float = 0.15, make_plot: bool = True) ->
     flowsheet.connect("cold_preheat", "blend.inlet_2")
     flowsheet.chain("blend", "reactor", "polisher")
 
-    results = flowsheet.step(steps=steps, dt=dt)
+    results = flowsheet.run(steps=steps, dt=dt)
     product = results.get_unit("polisher").outlet_streams["outlet"]
 
     report = {
@@ -42,21 +51,10 @@ def run_example(*, steps: int = 48, dt: float = 0.15, make_plot: bool = True) ->
         "product_temperature_K": float(product.temperature),
         "product_flow_mol_s": float(product.molar_flow_rate),
     }
-    results.print_report("COMPLEX (5 PROCESSES): DUAL FEED BLEND + REACTION TRAIN", report)
+    _print_report("COMPLEX (5 PROCESSES): DUAL FEED BLEND + REACTION TRAIN", report)
 
     if make_plot:
-        plot_file = results.plot_stream_metric(
-            {
-                "feed_a branch": ("hot_preheat", "blend.inlet_1"),
-                "feed_b branch": ("cold_preheat", "blend.inlet_2"),
-                "reactor outlet": ("reactor", "polisher"),
-            },
-            metric="temperature",
-            title="complex_5_dual_feed_blend_reaction: stream temperatures",
-            output_path=Path(__file__).with_suffix(".png"),
-        )
-        if plot_file is not None:
-            print(f"- plot_file: {plot_file}")
+        print("- plotting is not implemented for the current canonical flowsheet API")
 
     return report
 

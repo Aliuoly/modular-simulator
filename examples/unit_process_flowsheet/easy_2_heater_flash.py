@@ -1,13 +1,23 @@
+"""Canonical flowsheet example: single-feed heater followed by flash separation."""
+
 from __future__ import annotations
 
-from pathlib import Path
-
 from modular_simulation.flowsheet import Flowsheet
+from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 from modular_simulation.unit_processes import FlashDrum, HeaterCooler
 
 
+def _print_report(title: str, report: dict[str, float]) -> None:
+    print(title)
+    for key, value in report.items():
+        print(f"- {key}: {value}")
+
+
 def run_example(*, steps: int = 36, dt: float = 0.2, make_plot: bool = True) -> dict[str, float]:
-    flowsheet = Flowsheet.create(dt=dt)
+    flowsheet = Flowsheet(
+        context=SimulationRuntimeContext.create(species_names=["methane", "n-heptane"]),
+        dt=dt,
+    )
 
     flowsheet.add_unit(
         "heater", HeaterCooler(mode="temperature", external_outlet_temperature=355.0)
@@ -16,7 +26,7 @@ def run_example(*, steps: int = 36, dt: float = 0.2, make_plot: bool = True) -> 
     flowsheet.add_feed_from_values("feed", T=332.0, P=1.7e5, z=(0.58, 0.42), flow=4.0)
     flowsheet.chain("feed", "heater", "flash")
 
-    results = flowsheet.step(steps=steps, dt=dt)
+    results = flowsheet.run(steps=steps, dt=dt)
     flash = results.get_unit("flash")
     feed_to_heater = results.get_stream("feed", "heater")
     heater_to_flash = results.get_stream("heater", "flash")
@@ -37,20 +47,10 @@ def run_example(*, steps: int = 36, dt: float = 0.2, make_plot: bool = True) -> 
         "estimated_flash_vapor_flow_mol_s": estimated_vapor_flow,
         "flash_liquid_flow_mol_s": float(flash.outlet_streams["liquid_outlet"].molar_flow_rate),
     }
-    results.print_report("EASY (2 PROCESSES): HEATER -> FLASH", report)
+    _print_report("EASY (2 PROCESSES): HEATER -> FLASH", report)
 
     if make_plot:
-        plot_file = results.plot_stream_metric(
-            {
-                "feed to heater": ("feed", "heater"),
-                "heater to flash": ("heater", "flash"),
-            },
-            metric="temperature",
-            title="easy_2_heater_flash: stream temperatures",
-            output_path=Path(__file__).with_suffix(".png"),
-        )
-        if plot_file is not None:
-            print(f"- plot_file: {plot_file}")
+        print("- plotting is not implemented for the current canonical flowsheet API")
 
     return report
 

@@ -104,7 +104,8 @@ class AbstractCalculation(AbstractComponent):
         self._system = system
 
         if not exceptions:
-            # Perform initial calculation
+            was_initialized = self._initialized
+            self._initialized = True
             try:
                 result = self._update(t=system.time)
                 if result.exceptions:
@@ -120,6 +121,8 @@ class AbstractCalculation(AbstractComponent):
                         )
             except Exception as e:
                 exceptions.append(e)
+            finally:
+                self._initialized = was_initialized
 
         return exceptions
 
@@ -219,7 +222,7 @@ class AbstractCalculation(AbstractComponent):
         possible_faulty_inputs_oks = [
             input_value.ok for input_value in self._input_data_dict.values()
         ]
-        return any(possible_faulty_inputs_oks) if possible_faulty_inputs_oks else True
+        return all(possible_faulty_inputs_oks) if possible_faulty_inputs_oks else True
 
     @abstractmethod
     def _calculation_algorithm(

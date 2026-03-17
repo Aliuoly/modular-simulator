@@ -5,22 +5,31 @@ on:
   pull_request:
 
 jobs:
-  quality:
+  checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+
       - name: Set up uv
-        uses: astral-sh/setup-uv@v6
-      - name: Ruff lint
-        run: |
-          uv run python -m ruff check src tests
-      - name: MyPy type check
-        run: |
-          uv run --with mypy python -m mypy src
-      - name: Run smoke/minimal tests
-        run: |
-          uv run python -m pytest -q tests -k "smoke or minimal"
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Ruff
+        run: uv run python -m ruff check src tests examples
+
+      - name: Mypy
+        run: uv run --with mypy python -m mypy src
+
+      - name: Example smoke tests
+        run: uv run python -m pytest -q tests/integration/test_examples_smoke.py
+
+      - name: Review alignment regression tests
+        run: uv run python -m pytest -q tests/test_rework_examples_review_alignment.py

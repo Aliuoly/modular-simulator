@@ -1,3 +1,5 @@
+"""Canonical connected-plant example: two-tank cascade benchmarked against an ad hoc reference."""
+
 from __future__ import annotations
 
 # pyright: reportAttributeAccessIssue=false, reportReturnType=false

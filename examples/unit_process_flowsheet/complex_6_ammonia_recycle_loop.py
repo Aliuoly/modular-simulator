@@ -1,3 +1,5 @@
+"""Canonical advanced flowsheet example: ammonia train with an explicit recycle return edge."""
+
 from __future__ import annotations
 
 # pyright: reportMissingImports=false
@@ -19,13 +21,7 @@ def _create_flowsheet(*, species: tuple[str, ...], dt: float) -> Flowsheet:
     return Flowsheet(context=runtime_context, dt=dt)
 
 
-def _print_report(title: str, report: dict[str, float]) -> None:
-    print(title)
-    for key, value in report.items():
-        print(f"- {key}: {value}")
-
-
-def run_example(*, steps: int = 3000, dt: float = 0.2, make_plot: bool = True) -> dict[str, float]:
+def _build_flowsheet(*, dt: float) -> Flowsheet:
     species = ("hydrogen", "ammonia")
     flowsheet = _create_flowsheet(species=species, dt=dt)
     n_species = len(species)
@@ -54,10 +50,6 @@ def run_example(*, steps: int = 3000, dt: float = 0.2, make_plot: bool = True) -
         HeaterCooler(n_species=n_species, external_outlet_temperature=300.0),
     )
     flowsheet.add_unit(
-        "recycle_export",
-        HeaterCooler(n_species=n_species, external_outlet_temperature=315.0),
-    )
-    flowsheet.add_unit(
         "purge_export",
         HeaterCooler(n_species=n_species, external_outlet_temperature=315.0),
     )
@@ -68,26 +60,30 @@ def run_example(*, steps: int = 3000, dt: float = 0.2, make_plot: bool = True) -
         z=(0.97, 0.03),
         flow=120.0,
     )
-    flowsheet.add_feed_from_values(
-        "recycle_return",
-        T=640.0,
-        P=1.2e6,
-        z=(0.90, 0.10),
-        flow=85.0,
-    )
 
     flowsheet.connect("fresh_syngas", "synthesis_mixer.inlet_1")
-    flowsheet.connect("recycle_return", "synthesis_mixer.inlet_2")
     flowsheet.chain("synthesis_mixer", "ammonia_reactor", "condenser_separator")
     flowsheet.connect("condenser_separator.outlet_1", "liquid_product_outlet")
     flowsheet.connect("condenser_separator.outlet_2", "purge_splitter")
-    flowsheet.connect("purge_splitter.outlet_1", "recycle_export")
+    flowsheet.connect("purge_splitter.outlet_1", "synthesis_mixer.inlet_2")
     flowsheet.connect("purge_splitter.outlet_2", "purge_export")
+
+    return flowsheet
+
+
+def _print_report(title: str, report: dict[str, float]) -> None:
+    print(title)
+    for key, value in report.items():
+        print(f"- {key}: {value}")
+
+
+def run_example(*, steps: int = 3000, dt: float = 0.2, make_plot: bool = True) -> dict[str, float]:
+    flowsheet = _build_flowsheet(dt=dt)
 
     results = flowsheet.run(steps=steps, dt=dt)
 
     fresh_to_mixer = results.get_stream("fresh_syngas", "synthesis_mixer.inlet_1")
-    recycle_to_mixer = results.get_stream("recycle_return", "synthesis_mixer.inlet_2")
+    recycle_to_mixer = results.get_stream("purge_splitter.outlet_1", "synthesis_mixer.inlet_2")
     reactor_to_separator = results.get_stream("ammonia_reactor", "condenser_separator")
     product_to_outlet = results.get_stream("condenser_separator.outlet_1", "liquid_product_outlet")
     purge_to_outlet = results.get_stream("purge_splitter.outlet_2", "purge_export")
@@ -99,14 +95,14 @@ def run_example(*, steps: int = 3000, dt: float = 0.2, make_plot: bool = True) -
     report = {
         "final_time_s": float(results.time_points[-1]),
         "fresh_feed_flow_mol_s": fresh_flow,
-        "recycle_flow_mol_s": recycle_flow,
+        "recycle_edge_flow_mol_s": recycle_flow,
         "recycle_to_fresh_ratio": recycle_ratio,
         "reactor_outlet_product_fraction": float(reactor_to_separator.composition[-1][1]),
         "liquid_product_flow_mol_s": float(product_to_outlet.flow_rate[-1]),
         "liquid_product_purity": float(product_to_outlet.composition[-1][1]),
         "purge_flow_mol_s": float(purge_to_outlet.flow_rate[-1]),
     }
-    _print_report("COMPLEX (6 PROCESSES): AMMONIA LOOP WITH PURGE/RECYCLE", report)
+    _print_report("COMPLEX (6 PROCESSES): AMMONIA TRAIN WITH EXPLICIT RECYCLE TOPOLOGY", report)
 
     if make_plot:
         print("- plotting is not implemented for the current canonical flowsheet API")

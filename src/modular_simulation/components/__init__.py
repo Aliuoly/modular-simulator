@@ -21,6 +21,8 @@ from .control_system import (
     ControlElement,
 )
 
+TagMetadata = PointMetadata
+
 __all__ = [
     "AbstractComponent",
     "AbstractSensor",
@@ -44,6 +46,7 @@ __all__ = [
     "PointRegistry",
     # Calculations
     "PointMetadata",
+    "TagMetadata",
     "TagType",
     "FirstOrderFilter",
 ]
