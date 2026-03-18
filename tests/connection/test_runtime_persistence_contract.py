@@ -473,6 +473,7 @@ def test_schema_marker_and_version_are_explicit_and_stable() -> None:
         "runtime",
         "process_runtime_state",
         "port_condition_store",
+        "transport_runtime_state",
         "connection_runtime_state",
     }
 
@@ -519,5 +520,64 @@ def test_live_runtime_snapshot_schema_and_fields_remain_connection_runtime_v1() 
         "queued_request_ids",
         "queued_request_count",
         "committed_idempotency_keys",
+        "transport_runtime_state",
     }
     assert "port_condition_store" not in live_snapshot
+
+
+def test_live_runtime_snapshot_round_trip_preserves_transport_owner_state() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network(runtime)
+
+    runtime.restore_transport_runtime_state(
+        {
+            "edge_states": [
+                {
+                    "edge_id": "edge_0001",
+                    "composition": [0.8, 0.2],
+                    "temperature": 315.0,
+                }
+            ],
+            "previous_edge_flow_rates": [{"edge_id": "edge_0001", "flow_rate": 1.25}],
+            "junction_states": [
+                {
+                    "junction_id": "mix",
+                    "state": {
+                        "pressure": 120000.0,
+                        "temperature": 310.0,
+                        "mole_fractions": [0.6, 0.4],
+                    },
+                }
+            ],
+        }
+    )
+
+    snapshot = network.save_runtime_snapshot()
+
+    runtime.restore_transport_runtime_state({})
+    network.resume_from_snapshot(snapshot=snapshot)
+
+    assert runtime.export_transport_runtime_state() == {
+        "edge_states": [
+            {
+                "edge_id": "edge_0001",
+                "composition": [0.8, 0.2],
+                "temperature": 315.0,
+            }
+        ],
+        "previous_edge_flow_rates": [{"edge_id": "edge_0001", "flow_rate": 1.25}],
+        "junction_states": [
+            {
+                "junction_id": "mix",
+                "state": {
+                    "pressure": 120000.0,
+                    "temperature": 310.0,
+                    "mole_fractions": (0.6, 0.4),
+                    "species_ids": None,
+                    "phase": None,
+                    "enthalpy_molar": None,
+                    "entropy_molar": None,
+                },
+            }
+        ],
+    }

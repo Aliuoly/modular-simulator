@@ -61,6 +61,7 @@ class ValidatedRuntimeSnapshot:
     committed_idempotency_keys: tuple[str, ...]
     process_runtime_state: dict[str, object]
     port_condition_store: RuntimePortSnapshotPayload
+    transport_runtime_state: dict[str, object]
 
 
 @runtime_checkable
@@ -100,6 +101,9 @@ def save_runtime_snapshot_contract(
         },
         "process_runtime_state": _normalize_mapping_payload(process_runtime_state),
         "port_condition_store": _runtime_port_condition_snapshot_payload(runtime),
+        "transport_runtime_state": _normalize_mapping_payload(
+            cast(Mapping[str, object], runtime.export_transport_runtime_state())
+        ),
         "connection_runtime_state": {
             "graph_revision": graph_revision,
             "next_edge_index": network.next_edge_index,
@@ -180,6 +184,7 @@ def validate_runtime_snapshot_contract(snapshot: Mapping[str, object]) -> Valida
             "runtime",
             "process_runtime_state",
             "port_condition_store",
+            "transport_runtime_state",
             "connection_runtime_state",
         ),
     )
@@ -212,6 +217,10 @@ def validate_runtime_snapshot_contract(snapshot: Mapping[str, object]) -> Valida
     normalized_port_condition_store = _normalize_port_condition_store_payload(
         snapshot_section["port_condition_store"],
         "port_condition_store",
+    )
+    transport_runtime_state = _require_mapping(
+        snapshot_section["transport_runtime_state"],
+        "transport_runtime_state",
     )
 
     connection_section = _require_mapping(
@@ -313,6 +322,7 @@ def validate_runtime_snapshot_contract(snapshot: Mapping[str, object]) -> Valida
         committed_idempotency_keys=committed_idempotency_keys,
         process_runtime_state=normalized_process_state,
         port_condition_store=normalized_port_condition_store,
+        transport_runtime_state=_normalize_mapping_payload(transport_runtime_state),
     )
 
 
@@ -458,6 +468,9 @@ def restore_runtime_snapshot_contract(
     revision_index_backup = network.next_revision_index
     process_state_backup = dict(process_runtime_state_sink)
     port_condition_store_backup = _runtime_port_condition_snapshot_payload(runtime)
+    transport_runtime_state_backup = _normalize_mapping_payload(
+        cast(Mapping[str, object], runtime.export_transport_runtime_state())
+    )
 
     staged_queue = [
         QueuedReconfigurationTransaction(
@@ -489,6 +502,7 @@ def restore_runtime_snapshot_contract(
             runtime=runtime,
             payload=validated_snapshot.port_condition_store,
         )
+        runtime.restore_transport_runtime_state(validated_snapshot.transport_runtime_state)
 
         process_runtime_state_sink.clear()
         process_runtime_state_sink.update(normalized_process_state)
@@ -513,6 +527,7 @@ def restore_runtime_snapshot_contract(
             runtime=runtime,
             payload=port_condition_store_backup,
         )
+        runtime.restore_transport_runtime_state(transport_runtime_state_backup)
         raise
 
 
@@ -606,6 +621,8 @@ def _runtime_replay_hash_payload(
             "junction_nodes": [
                 {
                     "junction_id": node.junction_id,
+                    "inlet_ports": list(node.inlet_ports),
+                    "outlet_ports": list(node.outlet_ports),
                     "port_names": list(node.port_names),
                 }
                 for node in compiled.topology.junction_nodes
@@ -646,6 +663,9 @@ def _runtime_replay_hash_payload(
         },
         "process_runtime_state": _normalize_mapping_payload(process_runtime_state),
         "port_condition_store": _runtime_port_condition_snapshot_payload(runtime),
+        "transport_runtime_state": _normalize_mapping_payload(
+            cast(Mapping[str, object], runtime.export_transport_runtime_state())
+        ),
     }
 
 

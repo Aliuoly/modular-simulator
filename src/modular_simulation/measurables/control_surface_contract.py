@@ -27,7 +27,6 @@ _NON_PHYSICAL_OVERRIDES: dict[tuple[str, str], ControlSurfaceCategory] = {
         "FlashDrum",
         "imposed_temperature",
     ): ControlSurfaceCategory.EXTERNAL_BOUNDARY_CONDITION,
-    ("Splitter", "split_ratios"): ControlSurfaceCategory.CONFIGURED_ABSTRACT_SPECIFICATION,
     (
         "ComponentSeparator",
         "configured_split_fraction_targets",
@@ -53,6 +52,13 @@ _NON_PHYSICAL_OVERRIDES: dict[tuple[str, str], ControlSurfaceCategory] = {
 
 _NAMESPACED_ACTUATOR_TAG_PATTERN = re.compile(
     r"^actuator/[a-z0-9][a-z0-9_-]*/[A-Za-z0-9][A-Za-z0-9._/-]*$"
+)
+
+_CANONICAL_LINE_OWNED_ACTUATOR_GUIDANCE = (
+    "expected actuator namespace tag 'actuator/<family>/<id>' for a line-installed control; "
+    "install it with `Flowsheet.connect(..., pump=PumpInstall(...))`, `Flowsheet.connect(..., valve=ValveInstall(...))`, "
+    "or `Flowsheet.connect(..., heat=HeatInstall(...))`, and use `Flowsheet.add_junction(...)` / `Flowsheet.add_sink(...)` "
+    "for mixing, splitting, and product handoff"
 )
 
 
@@ -118,5 +124,5 @@ def validate_runtime_actuator_binding(process_model: ProcessModel, actuator_tag:
     resolved_actuator_tag = resolve_process_state_tag(process_model, actuator_tag)
     if resolved_actuator_tag is None:
         raise ControlSurfaceContractError(
-            f"actuator '{actuator_tag}' is not controller-bindable; expected actuator namespace tag 'actuator/<family>/<id>'"
+            f"actuator '{actuator_tag}' is not controller-bindable; {_CANONICAL_LINE_OWNED_ACTUATOR_GUIDANCE}"
         )

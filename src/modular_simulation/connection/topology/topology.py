@@ -34,10 +34,31 @@ class BoundaryNode:
 @dataclass(frozen=True)
 class JunctionNode:
     junction_id: str
-    port_names: tuple[str, ...]
+    inlet_ports: tuple[str, ...]
+    outlet_ports: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.inlet_ports:
+            raise ValueError(f"junction {self.junction_id!r} must declare at least one inlet port")
+        if not self.outlet_ports:
+            raise ValueError(f"junction {self.junction_id!r} must declare at least one outlet port")
+
+        duplicates = sorted(
+            port_name
+            for port_name, count in Counter((*self.inlet_ports, *self.outlet_ports)).items()
+            if count > 1
+        )
+        if duplicates:
+            raise ValueError(
+                f"junction {self.junction_id!r} duplicate port ids are not allowed: {duplicates!r}"
+            )
 
     def endpoints(self) -> tuple[str, ...]:
-        return self.port_names
+        return (*self.inlet_ports, *self.outlet_ports)
+
+    @property
+    def port_names(self) -> tuple[str, ...]:
+        return self.endpoints()
 
 
 @dataclass(frozen=True)

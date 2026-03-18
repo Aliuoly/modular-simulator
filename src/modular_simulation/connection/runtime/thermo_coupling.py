@@ -218,6 +218,8 @@ class ThermoBoundaryPropagationStep:
             if state is None:
                 continue
 
+            source_state = state
+
             receiver_pressure = self._resolve_endpoint_hydraulic_pressure(
                 edge=edge,
                 edge_id=edge.edge_id,
@@ -262,6 +264,19 @@ class ThermoBoundaryPropagationStep:
                 macro_step_time_s=macro_step_time_s,
             )
 
+            runtime_port_snapshot_store = self._config.runtime_port_snapshot_store
+            if runtime_port_snapshot_store is not None:
+                runtime_port_snapshot_store.record_outlet(
+                    node_id=provider_node_id,
+                    port_name=provider_port_name,
+                    condition=PortCondition(
+                        state=source_state,
+                        species_ids=source_state.species_ids,
+                        through_molar_flow_rate=flow_rate,
+                        macro_step_time_s=macro_step_time_s,
+                    ),
+                )
+
             incoming_conditions_by_target.setdefault(target_key, []).append(condition)
             if receiver_binding is not None:
                 target_bindings[target_key] = (
@@ -272,6 +287,7 @@ class ThermoBoundaryPropagationStep:
 
         self._record_all_process_outlet_snapshots(
             network=network,
+            hydraulic_result=hydraulic_result,
             macro_step_time_s=macro_step_time_s,
         )
 
@@ -328,6 +344,7 @@ class ThermoBoundaryPropagationStep:
         self,
         *,
         network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
         macro_step_time_s: float,
     ) -> None:
         runtime_port_snapshot_store = self._config.runtime_port_snapshot_store
@@ -338,8 +355,8 @@ class ThermoBoundaryPropagationStep:
         if compiled is None:
             return
 
-        connected_source_ports = {
-            (edge.source.node_id, edge.source.port_name) for edge in compiled.topology.edges
+        edge_by_source_port = {
+            (edge.source.node_id, edge.source.port_name): edge for edge in compiled.topology.edges
         }
 
         for process_node in sorted(
@@ -348,8 +365,6 @@ class ThermoBoundaryPropagationStep:
             source_node_id = process_node.process_id
             source_binding = compiled.process_bindings.get(source_node_id)
             for source_port_name in process_node.outlet_ports:
-                if (source_node_id, source_port_name) in connected_source_ports:
-                    continue
                 source_condition = self._resolve_source_outlet_condition(
                     source_node_id=source_node_id,
                     source_port_name=source_port_name,
@@ -360,13 +375,23 @@ class ThermoBoundaryPropagationStep:
                     continue
 
                 state = source_condition.state
+                through_molar_flow_rate = float(source_condition.through_molar_flow_rate)
+                connected_edge = edge_by_source_port.get((source_node_id, source_port_name))
+                if connected_edge is not None:
+                    resolved_flow = self._resolve_hydraulic_flow(
+                        edge_id=connected_edge.edge_id,
+                        compiled_hydraulic=compiled.hydraulic,
+                        hydraulic_result=hydraulic_result,
+                    )
+                    if resolved_flow is not None:
+                        through_molar_flow_rate = abs(resolved_flow)
                 runtime_port_snapshot_store.record_outlet(
                     node_id=source_node_id,
                     port_name=source_port_name,
                     condition=PortCondition(
                         state=state,
                         species_ids=state.species_ids,
-                        through_molar_flow_rate=float(source_condition.through_molar_flow_rate),
+                        through_molar_flow_rate=through_molar_flow_rate,
                         macro_step_time_s=macro_step_time_s,
                     ),
                 )

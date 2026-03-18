@@ -15,7 +15,8 @@ from modular_simulation.framework.system import System
 from modular_simulation.measurables.process_model import StateType
 from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 from modular_simulation.thermodynamics.stream import StreamData
-from modular_simulation.unit_processes import CSTR, HeaterCooler, Splitter
+from modular_simulation.unit_processes import CSTR, HeaterCooler
+from modular_simulation.unit_processes.separation.splitter import Splitter
 
 
 def test_auto_wrap_heater() -> None:

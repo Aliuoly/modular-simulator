@@ -47,7 +47,6 @@ try:
     from tests.controller_contract_harness import (
         assert_controller_activation_rolls_back,
         build_canonical_pressure_pump_system,
-        build_pressure_pump_system,
         build_scalar_cv_vector_mv_system,
     )
 except ModuleNotFoundError:
@@ -60,10 +59,6 @@ except ModuleNotFoundError:
     build_canonical_pressure_pump_system = cast(
         Callable[[], System],
         controller_contract_harness.build_canonical_pressure_pump_system,
-    )
-    build_pressure_pump_system = cast(
-        Callable[[], System],
-        controller_contract_harness.build_pressure_pump_system,
     )
     assert_controller_activation_rolls_back = cast(
         Callable[..., None],
@@ -568,7 +563,7 @@ def test_controller_activation_rejects_scalar_vector_mismatch_with_rollback() ->
 def test_controller_activation_characterizes_raw_controlled_pump_speed_rejection_with_rollback() -> (
     None
 ):
-    system = build_pressure_pump_system()
+    system = build_canonical_pressure_pump_system()
     runtime = _runtime_with_dispatchers(system)
     network = _network(runtime)
     api = ControllerRuntimeWiringApi(network=network)
@@ -626,7 +621,7 @@ def test_pid_controller_reference_wiring_accepts_configured_canonical_pump_actua
 
 
 def test_controller_activation_rejects_canonical_pump_suffix_alias_without_exact_binding() -> None:
-    system = build_pressure_pump_system()
+    system = build_canonical_pressure_pump_system()
     runtime = _runtime_with_dispatchers(system)
     network = _network(runtime)
     api = ControllerRuntimeWiringApi(network=network)

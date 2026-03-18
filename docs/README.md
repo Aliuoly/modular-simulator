@@ -40,7 +40,7 @@ uv sync
 
 The repository still contains many examples, but the canonical user-facing set is intentionally small after the refactor. Start with these and use the rest of `examples/` as advanced/reference material.
 
-The current high-level `Flowsheet` API exposes boundary feeds/sources; product handoff in the curated flowsheet examples is documented at terminal unit outlets rather than high-level boundary sinks.
+The current high-level `Flowsheet` API exposes boundary feeds/sources, explicit boundary sinks via `add_sink(...)`, named junction topology via `add_junction(...)`, and line-installed controls via `connect(..., pump=PumpInstall(...), valve=ValveInstall(...), heat=HeatInstall(...))`.
 
 ### Canonical example set
 
@@ -48,7 +48,7 @@ The current high-level `Flowsheet` API exposes boundary feeds/sources; product h
 | --- | --- |
 | `examples/unit_process_flowsheet/easy_2_heater_flash.py` | Smallest grounded flowsheet with explicit feed, heater, flash, and product split |
 | `examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py` | Compact multi-branch flowsheet with explicit boundary feeds and exchanger ports |
-| `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` | Advanced recycle-topology flowsheet with separation, purge, and terminal product recovery |
+| `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` | Advanced recycle-topology flowsheet with junctions, line-installed recycle boost, separation, purge, and explicit boundary sinks |
 | `examples/connection_layer/two_tank_reaction_comparison.py --no-show` | Connected-plant fidelity/parity benchmark with clear metrics |
 
 
@@ -100,9 +100,9 @@ uv run python examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py
 
 What it covers:
 
-- Fresh-feed plus an explicit recycle return edge in the topology
-- Downstream separation, purge, and liquid product recovery through terminal unit outlets
-- A larger but still canonical example of flowsheet composability with the current high-level `Flowsheet` helpers
+- Fresh-feed plus an explicit recycle return edge through a named junction topology
+- Recycle pressure boost represented as a line-installed `PumpInstall(...)` instead of a `Pump` unit
+- Downstream separation, purge, and liquid product recovery through explicit boundary sinks
 
 ## Grounded Process Examples
 
@@ -168,7 +168,7 @@ We have detailed diagrams illustrating how these components interact:
 
 *   **[Initialization Phase](docs/initialization.mermaid)**: Shows how components are added and wired up before the simulation starts.
 *   **[Simulation Step](docs/simulation_step.mermaid)**: Details the order of operations during each time step (Sensors -> Calculations -> Controls -> Process).
-*   **[Control Loop Example](docs/control_loop_example.mermaid)**: A specific example of a cascade control loop (Valve -> Flow Controller -> Level Controller).
+*   **[Control Loop Example](docs/control_loop_example.mermaid)**: A specific example of a cascade control loop with a line-installed valve actuator feeding an outer level controller.
 *   **[Detailed Control Interaction](docs/control_loop_interaction.mermaid)**: In-depth look at the request/response flow between Control Elements, Mode Managers, and Controllers.
 
 ### Core Components

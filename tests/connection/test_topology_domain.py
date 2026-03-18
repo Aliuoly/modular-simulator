@@ -25,7 +25,9 @@ def _valid_graph() -> TopologyGraph:
             BoundaryNode(boundary_id="upstream", port_name="outlet", direction="source"),
             BoundaryNode(boundary_id="downstream", port_name="inlet", direction="sink"),
         ),
-        junction_nodes=(JunctionNode(junction_id="mix", port_names=("inlet", "outlet")),),
+        junction_nodes=(
+            JunctionNode(junction_id="mix", inlet_ports=("inlet",), outlet_ports=("outlet",)),
+        ),
         edges=(
             ConnectionEdge(
                 edge_id="edge_a",

@@ -33,13 +33,9 @@ from modular_simulation.measurables.process_model import (
     StateMetadata as M,
     StateType as T,
 )
-from modular_simulation.unit_processes import Pump
+from modular_simulation.unit_processes.flow.pump import Pump
 from modular_simulation.utils.typing import ArrayIndex
 from modular_simulation.utils.typing import StateValue
-
-
-class _RawPumpHarnessModel(Pump):
-    pass
 
 
 class ArrayAgnosticController(AbstractController):
@@ -253,39 +249,6 @@ def build_scalar_thermal_system(process_model: ProcessModel) -> System:
         sensors=[temperature_sensor],
         calculations=[],
         control_elements=[heater],
-        show_progress=False,
-    )
-
-
-def build_pressure_pump_system() -> System:
-    pressure_sensor = SampledDelayedSensor(
-        name="pump_pressure_sensor",
-        measurement_tag="outlet_pressure",
-        alias_tag="pressure",
-        unit="Pa",
-        sampling_period=0.0,
-        deadtime=0.0,
-    )
-    pump_speed_element = ControlElement(
-        mv_tag="pump_speed",
-        mv_trajectory=Trajectory(y0=20000.0, t0=0.0),
-        mv_range=(0.0, 220000.0),
-        mode=ControllerMode.MANUAL,
-    )
-    return System(
-        dt=1.0,
-        process_model=_RawPumpHarnessModel(
-            n_species=2,
-            inlet_flow=0.01,
-            inlet_temperature=300.0,
-            inlet_pressure=101325.0,
-            inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
-            pump_speed=20000.0,
-            efficiency=0.75,
-        ),
-        sensors=[pressure_sensor],
-        calculations=[],
-        control_elements=[pump_speed_element],
         show_progress=False,
     )
 

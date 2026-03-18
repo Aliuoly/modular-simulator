@@ -9,8 +9,6 @@ from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeC
 from modular_simulation.unit_processes import (
     ComponentSeparator,
     HeaterCooler,
-    Mixer,
-    Splitter,
 )
 
 
@@ -30,7 +28,11 @@ def run_example(*, steps: int = 120, dt: float = 0.2, make_plot: bool = True) ->
     flowsheet = _create_flowsheet(species=species, dt=dt)
     n_species = len(species)
 
-    flowsheet.add_unit("loop_mixer", Mixer(n_inlets=2, n_species=n_species))
+    flowsheet.add_junction(
+        "loop_mixer",
+        inlet_ports=("fresh", "recycle"),
+        outlet_ports=("to_polymerizer",),
+    )
     flowsheet.add_unit(
         "polymerizer",
         HeaterCooler(
@@ -45,9 +47,10 @@ def run_example(*, steps: int = 120, dt: float = 0.2, make_plot: bool = True) ->
             configured_split_fraction_targets=np.array([0.05, 0.995], dtype=np.float64),
         ),
     )
-    flowsheet.add_unit(
-        "gas_purge_splitter",
-        Splitter(n_outlets=2, n_species=n_species, split_ratios=np.array([0.82], dtype=np.float64)),
+    flowsheet.add_junction(
+        "gas_purge_split",
+        inlet_ports=("feed",),
+        outlet_ports=("recycle", "purge"),
     )
     flowsheet.add_unit(
         "purge_bin",
@@ -68,6 +71,9 @@ def run_example(*, steps: int = 120, dt: float = 0.2, make_plot: bool = True) ->
         "purge_export",
         HeaterCooler(n_species=n_species, external_outlet_temperature=350.0),
     )
+    flowsheet.add_sink("resin_sink")
+    flowsheet.add_sink("recycle_sink")
+    flowsheet.add_sink("purge_sink")
 
     flowsheet.add_feed_from_values(
         "fresh_loop_feed",
@@ -84,22 +90,26 @@ def run_example(*, steps: int = 120, dt: float = 0.2, make_plot: bool = True) ->
         flow=45.0,
     )
 
-    flowsheet.connect("fresh_loop_feed", "loop_mixer.inlet_1")
-    flowsheet.connect("recycle_gas_return", "loop_mixer.inlet_2")
-    flowsheet.chain("loop_mixer", "polymerizer", "resin_disengager")
+    flowsheet.connect("fresh_loop_feed", "loop_mixer.fresh")
+    flowsheet.connect("recycle_gas_return", "loop_mixer.recycle")
+    flowsheet.connect("loop_mixer.to_polymerizer", "polymerizer")
+    flowsheet.connect("polymerizer", "resin_disengager")
     flowsheet.connect("resin_disengager.outlet_1", "purge_bin")
     flowsheet.connect("purge_bin", "resin_product_outlet")
-    flowsheet.connect("resin_disengager.outlet_2", "gas_purge_splitter")
-    flowsheet.connect("gas_purge_splitter.outlet_1", "recycle_export")
-    flowsheet.connect("gas_purge_splitter.outlet_2", "purge_export")
+    flowsheet.connect("resin_product_outlet", "resin_sink")
+    flowsheet.connect("resin_disengager.outlet_2", "gas_purge_split.feed")
+    flowsheet.connect("gas_purge_split.recycle", "recycle_export")
+    flowsheet.connect("recycle_export", "recycle_sink")
+    flowsheet.connect("gas_purge_split.purge", "purge_export")
+    flowsheet.connect("purge_export", "purge_sink")
 
     results = flowsheet.run(steps=steps, dt=dt)
 
     polymerizer_to_separator = results.get_stream("polymerizer", "resin_disengager")
-    recycle_to_mixer = results.get_stream("recycle_gas_return", "loop_mixer.inlet_2")
+    recycle_to_mixer = results.get_stream("recycle_gas_return", "loop_mixer.recycle")
     solids_to_purge_bin = results.get_stream("resin_disengager.outlet_1", "purge_bin")
     purge_bin_to_product = results.get_stream("purge_bin", "resin_product_outlet")
-    purge_to_outlet = results.get_stream("gas_purge_splitter.outlet_2", "purge_export")
+    purge_to_outlet = results.get_stream("gas_purge_split.purge", "purge_export")
 
     reactor_resin_fraction = float(polymerizer_to_separator.composition[-1][1])
     purge_bin_resin_fraction = float(purge_bin_to_product.composition[-1][1])

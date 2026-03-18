@@ -1,4 +1,4 @@
-"""Canonical advanced flowsheet example: ammonia train with an explicit recycle return edge."""
+"""Canonical advanced flowsheet example: ammonia train with junctions, sinks, and a line-installed recycle pump."""
 
 from __future__ import annotations
 
@@ -6,13 +6,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from modular_simulation.flowsheet import Flowsheet
+from modular_simulation.flowsheet import Flowsheet, PumpInstall
 from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 from modular_simulation.unit_processes import (
     ComponentSeparator,
     HeaterCooler,
-    Mixer,
-    Splitter,
 )
 
 
@@ -26,7 +24,11 @@ def _build_flowsheet(*, dt: float) -> Flowsheet:
     flowsheet = _create_flowsheet(species=species, dt=dt)
     n_species = len(species)
 
-    flowsheet.add_unit("synthesis_mixer", Mixer(n_inlets=2, n_species=n_species))
+    flowsheet.add_junction(
+        "synthesis_mixer",
+        inlet_ports=("fresh", "recycle"),
+        outlet_ports=("to_reactor",),
+    )
     flowsheet.add_unit(
         "ammonia_reactor",
         HeaterCooler(
@@ -41,9 +43,10 @@ def _build_flowsheet(*, dt: float) -> Flowsheet:
             configured_split_fraction_targets=np.array([0.04, 0.95], dtype=np.float64),
         ),
     )
-    flowsheet.add_unit(
-        "purge_splitter",
-        Splitter(n_outlets=2, n_species=n_species, split_ratios=np.array([0.86], dtype=np.float64)),
+    flowsheet.add_junction(
+        "purge_split",
+        inlet_ports=("feed",),
+        outlet_ports=("recycle", "purge"),
     )
     flowsheet.add_unit(
         "liquid_product_outlet",
@@ -53,6 +56,8 @@ def _build_flowsheet(*, dt: float) -> Flowsheet:
         "purge_export",
         HeaterCooler(n_species=n_species, external_outlet_temperature=315.0),
     )
+    flowsheet.add_sink("product_sink")
+    flowsheet.add_sink("purge_sink")
     flowsheet.add_feed_from_values(
         "fresh_syngas",
         T=700.0,
@@ -61,12 +66,20 @@ def _build_flowsheet(*, dt: float) -> Flowsheet:
         flow=120.0,
     )
 
-    flowsheet.connect("fresh_syngas", "synthesis_mixer.inlet_1")
-    flowsheet.chain("synthesis_mixer", "ammonia_reactor", "condenser_separator")
+    flowsheet.connect("fresh_syngas", "synthesis_mixer.fresh")
+    flowsheet.connect("synthesis_mixer.to_reactor", "ammonia_reactor")
+    flowsheet.connect("ammonia_reactor", "condenser_separator")
     flowsheet.connect("condenser_separator.outlet_1", "liquid_product_outlet")
-    flowsheet.connect("condenser_separator.outlet_2", "purge_splitter")
-    flowsheet.connect("purge_splitter.outlet_1", "synthesis_mixer.inlet_2")
-    flowsheet.connect("purge_splitter.outlet_2", "purge_export")
+    flowsheet.connect("liquid_product_outlet", "product_sink")
+    flowsheet.connect("condenser_separator.outlet_2", "purge_split.feed")
+    flowsheet.connect(
+        "purge_split.recycle",
+        "synthesis_mixer.recycle",
+        line_id="recycle_line",
+        pump=PumpInstall(id="recycle_pump", initial_pump_speed=80_000.0),
+    )
+    flowsheet.connect("purge_split.purge", "purge_export")
+    flowsheet.connect("purge_export", "purge_sink")
 
     return flowsheet
 
@@ -82,11 +95,11 @@ def run_example(*, steps: int = 3000, dt: float = 0.2, make_plot: bool = True) -
 
     results = flowsheet.run(steps=steps, dt=dt)
 
-    fresh_to_mixer = results.get_stream("fresh_syngas", "synthesis_mixer.inlet_1")
-    recycle_to_mixer = results.get_stream("purge_splitter.outlet_1", "synthesis_mixer.inlet_2")
+    fresh_to_mixer = results.get_stream("fresh_syngas", "synthesis_mixer.fresh")
+    recycle_to_mixer = results.get_stream("purge_split.recycle", "synthesis_mixer.recycle")
     reactor_to_separator = results.get_stream("ammonia_reactor", "condenser_separator")
     product_to_outlet = results.get_stream("condenser_separator.outlet_1", "liquid_product_outlet")
-    purge_to_outlet = results.get_stream("purge_splitter.outlet_2", "purge_export")
+    purge_to_outlet = results.get_stream("purge_split.purge", "purge_export")
 
     fresh_flow = float(fresh_to_mixer.flow_rate[-1])
     recycle_flow = float(recycle_to_mixer.flow_rate[-1])
@@ -97,12 +110,16 @@ def run_example(*, steps: int = 3000, dt: float = 0.2, make_plot: bool = True) -
         "fresh_feed_flow_mol_s": fresh_flow,
         "recycle_edge_flow_mol_s": recycle_flow,
         "recycle_to_fresh_ratio": recycle_ratio,
+        "recycle_pump_id": "recycle_pump",
         "reactor_outlet_product_fraction": float(reactor_to_separator.composition[-1][1]),
         "liquid_product_flow_mol_s": float(product_to_outlet.flow_rate[-1]),
         "liquid_product_purity": float(product_to_outlet.composition[-1][1]),
         "purge_flow_mol_s": float(purge_to_outlet.flow_rate[-1]),
     }
-    _print_report("COMPLEX (6 PROCESSES): AMMONIA TRAIN WITH EXPLICIT RECYCLE TOPOLOGY", report)
+    _print_report(
+        "COMPLEX (6 PROCESSES): AMMONIA TRAIN WITH JUNCTION-OWNED RECYCLE TOPOLOGY",
+        report,
+    )
 
     if make_plot:
         print("- plotting is not implemented for the current canonical flowsheet API")

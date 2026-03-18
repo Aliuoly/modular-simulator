@@ -15,6 +15,7 @@ from modular_simulation.connection.runtime.connected_plant_orchestrator import (
     ConnectedPlantOrchestrator,
     ConnectedPlantStepResult,
 )
+from modular_simulation.connection.domain.node_port_helpers import DirectionalNodePorts
 from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
 from modular_simulation.connection.hydraulics.hydraulic_element import (
     CanonicalNodePressureHydraulicElement,
@@ -142,19 +143,88 @@ class StreamHistory:
     composition: NDArray[np.float64]
 
 
+def _line_installed_pump_pressure_rise_curve(flow_rate: float, pump_speed: float) -> float:
+    del flow_rate
+    return pump_speed
+
+
+def _line_installed_pump_pressure_rise_derivative(flow_rate: float, pump_speed: float) -> float:
+    del flow_rate, pump_speed
+    return 0.0
+
+
+@dataclass(frozen=True)
+class JunctionDefinition:
+    junction_id: str
+    inlet_ports: tuple[str, ...]
+    outlet_ports: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SinkDefinition:
+    sink_id: str
+    port_name: str
+
+
+@dataclass(frozen=True)
+class PumpInstall:
+    id: str | None = None
+    initial_pump_speed: float = 0.0
+
+
+@dataclass(frozen=True)
+class ValveInstall:
+    id: str | None = None
+    minimum_open_fraction: float = 0.0
+    maximum_open_fraction: float = 1.0
+    initial_open_fraction: float = 1.0
+
+
+@dataclass(frozen=True)
+class HeatInstall:
+    id: str | None = None
+    initial_heat_rate: float = 0.0
+
+
+@dataclass(frozen=True)
+class LineReference:
+    line_id: str
+    pump_id: str | None = None
+    valve_id: str | None = None
+    heat_actuator_id: str | None = None
+
+
+@dataclass(frozen=True)
+class _EndpointReference:
+    compile_endpoint: str
+    display_endpoint: str
+    node_id: str
+    port_name: str
+    node_kind: Literal["unit", "feed", "junction", "sink"]
+
+
 @dataclass(frozen=True)
 class _ConnectionSpec:
     source: str
     target: str
+    display_source: str
+    display_target: str
+    line_id: str
+    radius_m: float
+    length_m: float
+    pump: PumpInstall | None = None
+    valve: ValveInstall | None = None
+    heat: HeatInstall | None = None
 
 
 @dataclass(frozen=True)
 class _ResolvedConnection:
     source_node_id: str
     source_port_name: str
-    source_is_feed: bool
+    source_node_kind: Literal["unit", "feed", "junction", "sink"]
     target_node_id: str
     target_port_name: str
+    target_node_kind: Literal["unit", "feed", "junction", "sink"]
 
 
 @dataclass(frozen=True)
@@ -190,10 +260,17 @@ class Flowsheet:
         self._user_declared_fields_by_unit_object_id: dict[int, frozenset[str]] = {}
         self._user_declared_field_values_by_unit_object_id: dict[int, Mapping[str, object]] = {}
         self._feeds: dict[str, StreamData] = {}
+        self._junctions: dict[str, JunctionDefinition] = {}
+        self._sinks: dict[str, SinkDefinition] = {}
         self._connections: list[_ConnectionSpec] = []
         self._subsystems: dict[str, Subsystem] = {}
         self._compiled_plant: ConnectedPlantOrchestrator | None = None
         self._dirty: bool = True
+        self._next_generated_line_index: int = 1
+        self._line_ids: set[str] = set()
+        self._pump_ids: set[str] = set()
+        self._valve_ids: set[str] = set()
+        self._heat_actuator_ids: set[str] = set()
 
     def add_unit(self, unit_id: str, unit: ProcessModel) -> None:
         normalized_unit_id = self._normalize_node_id(unit_id=unit_id, field_name="unit_id")
@@ -233,6 +310,39 @@ class Flowsheet:
         self._feeds[normalized_feed_id] = stream
         self._mark_dirty()
 
+    def add_junction(
+        self,
+        junction_id: str,
+        *,
+        inlet_ports: tuple[str, ...],
+        outlet_ports: tuple[str, ...],
+    ) -> None:
+        normalized_ports = DirectionalNodePorts.build(
+            node_id=junction_id,
+            inlet_port_ids=tuple(inlet_ports),
+            outlet_port_ids=tuple(outlet_ports),
+            node_kind="junction",
+        )
+        self._assert_available_node_id(node_id=normalized_ports.node_id)
+        self._junctions[normalized_ports.node_id] = JunctionDefinition(
+            junction_id=normalized_ports.node_id,
+            inlet_ports=normalized_ports.inlet_port_ids,
+            outlet_ports=normalized_ports.outlet_port_ids,
+        )
+        self._mark_dirty()
+
+    def add_sink(self, sink_id: str, *, port_name: str = "inlet") -> None:
+        normalized_sink_id = self._normalize_node_id(unit_id=sink_id, field_name="sink_id")
+        self._assert_available_node_id(node_id=normalized_sink_id)
+        normalized_port_name = self._normalize_port_name(
+            port_name=port_name, field_name="port_name"
+        )
+        self._sinks[normalized_sink_id] = SinkDefinition(
+            sink_id=normalized_sink_id,
+            port_name=normalized_port_name,
+        )
+        self._mark_dirty()
+
     def add_feed_from_values(
         self,
         feed_id: str,
@@ -252,13 +362,59 @@ class Flowsheet:
             ),
         )
 
-    def connect(self, source: str, target: str) -> None:
-        normalized_source = self._normalize_endpoint(endpoint=source, role="source")
-        normalized_target = self._normalize_endpoint(endpoint=target, role="target")
+    def connect(
+        self,
+        source: str,
+        target: str,
+        *,
+        line_id: str | None = None,
+        radius_m: float = 1.0,
+        length_m: float = 1.0,
+        pump: PumpInstall | None = None,
+        valve: ValveInstall | None = None,
+        heat: HeatInstall | None = None,
+    ) -> LineReference:
+        source_reference: _EndpointReference = self._normalize_endpoint(
+            endpoint=source, role="source"
+        )
+        target_reference: _EndpointReference = self._normalize_endpoint(
+            endpoint=target, role="target"
+        )
+        resolved_line_id = self._reserve_line_id(line_id)
+        radius_scalar = self._require_positive_finite_scalar(value=radius_m, field_name="radius_m")
+        length_scalar = self._require_positive_finite_scalar(value=length_m, field_name="length_m")
+
+        pump_install = self._normalize_pump_install(pump=pump, line_id=resolved_line_id)
+        valve_install = self._normalize_valve_install(valve=valve, line_id=resolved_line_id)
+        heat_install = self._normalize_heat_install(heat=heat, line_id=resolved_line_id)
+        self._validate_line_overlay_selection(
+            line_id=resolved_line_id,
+            pump=pump_install,
+            valve=valve_install,
+            heat=heat_install,
+        )
+
         self._connections.append(
-            _ConnectionSpec(source=normalized_source, target=normalized_target)
+            _ConnectionSpec(
+                source=source_reference.compile_endpoint,
+                target=target_reference.compile_endpoint,
+                display_source=source_reference.display_endpoint,
+                display_target=target_reference.display_endpoint,
+                line_id=resolved_line_id,
+                radius_m=radius_scalar,
+                length_m=length_scalar,
+                pump=pump_install,
+                valve=valve_install,
+                heat=heat_install,
+            )
         )
         self._mark_dirty()
+        return LineReference(
+            line_id=resolved_line_id,
+            pump_id=None if pump_install is None else pump_install.id,
+            valve_id=None if valve_install is None else valve_install.id,
+            heat_actuator_id=None if heat_install is None else heat_install.id,
+        )
 
     def chain(self, *unit_ids: str) -> None:
         if len(unit_ids) < 2:
@@ -290,12 +446,19 @@ class Flowsheet:
             )
         for feed_id in self._feeds:
             network.add_boundary_source(feed_id)
+        for junction in self._junctions.values():
+            network.add_junction(
+                junction.junction_id,
+                inlet_ports=junction.inlet_ports,
+                outlet_ports=junction.outlet_ports,
+            )
+        for sink in self._sinks.values():
+            network.add_boundary_sink(sink.sink_id, port_name=sink.port_name)
         for connection in self._connections:
-            line_id = network.connect(connection.source, connection.target)
-            self._configure_edge_hydraulic_actuator_state(
+            network.connect(connection.source, connection.target, edge_id=connection.line_id)
+            self._configure_connection_line(
                 network=network,
-                line_id=line_id,
-                source_endpoint=connection.source,
+                connection=connection,
             )
 
         _ = network.compile()
@@ -330,7 +493,7 @@ class Flowsheet:
         connected_process_ports.update(
             (connection.source_node_id, connection.source_port_name)
             for connection in resolved_connections
-            if not connection.source_is_feed
+            if connection.source_node_kind in {"unit", "junction"}
         )
         if any(
             self._resolve_hydraulic_anchor_pressure(
@@ -350,23 +513,16 @@ class Flowsheet:
     def _resolved_connections_for_validation(self) -> tuple[_ResolvedConnection, ...]:
         resolved: list[_ResolvedConnection] = []
         for connection in self._connections:
-            source_node_id: str
-            source_port_name: str
-            source_is_feed = "." not in connection.source
-            if source_is_feed:
-                source_node_id = connection.source
-                source_port_name = "outlet"
-            else:
-                source_node_id, source_port_name = self._split_explicit_endpoint(connection.source)
-
+            source_node_id, source_port_name = self._split_explicit_endpoint(connection.source)
             target_node_id, target_port_name = self._split_explicit_endpoint(connection.target)
             resolved.append(
                 _ResolvedConnection(
                     source_node_id=source_node_id,
                     source_port_name=source_port_name,
-                    source_is_feed=source_is_feed,
+                    source_node_kind=self._node_kind(node_id=source_node_id),
                     target_node_id=target_node_id,
                     target_port_name=target_port_name,
+                    target_node_kind=self._node_kind(node_id=target_node_id),
                 )
             )
         return tuple(resolved)
@@ -525,7 +681,7 @@ class Flowsheet:
         connected_outlets = {
             (connection.source_node_id, connection.source_port_name)
             for connection in resolved_connections
-            if not connection.source_is_feed
+            if connection.source_node_kind in {"unit", "junction"}
         }
         dangling_outlets: list[str] = []
         for unit_id in sorted(self._units):
@@ -533,6 +689,13 @@ class Flowsheet:
                 if (unit_id, outlet_port) in connected_outlets:
                     continue
                 dangling_outlets.append(f"{unit_id}.{outlet_port}")
+        for junction_id in sorted(self._junctions):
+            for outlet_port in self._available_junction_ports(
+                junction_id=junction_id, role="source"
+            ):
+                if (junction_id, outlet_port) in connected_outlets:
+                    continue
+                dangling_outlets.append(f"{junction_id}.{outlet_port}")
 
         if not dangling_outlets:
             return
@@ -546,7 +709,7 @@ class Flowsheet:
     def _warn_on_topology_issues(
         self, *, resolved_connections: tuple[_ResolvedConnection, ...]
     ) -> None:
-        node_ids = set(self._units) | set(self._feeds)
+        node_ids = set(self._units) | set(self._feeds) | set(self._junctions) | set(self._sinks)
         undirected_neighbors: dict[str, set[str]] = {node_id: set() for node_id in node_ids}
         directed_neighbors: dict[str, set[str]] = {node_id: set() for node_id in node_ids}
 
@@ -638,7 +801,7 @@ class Flowsheet:
             for unit_id, unit in self._units.items()
         }
         stream_trace_values: dict[str, dict[str, list[object]]] = {
-            f"{connection.source}->{connection.target}": {
+            f"{connection.display_source}->{connection.display_target}": {
                 "flow_rate": [],
                 "temperature": [],
                 "pressure": [],
@@ -657,7 +820,7 @@ class Flowsheet:
                     unit_state_trace_values[unit_id][state_name].append(state_value)
 
             for connection in self._connections:
-                stream_key = f"{connection.source}->{connection.target}"
+                stream_key = f"{connection.display_source}->{connection.display_target}"
                 stream = self._stream_snapshot_for_connection(connection=connection)
                 stream_trace_values[stream_key]["flow_rate"].append(float(stream.molar_flow_rate))
                 stream_trace_values[stream_key]["temperature"].append(float(stream.temperature))
@@ -677,10 +840,34 @@ class Flowsheet:
         )
 
     def _stream_snapshot_for_connection(self, connection: _ConnectionSpec) -> StreamData:
-        if "." not in connection.source:
-            return self._feeds[connection.source]
-
         source_node_id, source_port_name = self._split_explicit_endpoint(connection.source)
+        if source_node_id in self._feeds:
+            return self._feeds[source_node_id]
+
+        runtime_stream = self._runtime_outlet_stream_snapshot(
+            node_id=source_node_id,
+            port_name=source_port_name,
+        )
+        if runtime_stream is not None:
+            return runtime_stream
+
+        target_node_id, target_port_name = self._split_explicit_endpoint(connection.target)
+        plant = self._compiled_plant
+        if plant is not None:
+            inlet_condition = plant.runtime_orchestrator.get_latest_inlet_condition(
+                node_id=target_node_id,
+                port_name=target_port_name,
+            )
+            if inlet_condition is not None:
+                return StreamData.from_port_condition(inlet_condition)
+
+            source_inlet_condition = plant.runtime_orchestrator.get_latest_inlet_condition(
+                node_id=source_node_id,
+                port_name=source_port_name,
+            )
+            if source_inlet_condition is not None:
+                return StreamData.from_port_condition(source_inlet_condition)
+
         return self._require_runtime_outlet_stream_snapshot(
             node_id=source_node_id,
             port_name=source_port_name,
@@ -819,16 +1006,17 @@ class Flowsheet:
             target_node_spec = node_specs_by_key[target_key]
 
             element = CanonicalNodePressureHydraulicElement(
-                wrapped=self._resolve_hydraulic_element(
+                wrapped=self._resolve_hydraulic_element_for_connection(
+                    line_id=edge.edge_id,
                     source_node_id=edge.source.node_id,
                     source_port_name=edge.source.port_name,
-                    target_node_id=edge.target.node_id,
                 )
             )
             parameters = self._resolve_element_parameters(
                 source_node_id=edge.source.node_id,
                 source_port_name=edge.source.port_name,
                 target_node_id=edge.target.node_id,
+                line_id=edge.edge_id,
                 element=element.wrapped,
             )
             equations.append(
@@ -1042,20 +1230,66 @@ class Flowsheet:
         self, *, source_node_id: str, source_port_name: str, target_node_id: str
     ) -> HydraulicElement:
         del target_node_id
+        return self._resolve_hydraulic_element_for_connection(
+            line_id=None,
+            source_node_id=source_node_id,
+            source_port_name=source_port_name,
+        )
+
+    def _resolve_hydraulic_element_for_connection(
+        self,
+        *,
+        line_id: str | None,
+        source_node_id: str,
+        source_port_name: str,
+    ) -> HydraulicElement:
+        connection = None if line_id is None else self._connection_by_line_id(line_id)
+        if connection is not None and connection.pump is not None:
+            return self._line_installed_pump_element()
+        if connection is not None and connection.valve is not None:
+            return self._line_installed_valve_element()
         return resolve_hydraulic_element(
             source_unit=self._units.get(source_node_id),
             source_node_id=source_node_id,
             source_port_name=source_port_name,
         )
 
+    def _line_installed_pump_element(self) -> HydraulicElement:
+        from modular_simulation.connection.hydraulics.hydraulic_element import PumpHydraulicElement
+
+        return cast(
+            HydraulicElement,
+            PumpHydraulicElement(
+                dp_curve=_line_installed_pump_pressure_rise_curve,
+                d_dp_d_mdot=_line_installed_pump_pressure_rise_derivative,
+            ),
+        )
+
+    def _line_installed_valve_element(self) -> HydraulicElement:
+        from modular_simulation.connection.hydraulics.hydraulic_element import ValveHydraulicElement
+
+        return cast(HydraulicElement, ValveHydraulicElement())
+
+    def _connection_by_line_id(self, line_id: str) -> _ConnectionSpec | None:
+        for connection in self._connections:
+            if connection.line_id == line_id:
+                return connection
+        return None
+
     def _resolve_element_parameters(
         self,
         *,
+        line_id: str | None,
         element: HydraulicElement,
         source_node_id: str,
         source_port_name: str,
         target_node_id: str,
     ) -> Mapping[str, float]:
+        connection = None if line_id is None else self._connection_by_line_id(line_id)
+        if connection is not None and connection.pump is not None:
+            return MappingProxyType({"pump_speed": connection.pump.initial_pump_speed})
+        if connection is not None and connection.valve is not None:
+            return MappingProxyType({"valve_resistance": 1.0, "delta": 1.0e-6})
         return element.default_parameters(
             source_unit=self._units.get(source_node_id),
             source_node_id=source_node_id,
@@ -1068,6 +1302,7 @@ class Flowsheet:
         self, *, topology: TopologyGraph
     ) -> dict[str, _HydraulicNodeCompileSpec]:
         endpoint_ids_by_key: dict[str, set[str]] = {}
+        connected_process_ids: set[str] = set()
         for edge in sorted(topology.edges, key=lambda item: item.edge_id):
             for endpoint in (edge.source, edge.target):
                 node_key = self._hydraulic_node_key(
@@ -1078,6 +1313,20 @@ class Flowsheet:
                 endpoint_ids_by_key.setdefault(node_key, set()).add(
                     f"{endpoint.node_id}.{endpoint.port_name}"
                 )
+                if endpoint.node_id in self._units:
+                    connected_process_ids.add(endpoint.node_id)
+
+        for process_node in topology.process_nodes:
+            if process_node.process_id not in connected_process_ids:
+                continue
+            for outlet_port in process_node.outlet_ports:
+                endpoint_id = f"{process_node.process_id}.{outlet_port}"
+                node_key = self._hydraulic_node_key(
+                    node_id=process_node.process_id,
+                    port_name=outlet_port,
+                    topology=topology,
+                )
+                endpoint_ids_by_key.setdefault(node_key, set()).add(endpoint_id)
 
         specs: dict[str, _HydraulicNodeCompileSpec] = {}
         for node_key in sorted(endpoint_ids_by_key):
@@ -1097,18 +1346,37 @@ class Flowsheet:
 
             endpoint_id = endpoint_ids[0]
             node_id, port_name = endpoint_id.split(".", maxsplit=1)
+            anchor_pressure = self._resolve_hydraulic_anchor_pressure(
+                node_id=node_id,
+                port_name=port_name,
+                topology=topology,
+            )
+            if anchor_pressure is None and self._is_implicit_terminal_outlet_anchor(
+                node_id=node_id,
+                port_name=port_name,
+                topology=topology,
+            ):
+                anchor_pressure = 101325.0
             specs[node_key] = _HydraulicNodeCompileSpec(
                 node_key=node_key,
                 topology_label=endpoint_id,
                 pressure_unknown_name=pressure_unknown_name,
                 endpoint_ids=endpoint_ids,
-                anchor_pressure_pa=self._resolve_hydraulic_anchor_pressure(
-                    node_id=node_id,
-                    port_name=port_name,
-                    topology=topology,
-                ),
+                anchor_pressure_pa=anchor_pressure,
             )
         return specs
+
+    def _is_implicit_terminal_outlet_anchor(
+        self, *, node_id: str, port_name: str, topology: TopologyGraph
+    ) -> bool:
+        if node_id not in self._units:
+            return False
+        if port_name not in self._available_unit_ports(unit_id=node_id, role="source"):
+            return False
+        return not any(
+            edge.source.node_id == node_id and edge.source.port_name == port_name
+            for edge in topology.edges
+        )
 
     def _hydraulic_node_key(self, *, node_id: str, port_name: str, topology: TopologyGraph) -> str:
         if any(junction.junction_id == node_id for junction in topology.junction_nodes):
@@ -1437,49 +1705,49 @@ class Flowsheet:
         linear_residual_equations: list[LinearResidualEquation],
     ) -> None:
         for unit_id in sorted(self._units):
-            relation = self._infer_unit_pressure_relation(unit_id=unit_id)
-            if relation is None:
-                continue
-
-            inlet_key = self._hydraulic_node_key(
-                node_id=unit_id,
-                port_name=relation.inlet_port_name,
-                topology=topology,
-            )
-            outlet_key = self._hydraulic_node_key(
-                node_id=unit_id,
-                port_name=relation.outlet_port_name,
-                topology=topology,
-            )
-            inlet_node_spec = node_specs_by_key.get(inlet_key)
-            outlet_node_spec = node_specs_by_key.get(outlet_key)
-            if inlet_node_spec is None or outlet_node_spec is None:
-                continue
-
-            self._validate_unit_pressure_relation_anchor_consistency(
-                unit_id=unit_id,
-                relation=relation,
-                inlet_node_spec=inlet_node_spec,
-                outlet_node_spec=outlet_node_spec,
-            )
-            if (
-                inlet_node_spec.anchor_pressure_pa is not None
-                and outlet_node_spec.anchor_pressure_pa is not None
+            for relation_index, relation in enumerate(
+                self._infer_unit_pressure_relations(unit_id=unit_id),
+                start=1,
             ):
-                continue
-
-            linear_residual_equations.append(
-                LinearResidualEquation(
-                    residual_name=f"unit__{unit_id}__pressure_relation",
-                    coefficients=MappingProxyType(
-                        {
-                            inlet_node_spec.pressure_unknown_name: 1.0,
-                            outlet_node_spec.pressure_unknown_name: -1.0,
-                        }
-                    ),
-                    constant=-relation.pressure_drop_pa,
+                inlet_key = self._hydraulic_node_key(
+                    node_id=unit_id,
+                    port_name=relation.inlet_port_name,
+                    topology=topology,
                 )
-            )
+                outlet_key = self._hydraulic_node_key(
+                    node_id=unit_id,
+                    port_name=relation.outlet_port_name,
+                    topology=topology,
+                )
+                inlet_node_spec = node_specs_by_key.get(inlet_key)
+                outlet_node_spec = node_specs_by_key.get(outlet_key)
+                if inlet_node_spec is None or outlet_node_spec is None:
+                    continue
+
+                self._validate_unit_pressure_relation_anchor_consistency(
+                    unit_id=unit_id,
+                    relation=relation,
+                    inlet_node_spec=inlet_node_spec,
+                    outlet_node_spec=outlet_node_spec,
+                )
+                if (
+                    inlet_node_spec.anchor_pressure_pa is not None
+                    and outlet_node_spec.anchor_pressure_pa is not None
+                ):
+                    continue
+
+                linear_residual_equations.append(
+                    LinearResidualEquation(
+                        residual_name=(f"unit__{unit_id}__pressure_relation__{relation_index:02d}"),
+                        coefficients=MappingProxyType(
+                            {
+                                inlet_node_spec.pressure_unknown_name: 1.0,
+                                outlet_node_spec.pressure_unknown_name: -1.0,
+                            }
+                        ),
+                        constant=-relation.pressure_drop_pa,
+                    )
+                )
 
     def _infer_unit_flow_balance_groups(self, *, unit_id: str) -> tuple[tuple[str, ...], ...]:
         inlet_ports = self._available_unit_ports(unit_id=unit_id, role="target")
@@ -1602,27 +1870,102 @@ class Flowsheet:
                 candidates.append("inlet_flows")
         return tuple(dict.fromkeys(candidates))
 
-    def _infer_unit_pressure_relation(self, *, unit_id: str) -> _UnitPressureRelation | None:
+    def _infer_unit_pressure_relations(self, *, unit_id: str) -> tuple[_UnitPressureRelation, ...]:
         unit = self._units[unit_id]
         inlet_ports = self._available_unit_ports(unit_id=unit_id, role="target")
         outlet_ports = self._available_unit_ports(unit_id=unit_id, role="source")
-        if len(inlet_ports) != 1 or len(outlet_ports) != 1:
-            return None
+        if not inlet_ports or not outlet_ports:
+            return ()
 
-        inlet_pressure_metadata = unit.state_metadata_dict.get("inlet_pressure")
-        outlet_pressure_metadata = unit.state_metadata_dict.get("outlet_pressure")
-        if inlet_pressure_metadata is None or inlet_pressure_metadata.type != StateType.BOUNDARY:
-            return None
-        if outlet_pressure_metadata is None or outlet_pressure_metadata.type != StateType.ALGEBRAIC:
-            return None
-        outlet_element = self._resolve_hydraulic_element(
-            source_node_id=unit_id,
-            source_port_name=outlet_ports[0],
-            target_node_id=unit_id,
+        pressure_drop_value = self._infer_unit_pressure_drop_value(unit=unit)
+
+        pairwise_relations = self._infer_pairwise_unit_pressure_relations(
+            unit_id=unit_id,
+            inlet_ports=inlet_ports,
+            outlet_ports=outlet_ports,
+            pressure_drop_value=pressure_drop_value,
         )
-        if not isinstance(outlet_element, PipeHydraulicElement):
-            return None
+        if pairwise_relations:
+            return pairwise_relations
 
+        if len(inlet_ports) != 1:
+            return ()
+
+        inlet_port_name = inlet_ports[0]
+        if not self._port_exposes_pressure_metadata(
+            unit_id=unit_id,
+            port_name=inlet_port_name,
+            role="target",
+        ):
+            return ()
+
+        relations: list[_UnitPressureRelation] = []
+        for outlet_port_name in outlet_ports:
+            if not self._outlet_port_supports_pipe_pressure_relation(
+                unit_id=unit_id,
+                outlet_port_name=outlet_port_name,
+            ):
+                return ()
+            relations.append(
+                _UnitPressureRelation(
+                    inlet_port_name=inlet_port_name,
+                    outlet_port_name=outlet_port_name,
+                    pressure_drop_pa=pressure_drop_value,
+                )
+            )
+        return tuple(relations)
+
+    def _infer_pairwise_unit_pressure_relations(
+        self,
+        *,
+        unit_id: str,
+        inlet_ports: tuple[str, ...],
+        outlet_ports: tuple[str, ...],
+        pressure_drop_value: float,
+    ) -> tuple[_UnitPressureRelation, ...]:
+        if len(inlet_ports) != len(outlet_ports) or len(inlet_ports) <= 1:
+            return ()
+
+        inlet_by_prefix: dict[str, str] = {}
+        for port_name in inlet_ports:
+            prefix = self._paired_port_prefix(port_name=port_name, suffix="_inlet")
+            if prefix is None or prefix in inlet_by_prefix:
+                return ()
+            inlet_by_prefix[prefix] = port_name
+
+        outlet_by_prefix: dict[str, str] = {}
+        for port_name in outlet_ports:
+            prefix = self._paired_port_prefix(port_name=port_name, suffix="_outlet")
+            if prefix is None or prefix in outlet_by_prefix:
+                return ()
+            outlet_by_prefix[prefix] = port_name
+
+        if set(inlet_by_prefix) != set(outlet_by_prefix):
+            return ()
+
+        relations: list[_UnitPressureRelation] = []
+        for prefix in sorted(inlet_by_prefix):
+            inlet_port_name = inlet_by_prefix[prefix]
+            outlet_port_name = outlet_by_prefix[prefix]
+            if not self._port_exposes_pressure_metadata(
+                unit_id=unit_id,
+                port_name=inlet_port_name,
+                role="target",
+            ) or not self._outlet_port_supports_pipe_pressure_relation(
+                unit_id=unit_id,
+                outlet_port_name=outlet_port_name,
+            ):
+                return ()
+            relations.append(
+                _UnitPressureRelation(
+                    inlet_port_name=inlet_port_name,
+                    outlet_port_name=outlet_port_name,
+                    pressure_drop_pa=pressure_drop_value,
+                )
+            )
+        return tuple(relations)
+
+    def _infer_unit_pressure_drop_value(self, *, unit: ProcessModel) -> float:
         pressure_drop_value = 0.0
         metadata = unit.state_metadata_dict.get("pressure_drop")
         if metadata is not None and metadata.type == StateType.CONSTANT:
@@ -1631,11 +1974,46 @@ class Flowsheet:
                 candidate_value = float(pressure_drop)
                 if isfinite(candidate_value) and candidate_value >= 0.0:
                     pressure_drop_value = candidate_value
-        return _UnitPressureRelation(
-            inlet_port_name=inlet_ports[0],
-            outlet_port_name=outlet_ports[0],
-            pressure_drop_pa=pressure_drop_value,
+        return pressure_drop_value
+
+    def _port_exposes_pressure_metadata(
+        self,
+        *,
+        unit_id: str,
+        port_name: str,
+        role: Literal["source", "target"],
+    ) -> bool:
+        unit = self._units[unit_id]
+        expected_state_type = StateType.ALGEBRAIC if role == "source" else StateType.BOUNDARY
+        for attribute_name in self._pressure_attribute_candidates(port_name=port_name, role=role):
+            metadata = unit.state_metadata_dict.get(attribute_name)
+            if metadata is not None and metadata.type == expected_state_type:
+                return True
+            if (
+                role == "source"
+                and attribute_name == "outlet_pressure"
+                and isinstance(getattr(type(unit), attribute_name, None), property)
+            ):
+                value = self._pressure_attribute_value(unit=unit, attribute_name=attribute_name)
+                if value is not None:
+                    return True
+        return False
+
+    def _outlet_port_supports_pipe_pressure_relation(
+        self, *, unit_id: str, outlet_port_name: str
+    ) -> bool:
+        if not self._port_exposes_pressure_metadata(
+            unit_id=unit_id,
+            port_name=outlet_port_name,
+            role="source",
+        ):
+            return False
+        outlet_element = self._resolve_hydraulic_element(
+            source_node_id=unit_id,
+            source_port_name=outlet_port_name,
+            target_node_id=unit_id,
         )
+        return isinstance(outlet_element, PipeHydraulicElement)
 
     def _validate_unit_pressure_relation_anchor_consistency(
         self,
@@ -1708,58 +2086,334 @@ class Flowsheet:
                 return float(value)
         return 101325.0
 
-    def _normalize_endpoint(self, *, endpoint: str, role: Literal["source", "target"]) -> str:
+    def _configure_connection_line(
+        self,
+        *,
+        network: ConnectionNetwork,
+        connection: _ConnectionSpec,
+    ) -> None:
+        network.configure_line_geometry(
+            line_id=connection.line_id,
+            radius_m=connection.radius_m,
+            length_m=connection.length_m,
+            equation_name=connection.line_id,
+            resistance_parameter_name=self._resistance_parameter_name_for_connection(connection),
+        )
+
+        if connection.pump is None and connection.valve is None and connection.heat is None:
+            self._configure_edge_hydraulic_actuator_state(
+                network=network,
+                line_id=connection.line_id,
+                source_endpoint=connection.source,
+            )
+
+        if connection.pump is not None:
+            network.attach_line_pump(
+                line_id=connection.line_id,
+                pump_id=connection.pump.id,
+                initial_pump_speed=connection.pump.initial_pump_speed,
+                equation_name=connection.line_id,
+                pump_parameter_name="pump_speed",
+            )
+
+        if connection.valve is not None:
+            network.attach_line_valve(
+                line_id=connection.line_id,
+                valve_id=connection.valve.id,
+                minimum_open_fraction=connection.valve.minimum_open_fraction,
+                maximum_open_fraction=connection.valve.maximum_open_fraction,
+                initial_open_fraction=connection.valve.initial_open_fraction,
+                equation_name=connection.line_id,
+                resistance_parameter_name="valve_resistance",
+            )
+
+        if connection.heat is not None:
+            network.attach_line_heat_actuator(
+                line_id=connection.line_id,
+                heat_actuator_id=connection.heat.id,
+                initial_heat_rate=connection.heat.initial_heat_rate,
+            )
+
+    def _resistance_parameter_name_for_connection(self, connection: _ConnectionSpec) -> str:
+        source_node_id, source_port_name = self._split_explicit_endpoint(connection.source)
+        base_element = self._resolve_hydraulic_element_for_connection(
+            line_id=connection.line_id,
+            source_node_id=source_node_id,
+            source_port_name=source_port_name,
+        )
+        if connection.pump is not None:
+            return "pump_speed"
+        if connection.valve is not None:
+            return "valve_resistance"
+        parameter_names = base_element.parameter_spec.names
+        if parameter_names:
+            return parameter_names[0]
+        return "pipe_resistance"
+
+    def _reserve_line_id(self, line_id: str | None) -> str:
+        if line_id is not None:
+            normalized_line_id = self._normalize_identifier(value=line_id, field_name="line_id")
+            self._assert_unique_identifier(
+                value=normalized_line_id,
+                existing_ids=self._line_ids,
+                kind="line",
+            )
+            self._line_ids.add(normalized_line_id)
+            return normalized_line_id
+
+        while True:
+            candidate = f"line_{self._next_generated_line_index:04d}"
+            self._next_generated_line_index += 1
+            if candidate in self._line_ids:
+                continue
+            self._line_ids.add(candidate)
+            return candidate
+
+    def _normalize_pump_install(
+        self, *, pump: PumpInstall | None, line_id: str
+    ) -> PumpInstall | None:
+        if pump is None:
+            return None
+        initial_speed = self._require_finite_scalar(
+            value=pump.initial_pump_speed,
+            field_name="pump.initial_pump_speed",
+        )
+        pump_id = self._reserve_generated_or_explicit_identifier(
+            explicit_id=pump.id,
+            generated_id=f"{line_id}__pump",
+            existing_ids=self._pump_ids,
+            kind="pump",
+        )
+        return PumpInstall(id=pump_id, initial_pump_speed=initial_speed)
+
+    def _normalize_valve_install(
+        self, *, valve: ValveInstall | None, line_id: str
+    ) -> ValveInstall | None:
+        if valve is None:
+            return None
+        minimum = self._require_finite_scalar(
+            value=valve.minimum_open_fraction,
+            field_name="valve.minimum_open_fraction",
+        )
+        maximum = self._require_finite_scalar(
+            value=valve.maximum_open_fraction,
+            field_name="valve.maximum_open_fraction",
+        )
+        initial = self._require_finite_scalar(
+            value=valve.initial_open_fraction,
+            field_name="valve.initial_open_fraction",
+        )
+        if minimum > maximum:
+            raise ValueError(
+                "valve install is invalid: minimum_open_fraction must be <= maximum_open_fraction"
+            )
+        if initial < minimum or initial > maximum:
+            raise ValueError(
+                "valve install is invalid: initial_open_fraction must be within min/max bounds"
+            )
+        valve_id = self._reserve_generated_or_explicit_identifier(
+            explicit_id=valve.id,
+            generated_id=f"{line_id}__valve",
+            existing_ids=self._valve_ids,
+            kind="valve",
+        )
+        return ValveInstall(
+            id=valve_id,
+            minimum_open_fraction=minimum,
+            maximum_open_fraction=maximum,
+            initial_open_fraction=initial,
+        )
+
+    def _normalize_heat_install(
+        self, *, heat: HeatInstall | None, line_id: str
+    ) -> HeatInstall | None:
+        if heat is None:
+            return None
+        initial_rate = self._require_finite_scalar(
+            value=heat.initial_heat_rate,
+            field_name="heat.initial_heat_rate",
+        )
+        heat_id = self._reserve_generated_or_explicit_identifier(
+            explicit_id=heat.id,
+            generated_id=f"{line_id}__heat",
+            existing_ids=self._heat_actuator_ids,
+            kind="heat actuator",
+        )
+        return HeatInstall(id=heat_id, initial_heat_rate=initial_rate)
+
+    def _validate_line_overlay_selection(
+        self,
+        *,
+        line_id: str,
+        pump: PumpInstall | None,
+        valve: ValveInstall | None,
+        heat: HeatInstall | None,
+    ) -> None:
+        del heat
+        if pump is not None and valve is not None:
+            raise ValueError(
+                f"line '{line_id}' cannot install both pump and valve hydraulic overlays"
+            )
+
+    def _reserve_generated_or_explicit_identifier(
+        self,
+        *,
+        explicit_id: str | None,
+        generated_id: str,
+        existing_ids: set[str],
+        kind: str,
+    ) -> str:
+        resolved_id = generated_id
+        if explicit_id is not None:
+            resolved_id = self._normalize_identifier(value=explicit_id, field_name=f"{kind}_id")
+        self._assert_unique_identifier(value=resolved_id, existing_ids=existing_ids, kind=kind)
+        existing_ids.add(resolved_id)
+        return resolved_id
+
+    def _normalize_identifier(self, *, value: str, field_name: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError(f"{field_name} must be a non-empty string")
+        return normalized
+
+    def _assert_unique_identifier(self, *, value: str, existing_ids: set[str], kind: str) -> None:
+        if value in existing_ids:
+            raise ValueError(f"duplicate {kind} id '{value}' is not allowed")
+
+    def _require_finite_scalar(self, *, value: float, field_name: str) -> float:
+        scalar = float(value)
+        if not isfinite(scalar):
+            raise ValueError(f"{field_name} must be finite")
+        return scalar
+
+    def _require_positive_finite_scalar(self, *, value: float, field_name: str) -> float:
+        scalar = self._require_finite_scalar(value=value, field_name=field_name)
+        if scalar <= 0.0:
+            raise ValueError(f"{field_name} must be positive")
+        return scalar
+
+    def _normalize_endpoint(
+        self, *, endpoint: str, role: Literal["source", "target"]
+    ) -> _EndpointReference:
         if not endpoint.strip():
             raise ValueError(f"{role} endpoint must be a non-empty string")
         normalized = endpoint.strip()
 
         if "." in normalized:
             node_id, port_name = self._split_explicit_endpoint(normalized)
-            if node_id in self._feeds:
-                raise ValueError(
-                    f"{role} endpoint '{normalized}' is invalid: feed boundaries do not take explicit ports"
-                )
-            if node_id not in self._units:
-                raise ValueError(f"unknown unit '{node_id}' in endpoint '{normalized}'")
-            self._validate_explicit_unit_port(
-                unit_id=node_id,
+            node_kind = self._node_kind(node_id=node_id)
+            if node_kind is None:
+                raise ValueError(f"unknown node '{node_id}' in endpoint '{normalized}'")
+            compile_port_name = self._validate_explicit_node_port(
+                node_id=node_id,
                 port_name=port_name,
                 role=role,
                 original_endpoint=normalized,
+                node_kind=node_kind,
             )
-            return f"{node_id}.{port_name}"
+            return _EndpointReference(
+                compile_endpoint=f"{node_id}.{compile_port_name}",
+                display_endpoint=f"{node_id}.{port_name}",
+                node_id=node_id,
+                port_name=compile_port_name,
+                node_kind=node_kind,
+            )
 
-        if role == "source" and normalized in self._feeds:
-            return normalized
-        if role == "target" and normalized in self._feeds:
-            raise ValueError(f"feed '{normalized}' cannot be used as a connection target")
-        if normalized not in self._units:
+        node_kind = self._node_kind(node_id=normalized)
+        if node_kind is None:
             raise ValueError(f"unknown {role} endpoint '{normalized}'")
 
-        ports = self._available_unit_ports(unit_id=normalized, role=role)
-        if len(ports) == 1:
-            return f"{normalized}.{ports[0]}"
-
-        available = ", ".join(ports)
-        raise ValueError(
-            f"ambiguous {role} endpoint '{normalized}': available {role} ports are {available}"
+        ports = self._available_node_ports(node_id=normalized, role=role, node_kind=node_kind)
+        if len(ports) != 1:
+            available = ", ".join(ports)
+            raise ValueError(
+                f"ambiguous {role} endpoint '{normalized}': available {role} ports are {available}; use explicit '<node_id>.<port_name>' syntax"
+            )
+        port_name = ports[0]
+        return _EndpointReference(
+            compile_endpoint=f"{normalized}.{port_name}",
+            display_endpoint=normalized,
+            node_id=normalized,
+            port_name=port_name,
+            node_kind=node_kind,
         )
 
-    def _validate_explicit_unit_port(
+    def _validate_explicit_node_port(
         self,
         *,
-        unit_id: str,
+        node_id: str,
         port_name: str,
         role: Literal["source", "target"],
         original_endpoint: str,
-    ) -> None:
-        ports = self._available_unit_ports(unit_id=unit_id, role=role)
+        node_kind: Literal["unit", "feed", "junction", "sink"],
+    ) -> str:
+        if node_kind == "feed":
+            if port_name != "outlet":
+                raise ValueError(
+                    f"invalid {role} endpoint '{original_endpoint}': available {role} ports are outlet"
+                )
+            if role != "source":
+                raise ValueError(f"feed '{node_id}' cannot be used as a connection target")
+            return "outlet"
+        if node_kind == "sink":
+            sink_port_name = self._sinks[node_id].port_name
+            if port_name != sink_port_name:
+                raise ValueError(
+                    f"invalid {role} endpoint '{original_endpoint}': available {role} ports are {sink_port_name}"
+                )
+            if role != "target":
+                raise ValueError(f"sink '{node_id}' cannot be used as a connection source")
+            return sink_port_name
+
+        ports = self._available_node_ports(node_id=node_id, role=role, node_kind=node_kind)
         if port_name in ports:
-            return
+            return port_name
         available = ", ".join(ports)
         raise ValueError(
             f"invalid {role} endpoint '{original_endpoint}': available {role} ports are {available}"
         )
+
+    def _available_node_ports(
+        self,
+        *,
+        node_id: str,
+        role: Literal["source", "target"],
+        node_kind: Literal["unit", "feed", "junction", "sink"],
+    ) -> tuple[str, ...]:
+        if node_kind == "unit":
+            return self._available_unit_ports(unit_id=node_id, role=role)
+        if node_kind == "feed":
+            if role == "target":
+                raise ValueError(f"feed '{node_id}' cannot be used as a connection target")
+            return ("outlet",)
+        if node_kind == "sink":
+            if role == "source":
+                raise ValueError(f"sink '{node_id}' cannot be used as a connection source")
+            return (self._sinks[node_id].port_name,)
+        return self._available_junction_ports(junction_id=node_id, role=role)
+
+    def _available_junction_ports(
+        self, *, junction_id: str, role: Literal["source", "target"]
+    ) -> tuple[str, ...]:
+        junction = self._junctions[junction_id]
+        return junction.outlet_ports if role == "source" else junction.inlet_ports
+
+    def _normalize_port_name(self, *, port_name: str, field_name: str) -> str:
+        normalized = port_name.strip()
+        if not normalized:
+            raise ValueError(f"{field_name} must be a non-empty string")
+        return normalized
+
+    def _node_kind(self, *, node_id: str) -> Literal["unit", "feed", "junction", "sink"] | None:
+        if node_id in self._units:
+            return "unit"
+        if node_id in self._feeds:
+            return "feed"
+        if node_id in self._junctions:
+            return "junction"
+        if node_id in self._sinks:
+            return "sink"
+        return None
 
     def _available_unit_ports(
         self, *, unit_id: str, role: Literal["source", "target"]
@@ -1779,7 +2433,7 @@ class Flowsheet:
         normalized_port_name = port_name.strip()
         if not normalized_node_id or not normalized_port_name or "." in normalized_port_name:
             raise ValueError(
-                f"invalid endpoint '{endpoint}': expected '<unit_id>.<port_name>' format"
+                f"invalid endpoint '{endpoint}': expected '<node_id>.<port_name>' format"
             )
         return normalized_node_id, normalized_port_name
 
@@ -1789,7 +2443,7 @@ class Flowsheet:
         return unit_id.strip()
 
     def _assert_available_node_id(self, *, node_id: str) -> None:
-        if node_id in self._units or node_id in self._feeds:
+        if self._node_kind(node_id=node_id) is not None:
             raise ValueError(f"node id '{node_id}' is already registered")
 
     def _mark_dirty(self) -> None:
@@ -1797,4 +2451,15 @@ class Flowsheet:
         self._dirty = True
 
 
-__all__ = ["Flowsheet", "FlowsheetResults", "UnitResult", "StreamHistory"]
+__all__ = [
+    "Flowsheet",
+    "FlowsheetResults",
+    "HeatInstall",
+    "JunctionDefinition",
+    "LineReference",
+    "PumpInstall",
+    "SinkDefinition",
+    "StreamHistory",
+    "UnitResult",
+    "ValveInstall",
+]

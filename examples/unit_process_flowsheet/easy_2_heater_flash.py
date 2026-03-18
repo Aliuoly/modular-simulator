@@ -23,8 +23,12 @@ def run_example(*, steps: int = 36, dt: float = 0.2, make_plot: bool = True) -> 
         "heater", HeaterCooler(mode="temperature", external_outlet_temperature=355.0)
     )
     flowsheet.add_unit("flash", FlashDrum(imposed_temperature=333.0))
+    flowsheet.add_sink("vapor_product")
+    flowsheet.add_sink("liquid_product")
     flowsheet.add_feed_from_values("feed", T=332.0, P=1.7e5, z=(0.58, 0.42), flow=4.0)
     flowsheet.chain("feed", "heater", "flash")
+    flowsheet.connect("flash.vapor_outlet", "vapor_product")
+    flowsheet.connect("flash.liquid_outlet", "liquid_product")
 
     results = flowsheet.run(steps=steps, dt=dt)
     flash = results.get_unit("flash")

@@ -73,6 +73,17 @@ class _ConnectionLineApi(Protocol):
         metadata: Mapping[str, object] | None = None,
     ) -> str: ...
 
+    def attach_line_heat_actuator(
+        self,
+        *,
+        line_id: str,
+        heat_actuator_id: str,
+        initial_heat_rate: float = 0.0,
+        idempotency_key: str | None = None,
+        expected_revision: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> str: ...
+
 
 class _ConnectionLineApiFactory(Protocol):
     def __call__(self, *, network: ConnectionNetwork) -> _ConnectionLineApi: ...
@@ -220,3 +231,53 @@ def test_invalid_endpoint_direction_is_rejected_without_side_effects() -> None:
     assert compiled.graph_revision == "graph_rev_0001"
     assert tuple(edge.edge_id for edge in compiled.topology.edges) == ()
     assert tuple(item.request_id for item in network.queued_reconfigurations) == ("rq_0001",)
+
+
+def test_line_api_supports_heat_attachment_alongside_hydraulic_overlay() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network(runtime)
+    api = _api(network)
+
+    connect_request = api.connect_line(
+        source="producer.product",
+        target="consumer.feed",
+        line_id="heated_line",
+    )
+    geometry_request = api.configure_line_geometry(
+        line_id="heated_line",
+        radius_m=0.05,
+        length_m=2.0,
+        equation_name="eq_line_feed",
+        resistance_parameter_name="valve_resistance",
+    )
+    valve_request = api.attach_line_valve(
+        line_id="heated_line",
+        valve=ValveConfig(
+            valve_id="heated_valve",
+            minimum_open_fraction=0.2,
+            maximum_open_fraction=1.0,
+            initial_open_fraction=0.7,
+        ),
+    )
+    heat_request = api.attach_line_heat_actuator(
+        line_id="heated_line",
+        heat_actuator_id="heated_line_heat",
+        initial_heat_rate=15.0,
+    )
+
+    assert (connect_request, geometry_request, valve_request, heat_request) == (
+        "rq_0001",
+        "rq_0002",
+        "rq_0003",
+        "rq_0004",
+    )
+
+    result = cast(ConnectionRuntimeStepResult, network.step(macro_step_time_s=0.25))
+    assert result.barrier_reconfiguration.applied_request_ids == (
+        "rq_0001",
+        "rq_0002",
+        "rq_0003",
+        "rq_0004",
+    )
+    assert network.list_line_heat_actuator_ids() == (("heated_line", "heated_line_heat"),)
+    assert network.list_heat_actuator_rates() == (("heated_line", 15.0),)

@@ -26,7 +26,9 @@ from modular_simulation.connection.hydraulics.hydraulic_solver import (
 )
 from modular_simulation.connection.topology.network import ConnectionNetwork
 from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
-from modular_simulation.unit_processes import HeaterCooler, Mixer, Splitter
+from modular_simulation.unit_processes import HeaterCooler
+from modular_simulation.unit_processes.mixing.mixer import Mixer
+from modular_simulation.unit_processes.separation.splitter import Splitter
 
 
 def _linear_equation(

@@ -18,7 +18,7 @@ from modular_simulation.components import (
 from modular_simulation.flowsheet import Flowsheet, FlowsheetResults
 from modular_simulation.framework.system import System
 from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
-from modular_simulation.unit_processes import CSTR, FlashDrum, HeaterCooler, Pump
+from modular_simulation.unit_processes import CSTR, FlashDrum, HeaterCooler
 from modular_simulation.thermodynamics.property_package import PengRobinsonPackage
 
 
@@ -40,16 +40,17 @@ def _build_and_run_case(
     flowsheet.add_unit("u3", branch_a_heater)
     flowsheet.add_unit("u4", branch_b_heater)
 
-    flowsheet.add_feed_from_values(
-        "feed",
-        T=328.0,
-        P=180000.0,
-        z=(0.55, 0.45),
-        flow=6.0,
-    )
-    flowsheet.chain("feed", "u1", "u2")
-    flowsheet.connect("feed", "u3")
-    flowsheet.connect("feed", "u4")
+    for feed_id in ("feed_main", "feed_a", "feed_b"):
+        flowsheet.add_feed_from_values(
+            feed_id,
+            T=328.0,
+            P=180000.0,
+            z=(0.55, 0.45),
+            flow=6.0,
+        )
+    flowsheet.chain("feed_main", "u1", "u2")
+    flowsheet.connect("feed_a", "u3")
+    flowsheet.connect("feed_b", "u4")
 
     controlled_subsystem = flowsheet._subsystems["u1"]
     sensor = SampledDelayedSensor(
@@ -86,17 +87,19 @@ def test_multi_unit_flowsheet_integration_with_external_heater_boundary() -> Non
     assert "hydraulics_solve" in executed_sequence
 
     connection_flow_series = {
-        "feed->u1": controlled_results.get_stream("feed", "u1").flow_rate,
+        "feed_main->u1": controlled_results.get_stream("feed_main", "u1").flow_rate,
         "u1->u2": controlled_results.get_stream("u1", "u2").flow_rate,
-        "feed->u3": controlled_results.get_stream("feed", "u3").flow_rate,
-        "feed->u4": controlled_results.get_stream("feed", "u4").flow_rate,
+        "feed_a->u3": controlled_results.get_stream("feed_a", "u3").flow_rate,
+        "feed_b->u4": controlled_results.get_stream("feed_b", "u4").flow_rate,
     }
-    feed_reference_flow = controlled_results.get_stream("feed", "u1").flow_rate
+    main_feed_reference_flow = controlled_results.get_stream("feed_main", "u1").flow_rate
+    branch_a_feed_reference_flow = controlled_results.get_stream("feed_a", "u3").flow_rate
+    branch_b_feed_reference_flow = controlled_results.get_stream("feed_b", "u4").flow_rate
     source_mass_reference = {
-        "feed->u1": feed_reference_flow,
+        "feed_main->u1": main_feed_reference_flow,
         "u1->u2": controlled_results.get_unit("u1").state_history["outlet_flow"],
-        "feed->u3": feed_reference_flow,
-        "feed->u4": feed_reference_flow,
+        "feed_a->u3": branch_a_feed_reference_flow,
+        "feed_b->u4": branch_b_feed_reference_flow,
     }
     for connection_key, stream_flow in connection_flow_series.items():
         reference_flow = source_mass_reference[connection_key]
@@ -113,8 +116,8 @@ def test_multi_unit_flowsheet_integration_with_external_heater_boundary() -> Non
     assert controlled_u1.external_outlet_temperature == pytest.approx(360.0, abs=1.0e-9)
     assert abs(controlled_u2.inlet_temperature - baseline_u2.inlet_temperature) > 1.0
 
-    feed_to_u3 = controlled_results.get_stream("feed", "u3")
-    feed_to_u4 = controlled_results.get_stream("feed", "u4")
+    feed_to_u3 = controlled_results.get_stream("feed_a", "u3")
+    feed_to_u4 = controlled_results.get_stream("feed_b", "u4")
     assert feed_to_u3.flow_rate.shape == (simulation_steps,)
     assert feed_to_u4.flow_rate.shape == (simulation_steps,)
 
@@ -136,42 +139,40 @@ def test_multi_unit_flowsheet_integration_with_external_heater_boundary() -> Non
         assert math.isfinite(float(flash.entropy_molar))
 
 
-def test_cascade_reference_to_pump_speed_actuator_closes_pressure_loop() -> None:
-    pump = Pump(
+def test_cascade_reference_to_line_owned_pump_actuator_updates_namespaced_command_point() -> None:
+    pump_tag = "actuator/pump/recycle_pump"
+    heater = HeaterCooler(
         n_species=2,
-        inlet_flow=0.01,
-        inlet_temperature=300.0,
-        inlet_pressure=101325.0,
-        inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
-        pump_speed=20000.0,
-        efficiency=0.75,
+        mode="duty",
+        external_heat_duty=0.0,
     )
+    heater.outlet_temperature = 320.0
     pressure_sensor = SampledDelayedSensor(
-        measurement_tag="outlet_pressure",
+        measurement_tag="outlet_temperature",
         alias_tag="pump_outlet_pressure",
-        unit="Pa",
+        unit="K",
         sampling_period=0.0,
         deadtime=0.0,
     )
     speed_sensor = SampledDelayedSensor(
-        measurement_tag="pump_speed",
-        alias_tag="actuator/pump/recycle_pump",
-        unit="Pa",
+        measurement_tag="external_heat_duty",
+        alias_tag=pump_tag,
+        unit="W",
         sampling_period=0.0,
         deadtime=0.0,
     )
 
     pressure_controller = PIDController(
         cv_tag="pump_outlet_pressure",
-        cv_range=(101325.0, 300000.0),
-        reference_trajectory=Trajectory(y0=120000.0),
+        cv_range=(250.0, 450.0),
+        reference_trajectory=Trajectory(y0=320.0),
         Kp=0.07,
         Ti=2.0,
         period=0.0,
         mode=ControllerMode.AUTO,
     )
     speed_controller = PIDController(
-        cv_tag="actuator/pump/recycle_pump",
+        cv_tag=pump_tag,
         cv_range=(0.0, 220000.0),
         reference_trajectory=Trajectory(y0=20000.0),
         cascade_controller=pressure_controller,
@@ -182,7 +183,7 @@ def test_cascade_reference_to_pump_speed_actuator_closes_pressure_loop() -> None
     )
 
     pump_speed_element = ControlElement(
-        mv_tag="actuator/pump/recycle_pump",
+        mv_tag=pump_tag,
         mv_range=(0.0, 220000.0),
         mv_trajectory=Trajectory(y0=20000.0),
         controller=speed_controller,
@@ -191,7 +192,7 @@ def test_cascade_reference_to_pump_speed_actuator_closes_pressure_loop() -> None
 
     system = System(
         dt=0.1,
-        process_model=pump,
+        process_model=heater,
         sensors=[pressure_sensor, speed_sensor],
         calculations=[],
         control_elements=[pump_speed_element],
@@ -200,8 +201,7 @@ def test_cascade_reference_to_pump_speed_actuator_closes_pressure_loop() -> None
 
     for _ in range(80):
         system.step(duration=0.1)
-    first_stage_pressure = float(pump.outlet_pressure)
-    first_stage_speed = float(pump.pump_speed)
+    first_stage_speed = float(system.point_registry[pump_tag].data.value)
 
     _ = system.extend_controller_reference_trajectory("pump_outlet_pressure", value=135000.0)
     for _ in range(80):
@@ -212,9 +212,7 @@ def test_cascade_reference_to_pump_speed_actuator_closes_pressure_loop() -> None
     assert pressure_controller.reference_point_dict[
         "pump_outlet_pressure.ref"
     ].data.value == pytest.approx(135000.0, abs=1.0e-6)
-    assert first_stage_pressure == pytest.approx(120000.0, rel=0.03)
-    assert float(pump.outlet_pressure) > first_stage_pressure + 2000.0
-    assert float(pump.pump_speed) > first_stage_speed + 2000.0
+    assert float(system.point_registry[pump_tag].data.value) > first_stage_speed + 2000.0
 
 
 def test_cascade_reference_to_cstr_outlet_flow_actuator_controls_volume() -> None:

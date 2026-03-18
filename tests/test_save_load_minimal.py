@@ -26,7 +26,7 @@ from modular_simulation.measurables.process_model import (
 )
 from modular_simulation.components.sensors import AbstractSensor
 from modular_simulation.components.abstract_component import ComponentUpdateResult
-from modular_simulation.unit_processes import Pump
+from modular_simulation.unit_processes import HeaterCooler
 
 
 class MinimalProcessModel(ProcessModel):
@@ -83,7 +83,7 @@ def minimal_system() -> System:
 
 
 def _controller_system() -> System:
-    from tests.conftest import ThermalProcessModel
+    from conftest import ThermalProcessModel
 
     model = ThermalProcessModel()
     sensor = SampledDelayedSensor(
@@ -308,21 +308,14 @@ def test_system_load_legacy_payload_rejected_for_controller_runtime_sp() -> None
         System.load(payload_with_legacy_state)
 
 
-def test_process_model_load_rejects_legacy_pump_pressure_rise_alias() -> None:
-    pump = Pump(n_species=2, pump_speed=120000.0)
-    payload = pump.save()
+@pytest.mark.parametrize("legacy_type", ("Pump", "Valve", "Mixer", "Splitter"))
+def test_process_model_load_rejects_removed_wrapper_unit_payloads(legacy_type: str) -> None:
+    payload = HeaterCooler(n_species=2).save()
+    payload["type"] = legacy_type
+    payload["module"] = "modular_simulation.unit_processes"
 
-    pump_states = cast(dict[str, object], payload["states"])
-    assert "pump_speed" in pump_states
-    assert "pressure_rise" not in pump_states
-    pump_states["pressure_rise"] = pump_states.pop("pump_speed")
-    pump_states["inlet_composition"] = np.asarray(
-        pump_states["inlet_composition"], dtype=np.float64
-    )
-    pump_states["outlet_composition"] = np.asarray(
-        pump_states["outlet_composition"],
-        dtype=np.float64,
-    )
-
-    with pytest.raises(ValidationError, match="pressure_rise"):
+    with pytest.raises(
+        ValueError,
+        match=rf"saved wrapper-unit payload '{legacy_type}' is no longer supported",
+    ):
         ProcessModel.load(payload)

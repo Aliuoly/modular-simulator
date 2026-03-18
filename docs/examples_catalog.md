@@ -1,6 +1,6 @@
 # Examples Catalog
 
-This catalog intentionally keeps the canonical user-facing path small. The retained set favors recognized process patterns, explicit boundary feeds, documented terminal unit outlets, and explicit connection edges over one-off API or actuator demonstrations.
+This catalog intentionally keeps the canonical user-facing path small. The retained set favors recognized process patterns, explicit boundary feeds, boundary sinks, named junction topology, and explicit connection edges over one-off API or actuator demonstrations.
 
 ## Canonical examples
 
@@ -8,13 +8,13 @@ This catalog intentionally keeps the canonical user-facing path small. The retai
 | --- | --- | --- |
 | `examples/unit_process_flowsheet/easy_2_heater_flash.py` | Single-feed heater plus flash separation | Smallest grounded flowsheet with one feed, two unit operations, and explicit product split |
 | `examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py` | Dual-feed heat exchange | Shows multi-branch flowsheet wiring with two boundary feeds and explicit exchanger ports |
-| `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` | Explicit recycle-topology composability with separation and purge handling | Demonstrates a larger but still readable flowsheet with an explicit recycle return edge, separation, and terminal product recovery |
+| `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` | Explicit recycle-topology composability with separation, purge handling, and line-installed recycle boost | Demonstrates a larger but still readable flowsheet with an explicit recycle return edge, junction-owned branching, a line-installed recycle pump, and boundary sinks |
 | `examples/connection_layer/two_tank_reaction_comparison.py --no-show` | Connected-plant subsystem parity check | Keeps one explicit edge-based connection example with measurable fidelity metrics |
 
 ## Selection rules
 
 - Keep the canonical set to a handful of examples with distinct teaching value.
-- Prefer examples with explicit boundary feeds, clearly documented terminal unit outlets, and explicit unit-to-unit connections.
+- Prefer examples with explicit boundary feeds, boundary sinks, named junction topology, and explicit unit-to-unit connections.
 - Remove overlapping variants from the primary path even when they remain useful as deep references.
 - Keep control- and API-heavy examples as secondary references until they match the same flowsheet conventions.
 
@@ -24,7 +24,7 @@ This catalog intentionally keeps the canonical user-facing path small. The retai
 | --- | --- | --- |
 | `examples/unit_process_flowsheet/easy_2_heater_flash.py` | keep | Canonical smallest flowsheet |
 | `examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py` | keep | Canonical multi-feed flowsheet |
-| `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` | keep | Canonical advanced flowsheet with an explicit recycle return edge and separation |
+| `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` | keep | Canonical advanced flowsheet with an explicit recycle return edge, line-installed recycle pump, junction-owned branching, and boundary sinks |
 | `examples/connection_layer/two_tank_reaction_comparison.py` | keep | Canonical connected-plant parity benchmark |
 | `examples/unit_process_flowsheet/flowsheet_demo.py` | remove | Overlaps with the retained flowsheet set and uses unit-local control wiring |
 | `examples/unit_process_flowsheet/complex_5_dual_feed_blend_reaction.py` | reference-only | Useful as a non-canonical reference, but the reactor path still diverges from the current flowsheet runtime contract |

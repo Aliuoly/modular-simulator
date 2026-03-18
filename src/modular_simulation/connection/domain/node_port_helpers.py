@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 
-from ..topology.topology import JunctionNode, ProcessNode
+from ..topology.topology import JunctionNode
 
 
 def normalize_non_empty_token(value: str, *, field_name: str) -> str:
@@ -83,7 +83,8 @@ class DirectionalNodePorts:
     def as_junction_node(self) -> JunctionNode:
         return JunctionNode(
             junction_id=self.node_id,
-            port_names=self.all_port_ids(),
+            inlet_ports=self.inlet_port_ids,
+            outlet_ports=self.outlet_port_ids,
         )
 
 

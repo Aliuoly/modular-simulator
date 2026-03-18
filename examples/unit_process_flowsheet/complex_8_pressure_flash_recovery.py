@@ -1,10 +1,10 @@
-"""Reference flowsheet example: pressure-driven flash with vapor/liquid separation and remixing."""
+"""Reference flowsheet example: pressure-driven flash with vapor/liquid separation, junction remixing, and sink handoff."""
 
 from __future__ import annotations
 
 from modular_simulation.flowsheet import Flowsheet
 from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
-from modular_simulation.unit_processes import FlashDrum, HeaterCooler, Mixer
+from modular_simulation.unit_processes import FlashDrum, HeaterCooler
 
 
 def _print_report(title: str, report: dict[str, float]) -> None:
@@ -35,23 +35,29 @@ def run_example(*, steps: int = 55, dt: float = 0.15, make_plot: bool = True) ->
     flowsheet.add_unit(
         "liquid_trim", HeaterCooler(mode="temperature", external_outlet_temperature=318.0)
     )
-    flowsheet.add_unit("product_mixer", Mixer(n_inlets=2, n_species=2))
+    flowsheet.add_junction(
+        "product_mix",
+        inlet_ports=("vapor", "liquid"),
+        outlet_ports=("to_polish",),
+    )
     flowsheet.add_unit(
         "final_polish", HeaterCooler(mode="temperature", external_outlet_temperature=320.0)
     )
+    flowsheet.add_sink("product")
 
     flowsheet.add_feed_from_values("feed", T=343.0, P=2.1e5, z=(0.62, 0.38), flow=4.3)
 
     flowsheet.chain("feed", "preheat", "reactor", "interstage_cool", "flash")
     flowsheet.connect("flash.vapor_outlet", "vapor_trim")
     flowsheet.connect("flash.liquid_outlet", "liquid_trim")
-    flowsheet.connect("vapor_trim", "product_mixer.inlet_1")
-    flowsheet.connect("liquid_trim", "product_mixer.inlet_2")
-    flowsheet.connect("product_mixer", "final_polish")
+    flowsheet.connect("vapor_trim", "product_mix.vapor")
+    flowsheet.connect("liquid_trim", "product_mix.liquid")
+    flowsheet.connect("product_mix.to_polish", "final_polish")
+    flowsheet.connect("final_polish", "product")
 
     results = flowsheet.run(steps=steps, dt=dt)
     flash = results.get_unit("flash")
-    product = results.get_stream("product_mixer", "final_polish")
+    product = results.get_stream("product_mix.to_polish", "final_polish")
     feed_to_preheat = results.get_stream("feed", "preheat")
     vapor_fraction_history = flash.state_history.get("vapor_fraction")
     vapor_fraction = (

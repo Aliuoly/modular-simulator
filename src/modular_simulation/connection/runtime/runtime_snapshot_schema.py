@@ -35,6 +35,7 @@ class LiveRuntimeSnapshotPayload(BaseModel):
     queued_request_ids: tuple[str, ...] = Field(default_factory=tuple)
     queued_request_count: int
     committed_idempotency_keys: tuple[str, ...] = Field(default_factory=tuple)
+    transport_runtime_state: dict[str, object] = Field(default_factory=dict)
 
     model_config: ClassVar[ConfigDict] = ConfigDict(
         extra="forbid",
@@ -222,6 +223,7 @@ class _RuntimeCheckpointSnapshot(BaseModel):
     process_runtime_state: dict[str, object]
     port_condition_store: dict[str, object]
     connection_runtime_state: _ConnectionRuntimeStatePayload
+    transport_runtime_state: dict[str, object] = Field(default_factory=dict)
 
     model_config: ClassVar[ConfigDict] = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 

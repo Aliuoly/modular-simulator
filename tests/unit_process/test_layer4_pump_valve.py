@@ -18,7 +18,8 @@ from modular_simulation.connection.hydraulics.hydraulic_element import (
     smooth_signed_quadratic_flow_term,
 )
 from modular_simulation.thermodynamics.property_package import FlashResult
-from modular_simulation.unit_processes import Pump, Valve
+from modular_simulation.unit_processes.flow.pump import Pump
+from modular_simulation.unit_processes.flow.valve import Valve
 
 
 def _attach(model: Pump | Valve) -> None:

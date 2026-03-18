@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from modular_simulation.flowsheet import Flowsheet, HeatInstall, PumpInstall, ValveInstall
 from modular_simulation.measurables.control_surface_contract import (
     ControlSurfaceContractError,
     ControlSurfaceCategory,
@@ -11,15 +12,13 @@ from modular_simulation.measurables.control_surface_contract import (
     validate_runtime_actuator_binding,
 )
 from modular_simulation.measurables.process_model import ProcessModel
+from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 from modular_simulation.unit_processes import (
     ComponentSeparator,
     ConversionReactor,
     FlashDrum,
     HeaterCooler,
-    Mixer,
     ShortcutDistillation,
-    Splitter,
-    Valve,
 )
 
 
@@ -49,11 +48,6 @@ from modular_simulation.unit_processes import (
         (
             ConversionReactor(n_species=2),
             "pressure_drop",
-            ControlSurfaceCategory.CONFIGURED_ABSTRACT_SPECIFICATION,
-        ),
-        (
-            Splitter(n_outlets=3, n_species=2),
-            "split_ratios",
             ControlSurfaceCategory.CONFIGURED_ABSTRACT_SPECIFICATION,
         ),
         (
@@ -118,14 +112,6 @@ def test_component_separator_no_longer_exposes_configured_split_fraction_targets
 @pytest.mark.parametrize(
     ("process_model", "state_name"),
     (
-        (Mixer(n_inlets=2, n_species=2), "inlet_flows"),
-        (Mixer(n_inlets=2, n_species=2), "inlet_temperatures"),
-        (Mixer(n_inlets=2, n_species=2), "inlet_pressures"),
-        (Mixer(n_inlets=2, n_species=2), "inlet_compositions"),
-        (Splitter(n_outlets=2, n_species=2), "inlet_flow"),
-        (Splitter(n_outlets=2, n_species=2), "inlet_temperature"),
-        (Splitter(n_outlets=2, n_species=2), "inlet_pressure"),
-        (Splitter(n_outlets=2, n_species=2), "inlet_composition"),
         (FlashDrum(n_species=2), "inlet_flow"),
         (FlashDrum(n_species=2), "inlet_temperature"),
         (FlashDrum(n_species=2), "inlet_pressure"),
@@ -163,10 +149,44 @@ def test_non_thermal_unit_inlet_like_surfaces_live_in_boundary_view(
     assert state_name not in process_model.constant_view.state_list
 
 
-def test_boundary_contract_excludes_physical_valve_surface() -> None:
-    valve = Valve(n_species=2)
+def test_line_installed_controls_publish_controller_bindable_namespaced_tags() -> None:
+    context = SimulationRuntimeContext.create(species_names=["water", "ethanol"])
+    flowsheet = Flowsheet(context=context)
+    flowsheet.add_unit("heater", HeaterCooler(n_species=2))
+    flowsheet.add_feed_from_values("feed", T=300.0, P=101325.0, z=(0.5, 0.5), flow=1.0)
+    flowsheet.add_sink("product")
 
-    validate_boundary_view_has_no_physical_actuators(valve)
+    line_reference = flowsheet.connect(
+        "feed",
+        "heater",
+        pump=PumpInstall(id="recycle_pump", initial_pump_speed=120000.0),
+        heat=HeatInstall(id="feed_trim", initial_heat_rate=500.0),
+    )
+    _ = flowsheet.connect(
+        "heater",
+        "product",
+        valve=ValveInstall(id="product_valve", initial_open_fraction=0.8),
+    )
+
+    plant = flowsheet.compile()
+    compiled = plant._network.compiled
+    assert compiled is not None
+    network = plant._network
+
+    assert line_reference.line_id == "line_0001"
+    assert line_reference.pump_id == "recycle_pump"
+    assert line_reference.heat_actuator_id == "feed_trim"
+    assert network.list_line_hydraulic_configs()[0].pump_id == "recycle_pump"
+    assert network.list_line_hydraulic_configs()[1].valve_id == "product_valve"
+    assert network.list_line_heat_actuator_ids() == (("line_0001", "feed_trim"),)
+
+    process_model = flowsheet.get_unit("heater")
+    for actuator_tag in (
+        "actuator/pump/recycle_pump",
+        "actuator/valve/product_valve",
+        "actuator/heat/feed_trim",
+    ):
+        validate_runtime_actuator_binding(process_model, actuator_tag)
 
 
 def test_heater_cooler_no_longer_exposes_legacy_setpoint_names() -> None:
@@ -186,6 +206,6 @@ def test_runtime_contract_rejects_non_namespaced_actuator_tags(actuator_tag: str
 
     with pytest.raises(
         ControlSurfaceContractError,
-        match="is not controller-bindable; expected actuator namespace tag 'actuator/<family>/<id>'",
+        match="expected actuator namespace tag 'actuator/<family>/<id>' for a line-installed control",
     ):
         validate_runtime_actuator_binding(process_model, actuator_tag)

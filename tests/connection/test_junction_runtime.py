@@ -31,7 +31,11 @@ def _single_junction_graph() -> TopologyGraph:
             BoundaryNode(boundary_id="product", port_name="inlet", direction="sink"),
         ),
         junction_nodes=(
-            JunctionNode(junction_id="mix", port_names=("inlet_a", "inlet_b", "outlet")),
+            JunctionNode(
+                junction_id="mix",
+                inlet_ports=("inlet_a", "inlet_b"),
+                outlet_ports=("outlet",),
+            ),
         ),
         edges=(
             ConnectionEdge(
@@ -63,8 +67,12 @@ def _two_junction_graph_unsorted() -> TopologyGraph:
             BoundaryNode(boundary_id="sink_b", port_name="inlet", direction="sink"),
         ),
         junction_nodes=(
-            JunctionNode(junction_id="junction_b", port_names=("inlet", "outlet")),
-            JunctionNode(junction_id="junction_a", port_names=("inlet", "outlet")),
+            JunctionNode(
+                junction_id="junction_b", inlet_ports=("inlet",), outlet_ports=("outlet",)
+            ),
+            JunctionNode(
+                junction_id="junction_a", inlet_ports=("inlet",), outlet_ports=("outlet",)
+            ),
         ),
         edges=(
             ConnectionEdge(
@@ -314,3 +322,62 @@ def test_runtime_classifies_reverse_flow_from_solved_sign_relative_to_junction()
     assert mixed.state.pressure == pytest.approx(130000.0)
     assert mixed.state.temperature == pytest.approx(330.0)
     assert mixed.state.mole_fractions == pytest.approx((0.4, 0.6))
+
+
+def test_runtime_requires_previous_junction_state() -> None:
+    graph = _single_junction_graph()
+
+    with pytest.raises(ValueError, match="missing previous junction state for 'mix'"):
+        mix_junction_runtime_states(
+            topology=graph,
+            edge_states={
+                "edge_feed_a": MaterialState(
+                    pressure=100000.0,
+                    temperature=300.0,
+                    mole_fractions=(0.5, 0.5),
+                ),
+                "edge_feed_b": MaterialState(
+                    pressure=120000.0,
+                    temperature=320.0,
+                    mole_fractions=(0.5, 0.5),
+                ),
+                "edge_product": MaterialState(
+                    pressure=110000.0,
+                    temperature=310.0,
+                    mole_fractions=(0.5, 0.5),
+                ),
+            },
+            edge_flow_rates={"edge_feed_a": 1.0, "edge_feed_b": 1.0, "edge_product": 2.0},
+            previous_junction_states={},
+        )
+
+
+def test_runtime_requires_complete_edge_state_and_flow_data() -> None:
+    graph = _single_junction_graph()
+    previous = MaterialState(
+        pressure=111000.0,
+        temperature=311.0,
+        mole_fractions=(0.5, 0.5),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="missing runtime edge data for junction 'mix': edge_feed_b:state",
+    ):
+        mix_junction_runtime_states(
+            topology=graph,
+            edge_states={
+                "edge_feed_a": MaterialState(
+                    pressure=100000.0,
+                    temperature=300.0,
+                    mole_fractions=(0.5, 0.5),
+                ),
+                "edge_product": MaterialState(
+                    pressure=110000.0,
+                    temperature=310.0,
+                    mole_fractions=(0.5, 0.5),
+                ),
+            },
+            edge_flow_rates={"edge_feed_a": 1.0, "edge_feed_b": 1.0, "edge_product": 2.0},
+            previous_junction_states={"mix": previous},
+        )

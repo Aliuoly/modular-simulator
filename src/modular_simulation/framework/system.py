@@ -54,11 +54,6 @@ _CANONICAL_RUNTIME_ACTUATOR_TAG_PATTERN = re.compile(
     r"^actuator/(valve|pump|heat)/[A-Za-z0-9][A-Za-z0-9._-]*$"
 )
 
-_PLAIN_VALVE_PUMP_CONTROL_TAG_RULES: dict[tuple[str, str], str] = {
-    ("Pump", "pump_speed"): "actuator/pump/<id>",
-    ("Valve", "open_fraction"): "actuator/valve/<id>",
-}
-
 
 @dataclass(frozen=True)
 class RuntimeSensorBinding:
@@ -289,44 +284,15 @@ class System(BaseModel):
 
             return set_external_heat_actuator_data
 
-        # If actuator_tag is not a direct process-model state name, attempt to
-        # map canonical actuator tags for plain pump/valve actuators to their
-        # underlying boundary state names (e.g. 'actuator/pump/<id>' -> 'pump_speed')
         state_setter: Callable[[StateValue], None] | None = None
 
         if actuator_tag in self.process_model.state_metadata_dict:
-            # Direct mapping: actuator_tag names a process-model state
             state_setter = self.process_model.make_converted_setter(actuator_tag, source_unit)
-        else:
-            # Try to resolve canonical plain actuator tags to known process-model states
-            # using the conservative rules in _PLAIN_VALVE_PUMP_CONTROL_TAG_RULES.
-            for (pm_name, state_name), tag_rule in _PLAIN_VALVE_PUMP_CONTROL_TAG_RULES.items():
-                # only handle rules that use the '<id>' wildcard
-                if "<id>" not in tag_rule:
-                    continue
-                prefix = tag_rule.replace("<id>", "")
-                if not actuator_tag.startswith(prefix):
-                    continue
-                # ensure the remainder is a single identifier (no extra '/').
-                remainder = actuator_tag[len(prefix) :]
-                if not remainder or "/" in remainder:
-                    continue
-                # ensure this rule applies to the current process model type
-                if type(self.process_model).__name__ != pm_name:
-                    continue
-                # ensure the target state actually exists on the process model
-                if state_name not in self.process_model.state_metadata_dict:
-                    continue
-                state_setter = self.process_model.make_converted_setter(state_name, source_unit)
-                break
 
-        # If we couldn't resolve to a process-model state, fall back to point-only setter
         if state_setter is None:
             return point_setter
 
         def set_actuator_data(data_value: DataValue) -> None:
-            # Update the underlying process-model boundary state first, then the
-            # point registry so both remain synchronized.
             state_setter(data_value.value)
             point_setter(data_value)
 
@@ -372,22 +338,6 @@ class System(BaseModel):
     def _validate_controllers_resolvable(self) -> list[ControllerConfigurationError]:
         exception_group: list[ControllerConfigurationError] = []
         available_ce_tags = self.process_model.boundary_view.state_list
-        forbidden_plain_ce_tags: list[str] = []
-
-        for control_element in self.control_elements:
-            try:
-                self.validate_static_control_element_mv_tag(control_element.mv_tag)
-            except ControllerConfigurationError:
-                forbidden_plain_ce_tags.append(control_element.mv_tag)
-
-        if len(forbidden_plain_ce_tags) > 0:
-            exception_group.append(
-                ControllerConfigurationError(
-                    "The following controlled variables are not controller-bindable plain valve/pump process tags; "
-                    + "use canonical actuator tags instead: "
-                    + ", ".join(forbidden_plain_ce_tags)
-                )
-            )
 
         improper_ce_tags = [
             c.mv_tag
@@ -406,19 +356,7 @@ class System(BaseModel):
         return exception_group
 
     def validate_static_control_element_mv_tag(self, mv_tag: str) -> None:
-        if _CANONICAL_RUNTIME_ACTUATOR_TAG_PATTERN.fullmatch(mv_tag) is not None:
-            return
-
-        expected_canonical_tag = _PLAIN_VALVE_PUMP_CONTROL_TAG_RULES.get(
-            (type(self.process_model).__name__, mv_tag)
-        )
-        if expected_canonical_tag is None:
-            return
-
-        raise ControllerConfigurationError(
-            f"control element mv_tag '{mv_tag}' is not controller-bindable; "
-            + f"use canonical actuator tag '{expected_canonical_tag}'"
-        )
+        del mv_tag
 
     def _update_components(self) -> None:
         """

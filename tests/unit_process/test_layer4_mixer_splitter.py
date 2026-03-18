@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportAny=false, reportExplicitAny=false, reportUnknownMemberType=false
+# pyright: reportMissingTypeStubs=false, reportUnknownMemberType=false
 
 import math
 from types import SimpleNamespace
@@ -11,7 +11,8 @@ import pytest
 from numpy.typing import NDArray
 
 from modular_simulation.thermodynamics.property_package import FlashResult
-from modular_simulation.unit_processes import Mixer, Splitter
+from modular_simulation.unit_processes.mixing.mixer import Mixer
+from modular_simulation.unit_processes.separation.splitter import Splitter
 
 
 def _attach(model: Mixer | Splitter) -> None:

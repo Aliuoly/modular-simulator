@@ -34,7 +34,8 @@ from modular_simulation.connection.domain.transport import (
 from modular_simulation.flowsheet import Flowsheet
 from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 from modular_simulation.thermodynamics.stream import StreamData
-from modular_simulation.unit_processes import HeaterCooler, Splitter
+from modular_simulation.unit_processes import HeaterCooler
+from modular_simulation.unit_processes.separation.splitter import Splitter
 
 
 def _port_condition(*, pressure: float, temperature: float, flow_rate: float) -> PortCondition:
@@ -329,7 +330,6 @@ def test_runtime_snapshot_preferred_flowsheet_uses_runtime_outlet_snapshot() -> 
     preferred_heater = HeaterCooler(n_species=2, mode="duty", external_heat_duty=0.0)
     flowsheet.add_unit("heater", preferred_heater)
     cooler = HeaterCooler(n_species=2, mode="duty", external_heat_duty=0.0)
-    cooler.inlet_pressure = 130000.0
     flowsheet.add_unit("cooler", cooler)
     flowsheet.add_feed_from_values("feed", T=320.0, P=140000.0, z=(0.5, 0.5), flow=2.0)
     flowsheet.chain("feed", "heater", "cooler")
@@ -449,7 +449,6 @@ def test_legacy_fallback_flowsheet_stream_snapshot_without_runtime_snapshot_rais
 
     heater = HeaterCooler(n_species=2, mode="duty", external_heat_duty=0.0)
     cooler = HeaterCooler(n_species=2, mode="duty", external_heat_duty=0.0)
-    cooler.inlet_pressure = 130000.0
     flowsheet.add_unit("heater", heater)
     flowsheet.add_unit("cooler", cooler)
     flowsheet.add_feed_from_values("feed", T=320.0, P=140000.0, z=(0.5, 0.5), flow=2.0)
@@ -470,7 +469,6 @@ def test_legacy_fallback_flowsheet_unit_results_without_runtime_snapshot_raises_
     heater = HeaterCooler(n_species=2, mode="duty", external_heat_duty=0.0)
     flowsheet.add_unit("heater", heater)
     cooler = HeaterCooler(n_species=2, mode="duty", external_heat_duty=0.0)
-    cooler.inlet_pressure = 130000.0
     flowsheet.add_unit("cooler", cooler)
     flowsheet.add_feed_from_values("feed", T=320.0, P=140000.0, z=(0.5, 0.5), flow=2.0)
     flowsheet.chain("feed", "heater", "cooler")

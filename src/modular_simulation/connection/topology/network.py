@@ -489,7 +489,8 @@ class ConnectionNetwork:
             junction_nodes=tuple(
                 JunctionNode(
                     junction_id=spec.junction_id,
-                    port_names=(*spec.inlet_ports, *spec.outlet_ports),
+                    inlet_ports=spec.inlet_ports,
+                    outlet_ports=spec.outlet_ports,
                 )
                 for spec in sorted(self._junction_specs.values(), key=lambda item: item.junction_id)
             ),

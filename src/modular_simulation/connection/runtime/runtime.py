@@ -12,16 +12,20 @@ from ..domain.error_catalog import (
     VALIDATION_FAILURE_CODE,
     diagnostic_value_error,
 )
-from ..domain.state import PortCondition
+from ..domain.state import MaterialState, PortCondition
+from ..domain.transport import LagTransportState
 from ..hydraulics.hydraulic_solver import HydraulicSolveResult
 from ..topology.network import ConnectionNetwork
+from ..topology.junction import JunctionMixingResult
 from .connection_layer import (
     MacroCoupler,
     MacroStepBookkeeping,
     PicardIterationGateConfig,
     TransportAndMixingUpdate,
 )
+from .junction_runtime import mix_junction_runtime_states
 from .process_stream_io import ProcessStreamIO
+from .transport_runtime import TransportRuntime
 from .runtime_snapshot_schema import (
     validate_live_runtime_snapshot_payload,
 )
@@ -347,6 +351,9 @@ class ConnectionRuntimeOrchestrator:
         self._macro_step_active: bool = False
         self._committed_idempotency_keys: set[str] = set()
         self._committed_idempotency_payloads: dict[str, str] = {}
+        self._transport_edge_states: dict[str, LagTransportState] = {}
+        self._transport_previous_edge_flow_rates: dict[str, float] = {}
+        self._junction_material_states: dict[str, MaterialState] = {}
         validator_module = import_module("modular_simulation.connection.domain.invariant_validator")
         validator_factory = cast(
             _InvariantValidatorFactory,
@@ -455,6 +462,106 @@ class ConnectionRuntimeOrchestrator:
 
     def clear_latest_port_conditions(self) -> None:
         self._runtime_port_snapshot_store.clear()
+
+    def export_transport_runtime_state(self) -> Mapping[str, object]:
+        return {
+            "edge_states": [
+                {
+                    "edge_id": edge_id,
+                    "composition": list(state.composition),
+                    "temperature": state.temperature,
+                }
+                for edge_id, state in sorted(self._transport_edge_states.items())
+            ],
+            "previous_edge_flow_rates": [
+                {"edge_id": edge_id, "flow_rate": flow_rate}
+                for edge_id, flow_rate in sorted(self._transport_previous_edge_flow_rates.items())
+            ],
+            "junction_states": [
+                {
+                    "junction_id": junction_id,
+                    "state": state.model_dump(mode="python"),
+                }
+                for junction_id, state in sorted(self._junction_material_states.items())
+            ],
+        }
+
+    def restore_transport_runtime_state(self, payload: Mapping[str, object]) -> None:
+        edge_states: dict[str, LagTransportState] = {}
+        previous_edge_flow_rates: dict[str, float] = {}
+        junction_states: dict[str, MaterialState] = {}
+
+        raw_edge_states = payload.get("edge_states", ())
+        if isinstance(raw_edge_states, Sequence) and not isinstance(raw_edge_states, (str, bytes)):
+            for item in raw_edge_states:
+                if not isinstance(item, Mapping):
+                    raise ValueError(
+                        "invalid runtime snapshot payload: field 'transport_runtime_state.edge_states' must contain mappings"
+                    )
+                edge_id = item.get("edge_id")
+                composition = item.get("composition")
+                temperature = item.get("temperature")
+                if (
+                    not isinstance(edge_id, str)
+                    or not edge_id.strip()
+                    or isinstance(composition, (str, bytes))
+                    or not isinstance(composition, Sequence)
+                    or not isinstance(temperature, (int, float))
+                ):
+                    raise ValueError(
+                        "invalid runtime snapshot payload: field 'transport_runtime_state.edge_states' is invalid"
+                    )
+                edge_states[edge_id.strip()] = LagTransportState(
+                    composition=tuple(float(value) for value in composition),
+                    temperature=float(temperature),
+                )
+
+        raw_previous_edge_flow_rates = payload.get("previous_edge_flow_rates", ())
+        if isinstance(raw_previous_edge_flow_rates, Sequence) and not isinstance(
+            raw_previous_edge_flow_rates, (str, bytes)
+        ):
+            for item in raw_previous_edge_flow_rates:
+                if not isinstance(item, Mapping):
+                    raise ValueError(
+                        "invalid runtime snapshot payload: field 'transport_runtime_state.previous_edge_flow_rates' must contain mappings"
+                    )
+                edge_id = item.get("edge_id")
+                flow_rate = item.get("flow_rate")
+                if (
+                    not isinstance(edge_id, str)
+                    or not edge_id.strip()
+                    or not isinstance(flow_rate, (int, float))
+                    or not isfinite(float(flow_rate))
+                ):
+                    raise ValueError(
+                        "invalid runtime snapshot payload: field 'transport_runtime_state.previous_edge_flow_rates' is invalid"
+                    )
+                previous_edge_flow_rates[edge_id.strip()] = float(flow_rate)
+
+        raw_junction_states = payload.get("junction_states", ())
+        if isinstance(raw_junction_states, Sequence) and not isinstance(
+            raw_junction_states, (str, bytes)
+        ):
+            for item in raw_junction_states:
+                if not isinstance(item, Mapping):
+                    raise ValueError(
+                        "invalid runtime snapshot payload: field 'transport_runtime_state.junction_states' must contain mappings"
+                    )
+                junction_id = item.get("junction_id")
+                state_payload = item.get("state")
+                if (
+                    not isinstance(junction_id, str)
+                    or not junction_id.strip()
+                    or not isinstance(state_payload, Mapping)
+                ):
+                    raise ValueError(
+                        "invalid runtime snapshot payload: field 'transport_runtime_state.junction_states' is invalid"
+                    )
+                junction_states[junction_id.strip()] = MaterialState.model_validate(state_payload)
+
+        self._transport_edge_states = edge_states
+        self._transport_previous_edge_flow_rates = previous_edge_flow_rates
+        self._junction_material_states = junction_states
 
     def get_latest_outlet_stream(self, *, node_id: str, port_name: str) -> StreamData | None:
         from modular_simulation.thermodynamics.stream import StreamData
@@ -667,6 +774,7 @@ class ConnectionRuntimeOrchestrator:
             "queued_request_ids": tuple(item.request_id for item in queue),
             "queued_request_count": len(queue),
             "committed_idempotency_keys": tuple(sorted(self._committed_idempotency_keys)),
+            "transport_runtime_state": self.export_transport_runtime_state(),
         }
 
     def resume_from_snapshot(
@@ -679,6 +787,11 @@ class ConnectionRuntimeOrchestrator:
         self._macro_step_index = validated_snapshot.macro_step_index
         self._macro_step_active = False
         self._committed_idempotency_keys = set(validated_snapshot.committed_idempotency_keys)
+        transport_runtime_state = snapshot.get("transport_runtime_state")
+        if isinstance(transport_runtime_state, Mapping):
+            self.restore_transport_runtime_state(transport_runtime_state)
+        else:
+            self.restore_transport_runtime_state({})
 
     def _capture_barrier_runtime_state(self) -> RuntimeBarrierStateSnapshot:
         return RuntimeBarrierStateSnapshot(
@@ -1304,8 +1417,422 @@ class ConnectionRuntimeOrchestrator:
         hydraulic_result: HydraulicSolveResult,
         macro_step_time_s: float,
     ) -> TransportAndMixingUpdate:
-        del network, hydraulic_result, macro_step_time_s
-        return TransportAndMixingUpdate(transport_results={})
+        compiled = network.compiled
+        if compiled is None:
+            return TransportAndMixingUpdate(transport_results={})
+
+        topology = compiled.topology
+        if not topology.edges:
+            return TransportAndMixingUpdate(transport_results={})
+
+        advected_edge_states = self._resolve_advected_edge_states(
+            network=network,
+            hydraulic_result=hydraulic_result,
+        )
+        if not advected_edge_states:
+            return TransportAndMixingUpdate(transport_results={})
+
+        edge_flow_rates = self._resolve_runtime_edge_flow_rates(
+            network=network,
+            hydraulic_result=hydraulic_result,
+        )
+        if set(edge_flow_rates) != {edge.edge_id for edge in topology.edges}:
+            return TransportAndMixingUpdate(transport_results={})
+
+        current_edge_states = self._resolve_current_edge_transport_states(
+            topology_edge_ids=tuple(edge.edge_id for edge in topology.edges),
+            advected_edge_states=advected_edge_states,
+        )
+        transport_runtime = TransportRuntime(topology=topology, lag_time_constant_s=1.0)
+        transport_step_result = transport_runtime.step(
+            current_edge_states=current_edge_states,
+            advected_edge_states=advected_edge_states,
+            edge_flow_rates=edge_flow_rates,
+            previous_edge_flow_rates=self._transport_previous_edge_flow_rates,
+            dt=max(macro_step_time_s, 1.0e-12),
+        )
+        self._transport_edge_states = dict(transport_step_result.edge_states)
+        self._transport_previous_edge_flow_rates = dict(
+            transport_step_result.previous_edge_flow_rates
+        )
+
+        junction_results: dict[str, JunctionMixingResult] = {}
+        if topology.junction_nodes:
+            previous_junction_states = self._resolve_previous_junction_states(
+                network=network,
+                hydraulic_result=hydraulic_result,
+                advected_edge_states=advected_edge_states,
+            )
+            junction_results = mix_junction_runtime_states(
+                topology=topology,
+                edge_states={
+                    edge_id: self._lag_transport_state_to_material_state(
+                        edge_id=edge_id,
+                        lag_state=lag_state,
+                        network=network,
+                        hydraulic_result=hydraulic_result,
+                    )
+                    for edge_id, lag_state in transport_step_result.edge_states.items()
+                },
+                edge_flow_rates=edge_flow_rates,
+                previous_junction_states=previous_junction_states,
+            )
+            self._junction_material_states = {
+                junction_id: result.state for junction_id, result in junction_results.items()
+            }
+
+        return TransportAndMixingUpdate(
+            transport_results=transport_step_result.edge_updates,
+            junction_results=junction_results,
+        )
+
+    def _resolve_runtime_edge_flow_rates(
+        self,
+        *,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+    ) -> dict[str, float]:
+        compiled = network.compiled
+        if compiled is None or compiled.hydraulic is None:
+            return {}
+        edge_flow_rates: dict[str, float] = {}
+        for edge in compiled.topology.edges:
+            flow_rate = compiled.hydraulic.resolve_line_flow(
+                line_id=edge.edge_id,
+                hydraulic_result=hydraulic_result,
+            )
+            if flow_rate is None:
+                return {}
+            edge_flow_rates[edge.edge_id] = flow_rate
+        return edge_flow_rates
+
+    def _resolve_advected_edge_states(
+        self,
+        *,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+    ) -> dict[str, LagTransportState]:
+        compiled = network.compiled
+        if compiled is None:
+            return {}
+        advected_edge_states: dict[str, LagTransportState] = {}
+        edge_by_id = {edge.edge_id: edge for edge in compiled.topology.edges}
+        seeded_junction_states = self._seed_available_junction_material_states(
+            network=network,
+            hydraulic_result=hydraulic_result,
+            advected_edge_states=advected_edge_states,
+        )
+
+        for edge_id in sorted(edge_by_id):
+            edge = edge_by_id[edge_id]
+            source_condition = self._resolve_edge_source_condition(
+                network=network,
+                hydraulic_result=hydraulic_result,
+                edge=edge,
+                junction_state_overrides=seeded_junction_states,
+            )
+            if source_condition is None:
+                continue
+            advected_edge_states[edge_id] = LagTransportState(
+                composition=tuple(source_condition.state.mole_fractions),
+                temperature=source_condition.state.temperature,
+            )
+
+        if len(advected_edge_states) != len(edge_by_id):
+            seeded_junction_states = self._seed_available_junction_material_states(
+                network=network,
+                hydraulic_result=hydraulic_result,
+                advected_edge_states=advected_edge_states,
+            )
+            for edge_id in sorted(edge_by_id):
+                if edge_id in advected_edge_states:
+                    continue
+                edge = edge_by_id[edge_id]
+                source_condition = self._resolve_edge_source_condition(
+                    network=network,
+                    hydraulic_result=hydraulic_result,
+                    edge=edge,
+                    junction_state_overrides=seeded_junction_states,
+                )
+                if source_condition is None:
+                    continue
+                advected_edge_states[edge_id] = LagTransportState(
+                    composition=tuple(source_condition.state.mole_fractions),
+                    temperature=source_condition.state.temperature,
+                )
+        return advected_edge_states
+
+    def _resolve_edge_source_condition(
+        self,
+        *,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+        edge: object,
+        junction_state_overrides: Mapping[str, MaterialState] | None = None,
+    ) -> PortCondition | None:
+        compiled = network.compiled
+        if compiled is None:
+            return None
+        compiled_hydraulic = compiled.hydraulic
+        flow_rate: float | None = None
+        if compiled_hydraulic is not None:
+            flow_rate = compiled_hydraulic.resolve_line_flow(
+                line_id=getattr(edge, "edge_id"),
+                hydraulic_result=hydraulic_result,
+            )
+
+        provider_node_id = getattr(getattr(edge, "source"), "node_id")
+        provider_port_name = getattr(getattr(edge, "source"), "port_name")
+        if flow_rate is not None and flow_rate < 0.0:
+            provider_node_id = getattr(getattr(edge, "target"), "node_id")
+            provider_port_name = getattr(getattr(edge, "target"), "port_name")
+
+        boundary_stream = self._feed_streams_by_boundary_id.get(provider_node_id)
+        if boundary_stream is not None:
+            return boundary_stream.to_port_condition()
+
+        junction_states = (
+            self._junction_material_states
+            if junction_state_overrides is None
+            else junction_state_overrides
+        )
+        if provider_node_id in junction_states:
+            through_molar_flow_rate = 0.0 if flow_rate is None else abs(flow_rate)
+            return PortCondition(
+                state=junction_states[provider_node_id],
+                species_ids=junction_states[provider_node_id].species_ids,
+                through_molar_flow_rate=through_molar_flow_rate,
+            )
+
+        stream_port_io = self._stream_port_io_by_node_id.get(provider_node_id)
+        resolved_condition = self._resolve_process_outlet_condition(
+            source=stream_port_io,
+            port_name=provider_port_name,
+        )
+        if resolved_condition is not None:
+            return resolved_condition
+
+        binding = compiled.process_bindings.get(provider_node_id)
+        resolved_condition = self._resolve_process_outlet_condition(
+            source=binding,
+            port_name=provider_port_name,
+        )
+        if resolved_condition is not None:
+            return resolved_condition
+
+        declared_source_condition = self._resolve_declared_edge_endpoint_condition(
+            compiled=compiled,
+            node_id=getattr(getattr(edge, "source"), "node_id"),
+            port_name=getattr(getattr(edge, "source"), "port_name"),
+            endpoint_role="source",
+        )
+        if declared_source_condition is not None:
+            return declared_source_condition
+
+        return self._resolve_declared_edge_endpoint_condition(
+            compiled=compiled,
+            node_id=getattr(getattr(edge, "target"), "node_id"),
+            port_name=getattr(getattr(edge, "target"), "port_name"),
+            endpoint_role="target",
+        )
+
+    def _resolve_declared_edge_endpoint_condition(
+        self,
+        *,
+        compiled: object,
+        node_id: str,
+        port_name: str,
+        endpoint_role: str,
+    ) -> PortCondition | None:
+        boundary_stream = self._feed_streams_by_boundary_id.get(node_id)
+        if boundary_stream is not None:
+            return boundary_stream.to_port_condition()
+
+        if endpoint_role == "target":
+            inlet_condition = self.get_latest_inlet_condition(node_id=node_id, port_name=port_name)
+            if inlet_condition is not None:
+                return inlet_condition
+
+        stream_port_io = self._stream_port_io_by_node_id.get(node_id)
+        if endpoint_role == "source":
+            resolved_condition = self._resolve_process_outlet_condition(
+                source=stream_port_io,
+                port_name=port_name,
+            )
+            if resolved_condition is not None:
+                return resolved_condition
+
+        process_bindings = getattr(compiled, "process_bindings", {})
+        binding = process_bindings.get(node_id) if isinstance(process_bindings, Mapping) else None
+        if endpoint_role == "source":
+            return self._resolve_process_outlet_condition(source=binding, port_name=port_name)
+        return None
+
+    def _seed_available_junction_material_states(
+        self,
+        *,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+        advected_edge_states: Mapping[str, LagTransportState],
+    ) -> dict[str, MaterialState]:
+        compiled = network.compiled
+        if compiled is None:
+            return dict(self._junction_material_states)
+
+        junction_states = dict(self._junction_material_states)
+        changed = True
+        while changed:
+            changed = False
+            for junction in compiled.topology.junction_nodes:
+                if junction.junction_id in junction_states:
+                    continue
+                seeded_state = self._seed_junction_material_state(
+                    network=network,
+                    hydraulic_result=hydraulic_result,
+                    junction_id=junction.junction_id,
+                    advected_edge_states=advected_edge_states,
+                )
+                if seeded_state is None:
+                    continue
+                junction_states[junction.junction_id] = seeded_state
+                changed = True
+        return junction_states
+
+    def _resolve_process_outlet_condition(
+        self,
+        *,
+        source: object | None,
+        port_name: str,
+    ) -> PortCondition | None:
+        from modular_simulation.connection.runtime.process_stream_io import (
+            resolve_process_outlet_condition,
+        )
+
+        resolved_condition = resolve_process_outlet_condition(source, port_name)
+        if resolved_condition is not None:
+            return resolved_condition
+        get_outlet_stream = getattr(source, "get_outlet_stream", None)
+        if callable(get_outlet_stream):
+            outlet_stream = cast(Any, get_outlet_stream(port_name))
+            return cast(PortCondition, outlet_stream.to_port_condition())
+        get_outlet = getattr(source, "get_outlet", None)
+        if not callable(get_outlet):
+            return None
+        try:
+            outlet_payload = get_outlet(port_name)
+        except Exception:
+            return None
+        if not isinstance(outlet_payload, Mapping):
+            return None
+        raw_composition = outlet_payload.get("composition")
+        if isinstance(raw_composition, tuple) and raw_composition:
+            composition = tuple(float(value) for value in raw_composition)
+            temperature_value = outlet_payload.get("temperature", 298.15)
+            pressure_value = outlet_payload.get(
+                "pressure", outlet_payload.get("pressure_pa", 101325.0)
+            )
+            if isinstance(temperature_value, (int, float)) and isinstance(
+                pressure_value, (int, float)
+            ):
+                return PortCondition(
+                    state=MaterialState(
+                        pressure=float(pressure_value),
+                        temperature=float(temperature_value),
+                        mole_fractions=composition,
+                    ),
+                    through_molar_flow_rate=float(outlet_payload.get("outlet_flow", 0.0)),
+                )
+        return None
+
+    def _resolve_current_edge_transport_states(
+        self,
+        *,
+        topology_edge_ids: tuple[str, ...],
+        advected_edge_states: Mapping[str, LagTransportState],
+    ) -> dict[str, LagTransportState]:
+        current_edge_states: dict[str, LagTransportState] = {}
+        for edge_id in topology_edge_ids:
+            current_edge_states[edge_id] = self._transport_edge_states.get(
+                edge_id,
+                advected_edge_states[edge_id],
+            )
+        return current_edge_states
+
+    def _resolve_previous_junction_states(
+        self,
+        *,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+        advected_edge_states: Mapping[str, LagTransportState],
+    ) -> dict[str, MaterialState]:
+        compiled = network.compiled
+        if compiled is None:
+            return {}
+
+        previous_states: dict[str, MaterialState] = {}
+        for junction in compiled.topology.junction_nodes:
+            cached_state = self._junction_material_states.get(junction.junction_id)
+            if cached_state is not None:
+                previous_states[junction.junction_id] = cached_state
+                continue
+            seeded_state = self._seed_junction_material_state(
+                network=network,
+                hydraulic_result=hydraulic_result,
+                junction_id=junction.junction_id,
+                advected_edge_states=advected_edge_states,
+            )
+            if seeded_state is None:
+                raise ValueError(f"missing previous junction state for '{junction.junction_id}'")
+            previous_states[junction.junction_id] = seeded_state
+        return previous_states
+
+    def _seed_junction_material_state(
+        self,
+        *,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+        junction_id: str,
+        advected_edge_states: Mapping[str, LagTransportState],
+    ) -> MaterialState | None:
+        compiled = network.compiled
+        if compiled is None:
+            return None
+        for edge in sorted(compiled.topology.edges, key=lambda item: item.edge_id):
+            if edge.source.node_id != junction_id and edge.target.node_id != junction_id:
+                continue
+            lag_state = advected_edge_states.get(edge.edge_id)
+            if lag_state is None:
+                continue
+            return self._lag_transport_state_to_material_state(
+                edge_id=edge.edge_id,
+                lag_state=lag_state,
+                network=network,
+                hydraulic_result=hydraulic_result,
+            )
+        return None
+
+    def _lag_transport_state_to_material_state(
+        self,
+        *,
+        edge_id: str,
+        lag_state: LagTransportState,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+    ) -> MaterialState:
+        compiled = network.compiled
+        pressure = 101325.0
+        if compiled is not None and compiled.hydraulic is not None:
+            resolved_pressure = compiled.hydraulic.resolve_line_target_pressure(
+                line_id=edge_id,
+                hydraulic_result=hydraulic_result,
+            )
+            if resolved_pressure is not None and resolved_pressure > 0.0:
+                pressure = resolved_pressure
+        return MaterialState(
+            pressure=pressure,
+            temperature=lag_state.temperature,
+            mole_fractions=lag_state.composition,
+        )
 
     def _default_boundary_propagation_step(
         self,

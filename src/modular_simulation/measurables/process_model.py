@@ -15,6 +15,32 @@ from modular_simulation.validation.exceptions import MeasurableConfigurationErro
 from modular_simulation.utils.metadata_extraction import extract_unique_metadata
 from modular_simulation.utils.typing import StateValue, ArrayIndex, Seconds
 
+
+_REMOVED_WRAPPER_TYPE_MIGRATION_GUIDANCE: dict[str, str] = {
+    "Pump": (
+        "saved wrapper-unit payload 'Pump' is no longer supported. "
+        "Migrate pressure boost to `Flowsheet.connect(source, target, pump=PumpInstall(...))`, "
+        "move throttling/heat to `Flowsheet.connect(..., valve=ValveInstall(...), heat=HeatInstall(...))`, "
+        "and represent mixing/splitting/product handoff with `Flowsheet.add_junction(...)` and `Flowsheet.add_sink(...)`."
+    ),
+    "Valve": (
+        "saved wrapper-unit payload 'Valve' is no longer supported. "
+        "Migrate throttling to `Flowsheet.connect(source, target, valve=ValveInstall(...))`, "
+        "move pump/heat behavior to `Flowsheet.connect(..., pump=PumpInstall(...), heat=HeatInstall(...))`, "
+        "and represent mixing/splitting/product handoff with `Flowsheet.add_junction(...)` and `Flowsheet.add_sink(...)`."
+    ),
+    "Mixer": (
+        "saved wrapper-unit payload 'Mixer' is no longer supported. "
+        "Migrate mixing/splitting topology to `Flowsheet.add_junction(...)`, use `Flowsheet.add_sink(...)` for product handoff, "
+        "and attach hydraulic/thermal controls with `Flowsheet.connect(..., pump=PumpInstall(...), valve=ValveInstall(...), heat=HeatInstall(...))`."
+    ),
+    "Splitter": (
+        "saved wrapper-unit payload 'Splitter' is no longer supported. "
+        "Migrate hydraulic-owned branching to `Flowsheet.add_junction(...)`, use `Flowsheet.add_sink(...)` for product handoff, "
+        "and attach hydraulic/thermal controls with `Flowsheet.connect(..., pump=PumpInstall(...), valve=ValveInstall(...), heat=HeatInstall(...))`."
+    ),
+}
+
 if TYPE_CHECKING:
     from modular_simulation.framework.system import System
 
@@ -234,8 +260,14 @@ class ProcessModel(BaseModel, ABC):  # pyright: ignore[reportUnsafeMultipleInher
         if not isinstance(state_values_raw, dict):
             raise ValueError("invalid process model payload: field 'states' must be a mapping")
 
+        process_type_raw = payload["type"]
+        process_type = str(process_type_raw)
+        removed_wrapper_message = _REMOVED_WRAPPER_TYPE_MIGRATION_GUIDANCE.get(process_type)
+        if removed_wrapper_message is not None:
+            raise ValueError(removed_wrapper_message)
+
         module = importlib.import_module(payload["module"])
-        process_model_cls = getattr(module, payload["type"])
+        process_model_cls = getattr(module, process_type)
         if not issubclass(process_model_cls, cls):
             raise TypeError(f"{process_model_cls} is not a subclass of {cls}")
 

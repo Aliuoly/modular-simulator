@@ -3,6 +3,7 @@ from __future__ import annotations
 # pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportUnknownArgumentType=false, reportUnknownLambdaType=false, reportPrivateUsage=false, reportUnusedCallResult=false
 
 from dataclasses import dataclass
+from dataclasses import replace
 from typing import cast
 
 import numpy as np
@@ -35,6 +36,7 @@ from modular_simulation.connection.domain.transport import (
     LagTransportState,
     LagTransportUpdateResult,
 )
+from modular_simulation.thermodynamics.stream import StreamData
 
 
 def _linear_equation(
@@ -551,3 +553,137 @@ def test_runtime_step_fails_before_transport_and_boundary_on_non_converged_hydra
         _ = cast(ConnectionRuntimeStepResult, network.step(macro_step_time_s=1.0))
 
     assert call_counts == {"transport": 0, "boundary": 0}
+
+
+class _RuntimeBridge:
+    def __init__(self, outlet_condition: PortCondition) -> None:
+        self._outlet_condition = outlet_condition
+        self.inlets: dict[str, StreamData] = {}
+
+    def apply_inlet(self, port_name: str, stream: StreamData) -> None:
+        self.inlets[port_name] = stream
+
+    def get_outlet_stream(self, port_name: str) -> StreamData:
+        del port_name
+        return StreamData.from_port_condition(self._outlet_condition)
+
+    def resolve_outlet_condition(self, port_name: str) -> PortCondition:
+        del port_name
+        return self._outlet_condition
+
+
+def test_default_runtime_transport_and_junction_step_is_owner_led_when_bindings_exist() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = ConnectionNetwork(
+        compile_lifecycle=HydraulicCompileLifecycle(),
+        hydraulic_system_builder=lambda topology: _valid_system(),
+        runtime_orchestrator=runtime,
+    )
+    network.add_boundary_source("feed_a")
+    network.add_boundary_source("feed_b")
+    network.add_junction("mix", inlet_ports=("in_a", "in_b"), outlet_ports=("out",))
+    network.add_process("reactor", inlet_ports=("feed",), outlet_ports=("product",))
+    network.add_boundary_sink("product_boundary")
+    network.connect("feed_a", "mix.in_a", edge_id="edge_0001")
+    network.connect("feed_b", "mix.in_b", edge_id="edge_0002")
+    network.connect("mix.out", "reactor.feed", edge_id="edge_0003")
+    network.connect("reactor.product", "product_boundary", edge_id="edge_0004")
+    _ = network.compile()
+
+    reactor_bridge = _RuntimeBridge(
+        PortCondition(
+            state=MaterialState(
+                pressure=101000.0,
+                temperature=330.0,
+                mole_fractions=(0.1, 0.9),
+            ),
+            through_molar_flow_rate=4.0,
+        )
+    )
+    runtime.bind_stream_port_io(node_id="reactor", stream_port_io=reactor_bridge)
+    runtime.set_feed_stream(
+        boundary_id="feed_a",
+        stream=StreamData.from_port_condition(
+            PortCondition(
+                state=MaterialState(
+                    pressure=120000.0,
+                    temperature=300.0,
+                    mole_fractions=(0.8, 0.2),
+                ),
+                through_molar_flow_rate=5.0,
+            )
+        ),
+    )
+    runtime.set_feed_stream(
+        boundary_id="feed_b",
+        stream=StreamData.from_port_condition(
+            PortCondition(
+                state=MaterialState(
+                    pressure=130000.0,
+                    temperature=320.0,
+                    mole_fractions=(0.4, 0.6),
+                ),
+                through_molar_flow_rate=3.0,
+            )
+        ),
+    )
+
+    hydraulic_result = HydraulicSolveResult(
+        converged=True,
+        iterations=2,
+        residual_norm=1.0e-10,
+        solution_vector=np.asarray([5.0, 3.0, 8.0, 4.0, 0.0], dtype=np.float64),
+        unknowns={
+            "edge_0001": 5.0,
+            "edge_0002": 3.0,
+            "edge_0003": 8.0,
+            "edge_0004": 4.0,
+            "pressure": 5.0,
+        },
+        unknown_index_map={},
+        residual_index_map={},
+    )
+
+    class _CompiledHydraulic:
+        def resolve_line_flow(
+            self, *, line_id: str, hydraulic_result: HydraulicSolveResult
+        ) -> float | None:
+            value = hydraulic_result.unknowns.get(line_id)
+            return None if value is None else float(value)
+
+        def resolve_line_target_pressure(
+            self, *, line_id: str, hydraulic_result: HydraulicSolveResult
+        ) -> float | None:
+            del line_id
+            return float(hydraulic_result.unknowns["pressure"])
+
+        def solve(self) -> HydraulicSolveResult:
+            raise AssertionError("not used")
+
+    assert network._compiled is not None
+    network._compiled = replace(
+        network._compiled,
+        process_bindings=cast(
+            object, {**network._compiled.process_bindings, "reactor": reactor_bridge}
+        ),
+        hydraulic=cast(object, _CompiledHydraulic()),
+    )
+
+    update = runtime._default_transport_and_mixing_step(
+        network=network,
+        hydraulic_result=hydraulic_result,
+        macro_step_time_s=0.25,
+    )
+
+    assert tuple(sorted(update.transport_results)) == (
+        "edge_0001",
+        "edge_0002",
+        "edge_0003",
+        "edge_0004",
+    )
+    assert tuple(update.junction_results) == ("mix",)
+    junction_result = update.junction_results["mix"]
+    assert junction_result.total_incoming_flow_rate == pytest.approx(8.0)
+    assert junction_result.state.temperature == pytest.approx(307.5)
+    assert junction_result.state.mole_fractions == pytest.approx((0.65, 0.35))
+    assert not junction_result.used_fallback

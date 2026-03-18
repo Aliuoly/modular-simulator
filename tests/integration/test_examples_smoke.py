@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
+import sys
 from typing import cast
 
 import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from examples.connection_layer.two_tank_reaction_comparison import run_demo as run_two_tank_demo
 from examples.dynamic_api_cli.minimal_command_quickstart import run_demo as run_command_demo
@@ -35,7 +41,7 @@ def test_quickstart_two_process_command_path_smoke() -> None:
         "rq_0006",
     )
     assert "reactor_b" in process_ids
-    assert "mix_junction" in process_ids
+    assert "mix_junction" not in process_ids
 
 
 def test_van_de_vusse_cstr_run_demo_smoke() -> None:
@@ -96,22 +102,24 @@ def test_curated_dual_feed_exchanger_example_smoke() -> None:
 
 def test_curated_ammonia_recycle_example_smoke() -> None:
     topology_results = build_ammonia_loop_flowsheet(dt=0.2).run(steps=4, dt=0.2)
-    recycle_leg = topology_results.get_stream("purge_splitter.outlet_1", "synthesis_mixer.inlet_2")
+    recycle_leg = topology_results.get_stream("purge_split.recycle", "synthesis_mixer.recycle")
     assert recycle_leg.flow_rate.shape == (4,)
     with pytest.raises(
-        ValueError, match="unknown stream connection 'recycle_return->synthesis_mixer.inlet_2'"
+        ValueError, match="unknown stream connection 'recycle_return->synthesis_mixer.recycle'"
     ):
-        _ = topology_results.get_stream("recycle_return", "synthesis_mixer.inlet_2")
+        _ = topology_results.get_stream("recycle_return", "synthesis_mixer.recycle")
 
     result = run_ammonia_loop_example(steps=60, dt=0.2, make_plot=False)
     recycle_ratio = cast(float, result["recycle_to_fresh_ratio"])
     recycle_flow = cast(float, result["recycle_edge_flow_mol_s"])
     product_purity = cast(float, result["liquid_product_purity"])
     product_flow = cast(float, result["liquid_product_flow_mol_s"])
+    recycle_pump_id = cast(str, result["recycle_pump_id"])
     assert recycle_flow >= 0.0
     assert recycle_ratio >= 0.0
     assert 0.0 <= product_purity <= 1.0
     assert product_flow >= 0.0
+    assert recycle_pump_id == "recycle_pump"
 
 
 def test_curated_two_tank_comparison_smoke() -> None:
