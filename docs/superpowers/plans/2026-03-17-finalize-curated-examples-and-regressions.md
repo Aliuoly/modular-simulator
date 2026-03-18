@@ -1,107 +1,200 @@
-# Finalize Curated Examples And Regressions Implementation Plan
+# Finalize Curated Examples And End-To-End Regressions Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** After `ModularSimulator-szt.2` and `ModularSimulator-szt.3` land, finalize the canonical examples, public guidance, wrapper-unit migration behavior, and end-to-end regressions for the hydraulic canonicalization epic.
+**Goal:** Finalize the curated flowsheet examples, public catalog/docs wording, wrapper-unit migration hard-fail behavior, and the last targeted regression sweep against the already-landed hydraulic API.
 
-**Architecture:** This document is a blocked post-landing scaffold, not a runnable implementation plan yet. It defines the execution gates, candidate files, and the first unblock actions required to convert the scaffold into a fully executable plan once the landed `szt.2` public API surface is available on the branch.
+**Architecture:** Treat `ModularSimulator-szt.2` and `ModularSimulator-szt.3` as landed prerequisites and keep this work limited to reconciliation and polish on the current public surface. Prefer tightening the existing curated examples, docs, and regression assertions over adding new surfaces. Preserve the current migration direction: removed wrapper units must hard-fail with actionable import or load-time errors rather than compatibility shims.
 
-**Tech Stack:** Python, pytest, ModularSimulator flowsheet API, documentation markdown, public API exports, persistence/import compatibility surfaces
+**Tech Stack:** Python, pytest, Markdown docs, ModularSimulator `Flowsheet` API, public API exports
 
 ---
 
-## Block Conditions
+## Unblock Record
 
-This scaffold MUST NOT be executed as implementation work until all conditions below are true:
+- `ModularSimulator-szt.2` landed in commit `2a150aa8ac66bb44c4b415e87a41dbdd8a94bd3f` (`canonicalize-hydraulic-junction-api spec implementation`).
+- `ModularSimulator-szt.3` landed in commit `a18fffc6abe86863728758a138460c9ee1bf2aec` (`reject invalid recycle loops at compile time`).
+- Current main-branch merge commit observed while rewriting this plan: `d90e1df3834c558f896099375434d4ef2465ec18`.
+- Current repo state already contains the canonical API on the primary implementation surface: curated examples, `docs/README.md`, `docs/examples_catalog.md`, regression coverage, and `src/modular_simulation/unit_processes/__init__.py`.
+- Existing artifacts under `openspec/` are reference-only background; this plan should follow the landed repo state, not reopen requirement decisions from OpenSpec.
 
-1. `ModularSimulator-szt.2` has landed on the execution branch.
-2. `ModularSimulator-szt.3` compile-time recycle validation behavior is present on the execution branch.
-3. The execution agent has re-verified the actual landed file surface against this scaffold.
+## Scope Boundaries
 
-## Candidate File Structure To Revalidate Post-Landing
+This plan owns:
 
-- `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` — canonical recycle example likely requiring junction/sink and line-installed pump migration
-- `examples/unit_process_flowsheet/easy_2_heater_flash.py` — verify canonical example wording and sink conventions
-- `examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py` — verify canonical multi-branch example wording and endpoint conventions
-- `tests/integration/test_examples_smoke.py` — final smoke alignment for canonical examples
-- `tests/test_rework_examples_review_alignment.py` — example/doc alignment regression coverage
-- `tests/unit_process/test_flowsheet_builder.py` — builder/runtime expectations for junction, sink, and line installs
-- `tests/unit_process/test_flowsheet_integration.py` — flowsheet-level public API and migration behavior coverage
-- `tests/connection/test_junction_runtime.py` — junction runtime regression surface
-- `tests/connection/test_junction_mixing.py` — junction mixing regression surface
-- `src/modular_simulation/unit_processes/__init__.py` — public export cleanup for removed wrapper units
-- `docs/examples_catalog.md` — canonical example inventory and migration map
-- `docs/README.md` — public-facing example guidance
-- `docs/discoverability_ownership_policy.md` — canonical/public surface ownership wording if needed
-- `openspec/changes/canonicalize-hydraulic-junction-api/specs/curated-flowsheet-examples/spec.md` — canonical example requirements
-- `openspec/changes/reject-invalid-recycle-loops/specs/curated-flowsheet-examples/spec.md` — recycle example viability requirements
+- curated flowsheet examples in `examples/unit_process_flowsheet/`
+- public example guidance in `docs/README.md` and `docs/examples_catalog.md`
+- hard-fail migration guidance for removed wrapper-unit imports and saved payloads
+- final smoke/alignment/junction/recycle regression confirmation for the landed API
 
-## Required Unblock Task
+This plan does **not** own:
 
-### Task 1: Reconcile the scaffold against landed `szt.2` and `szt.3`
+- new hydraulic API design work
+- compatibility shims for removed `Pump`, `Valve`, `Mixer`, or `Splitter` wrapper units
+- unrelated example cleanup outside the curated flowsheet and regression surface listed below
+
+## File Structure
+
+- **Modify:** `examples/unit_process_flowsheet/easy_2_heater_flash.py` — smallest canonical flowsheet example wording and runtime behavior
+- **Modify:** `examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py` — canonical multi-feed example wording and runtime behavior
+- **Modify:** `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` — canonical recycle example topology, reporting, and line-installed pump usage
+- **Modify:** `docs/README.md` — user-facing canonical example guidance and migration wording
+- **Modify:** `docs/examples_catalog.md` — curated inventory, classification, and migration map
+- **Maybe modify:** `docs/discoverability_ownership_policy.md` — only if public-surface wording references the pre-migration wrapper path
+- **Modify:** `src/modular_simulation/unit_processes/__init__.py` — actionable hard-fail import guidance for removed wrapper units
+- **Modify:** `src/modular_simulation/unit_processes/flow/__init__.py` — actionable hard-fail import guidance for removed flow-wrapper units
+- **Modify:** `src/modular_simulation/unit_processes/mixing/__init__.py` — actionable hard-fail import guidance for removed mixing-wrapper units
+- **Modify:** `src/modular_simulation/unit_processes/separation/__init__.py` — actionable hard-fail import guidance for removed separation-wrapper units
+- **Modify:** `tests/integration/test_examples_smoke.py` — smoke coverage for the curated example set
+- **Modify:** `tests/test_rework_examples_review_alignment.py` — doc/example alignment and reference-only inventory coverage
+- **Modify:** `tests/unit_process/test_canonical_wrapper_removal.py` — removed-wrapper export and import guidance assertions
+- **Modify:** `tests/test_save_load_minimal.py` — saved wrapper payload rejection coverage
+- **Modify:** `tests/unit_process/test_flowsheet_builder.py` — junction/sink/line-install builder expectations
+- **Modify:** `tests/unit_process/test_flowsheet_integration.py` — flowsheet-level runtime expectations for the landed public API
+- **Reference:** `tests/unit_process/test_flowsheet_validation.py` — compile-time recycle rejection contract already landed in `szt.3`
+- **Reference:** `tests/connection/test_junction_runtime.py` — junction runtime regression surface
+- **Reference:** `tests/connection/test_junction_mixing.py` — junction mixing regression surface
+- **Reference:** `tests/connection/test_migration_hygiene_gate.py` — no-fallback/no-legacy-surface hygiene gate
+
+## Implementation Rules
+
+- Do not add compatibility shims for removed wrapper units.
+- If `Pump`, `Valve`, `Mixer`, or `Splitter` are still mentioned on canonical public surfaces, replace them with actionable migration guidance that points to `Flowsheet.connect(..., pump=PumpInstall(...), valve=ValveInstall(...), heat=HeatInstall(...))`, `Flowsheet.add_junction(...)`, and `Flowsheet.add_sink(...)`.
+- Keep the canonical example set limited to the already-curated files; do not promote new examples in this change.
+- If a listed file already matches the landed API and tests, leave it unchanged and record that verification in the implementation notes rather than expanding scope.
+
+### Task 1: Reconcile the implementation surface against landed branch state
 
 **Files:**
-- Review: landed diff for `ModularSimulator-szt.2`
-- Review: landed diff for `ModularSimulator-szt.3`
-- Update: this plan file before any implementation plan steps are added
+- Review: `docs/superpowers/plans/2026-03-17-finalize-curated-examples-and-regressions.md`
+- Review: `examples/unit_process_flowsheet/easy_2_heater_flash.py`
+- Review: `examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py`
+- Review: `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py`
+- Review: `docs/README.md`
+- Review: `docs/examples_catalog.md`
+- Review: `src/modular_simulation/unit_processes/__init__.py`
+- Review: `tests/integration/test_examples_smoke.py`
+- Review: `tests/test_rework_examples_review_alignment.py`
 
-- [ ] **Step 1: Verify both prerequisites are actually landed on the execution branch**
+- [ ] **Step 1: Confirm the bead state still matches this landed plan**
 
-Run: `bd show ModularSimulator-szt.2 --json && bd show ModularSimulator-szt.3 --json && bd show ModularSimulator-szt.4 --json`
-Expected: `szt.2` and `szt.3` are no longer in progress/blocking on the execution branch context, and `szt.4` remains the active target for this plan rewrite
+Run: `bd show ModularSimulator-szt.4 --json`
+Expected: `ModularSimulator-szt.4` is still the active task and its blockers `ModularSimulator-szt.2` and `ModularSimulator-szt.3` remain closed.
 
-- [ ] **Step 2: Diff the landed public API surface against the candidate file list above**
+- [ ] **Step 2: Confirm the landed prerequisite commits are still on the execution branch**
 
-First record the exact landed SHA(s) for `szt.2` and `szt.3` directly in this plan file under a short “Unblock Record” note so the next agent does not have to rediscover them.
+Run: `git merge-base --is-ancestor "2a150aa8ac66bb44c4b415e87a41dbdd8a94bd3f" HEAD && git merge-base --is-ancestor "a18fffc6abe86863728758a138460c9ee1bf2aec" HEAD`
+Expected: exit code `0` with no output.
 
-Then run a real diff such as:
+- [ ] **Step 3: Re-read the exact implementation surface and reduce the change list to real drift only**
 
-Run: `git diff --name-only <recorded-pre-szt.2-base>...HEAD`
-Expected: a concrete file list showing where junction/sink APIs, line installs, wrapper removals, and related docs/tests actually landed
+Compare the current examples, docs, and regression files listed above. Keep edits only where the landed repo still has wording drift, missing assertions, or inconsistent migration guidance.
 
-If the landing happened as merge commits, record the merge SHA and use its first parent as the pre-landing base when constructing the diff range.
+- [ ] **Step 4: Do not start broader cleanup**
 
-- [ ] **Step 3: Update this scaffold into a full executable plan only after reconciling actual paths**
+If review uncovers unrelated issues outside the files listed in this plan, leave them for separate bead work instead of expanding this task.
 
-Add exact create/modify/test sections and executable TDD steps based on the landed surface. Do not start code edits before this rewrite is complete.
+### Task 2: Finalize curated examples and public docs around the landed API
 
-- [ ] **Step 4: Commit the rewritten executable plan before implementation begins**
+**Files:**
+- Modify: `examples/unit_process_flowsheet/easy_2_heater_flash.py`
+- Modify: `examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py`
+- Modify: `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py`
+- Modify: `docs/README.md`
+- Modify: `docs/examples_catalog.md`
+- Maybe modify: `docs/discoverability_ownership_policy.md`
+- Modify: `tests/integration/test_examples_smoke.py`
+- Modify: `tests/test_rework_examples_review_alignment.py`
 
-```bash
-git add docs/superpowers/plans/2026-03-17-finalize-curated-examples-and-regressions.md
-git commit -m "docs: unblock curated examples regression plan"
-```
+- [ ] **Step 1: Verify each curated example still demonstrates the canonical API directly**
 
-## Owned Scope Once Unblocked
+Keep `easy_2_heater_flash.py`, `easy_3_dual_feed_heat_exchanger.py`, and `complex_6_ammonia_recycle_loop.py` centered on explicit feeds, explicit sinks, explicit junctions where needed, and line-installed controls rather than wrapper units.
 
-When this scaffold is converted into an executable plan, it owns:
+- [ ] **Step 2: Tighten any example docstrings, report text, or helper naming that still reflects transition-period migration wording**
 
-- canonical example rewrites after the sibling API lands
-- public docs and examples-catalog refresh
-- wrapper-unit migration behavior on canonical/public surfaces
-- final smoke, integration, and regression alignment across the epic
+Prefer small wording fixes over structural rewrites. The examples should read like the final canonical path, not like temporary migration placeholders.
 
-It does **not** own:
+- [ ] **Step 3: Reconcile `docs/README.md` and `docs/examples_catalog.md` with the final curated set**
 
-- initial compile-time recycle validation logic from `ModularSimulator-szt.3`
-- unresolved API design choices that belong to the still-in-progress `ModularSimulator-szt.2` session
+Ensure both docs agree on:
 
-## Migration Compatibility Decisions To Make Explicit In The Final Plan
+- which examples are canonical
+- why `complex_6_ammonia_recycle_loop.py` remains the advanced canonical flowsheet
+- which examples are reference-only or removed from the primary path
+- the migration map away from pre-curation entrypoints
 
-Before implementation starts, the rewritten executable plan must lock down:
+- [ ] **Step 4: Keep discoverability wording aligned only if the policy doc still points readers to removed wrapper-unit workflows**
 
-- whether stale `Pump`, `Valve`, `Mixer`, and `Splitter` imports hard-fail or provide actionable migration messages
-- whether saved payload/import compatibility is preserved, shimmed, or intentionally rejected
-- which canonical examples remain in the primary path after migration
-- which regression suites are required for final signoff
-- which behaviors were already settled by the landed `szt.2` work and therefore must be preserved/documented rather than re-decided in `szt.4`
+Do not edit `docs/discoverability_ownership_policy.md` unless the current text directly conflicts with the landed user-facing migration story.
 
-## Minimum Verification Expectations For The Final Unblocked Plan
+- [ ] **Step 5: Update smoke and alignment tests to lock the final curated/example-doc contract**
 
-The eventual executable version of this plan should end with a broader regression pass covering at least:
+Use `tests/integration/test_examples_smoke.py` and `tests/test_rework_examples_review_alignment.py` to assert the final curated examples run, docs use `boundary sinks` wording, and reference-only examples remain out of the canonical path.
 
-- `uv run python -m pytest -q tests/integration/test_examples_smoke.py`
-- `uv run python -m pytest -q tests/test_rework_examples_review_alignment.py`
-- a targeted flowsheet/junction regression subset based on the landed `szt.2` surface
+- [ ] **Step 6: Run the curated example/doc verification subset**
 
-The rewritten plan should include exact expected outcomes once the actual landed file paths are known.
+Run: `uv run python -m pytest -q tests/integration/test_examples_smoke.py::test_curated_heater_flash_example_smoke tests/integration/test_examples_smoke.py::test_curated_dual_feed_exchanger_example_smoke tests/integration/test_examples_smoke.py::test_curated_ammonia_recycle_example_smoke tests/test_rework_examples_review_alignment.py::test_curated_docs_describe_terminal_unit_outlets tests/test_rework_examples_review_alignment.py::test_complex_8_pressure_flash_recovery_example_runs_and_returns_report tests/test_rework_examples_review_alignment.py::test_reference_examples_use_junctions_sinks_and_line_installs_instead_of_wrapper_units`
+Expected: PASS; all selected curated example and doc-alignment regressions succeed.
+
+### Task 3: Preserve hard-fail wrapper migration behavior with actionable guidance
+
+**Files:**
+- Modify: `src/modular_simulation/unit_processes/__init__.py`
+- Modify: `src/modular_simulation/unit_processes/flow/__init__.py`
+- Modify: `src/modular_simulation/unit_processes/mixing/__init__.py`
+- Modify: `src/modular_simulation/unit_processes/separation/__init__.py`
+- Modify: `tests/unit_process/test_canonical_wrapper_removal.py`
+- Modify: `tests/test_save_load_minimal.py`
+- Modify: `tests/unit_process/test_flowsheet_builder.py`
+- Modify: `tests/unit_process/test_flowsheet_integration.py`
+
+- [ ] **Step 1: Re-verify the removed-wrapper import contract in `src/modular_simulation/unit_processes/__init__.py`**
+
+Keep removed wrapper imports as hard failures with actionable `ImportError` messages. Do not add aliases, compatibility exports, or delayed runtime shims.
+
+- [ ] **Step 2: Reconcile migration tests with the desired failure behavior**
+
+`tests/unit_process/test_canonical_wrapper_removal.py` and `tests/test_save_load_minimal.py` should cover both public import failures and saved-payload rejection for `Pump`, `Valve`, `Mixer`, and `Splitter`.
+
+Saved-payload rejection should stay a hard failure and the message should remain actionable, pointing users back to the canonical `Flowsheet` surface rather than silently accepting legacy wrapper payloads.
+
+- [ ] **Step 3: Reconcile builder/runtime contract tests with the same migration direction**
+
+Use `tests/unit_process/test_flowsheet_builder.py` and `tests/unit_process/test_flowsheet_integration.py` to preserve the public replacement path: explicit `add_junction(...)`, `add_sink(...)`, and line-owned `PumpInstall` / `ValveInstall` controls.
+
+- [ ] **Step 4: Run the migration-behavior verification subset**
+
+Run: `uv run python -m pytest -q tests/unit_process/test_canonical_wrapper_removal.py tests/test_save_load_minimal.py::test_process_model_load_rejects_removed_wrapper_unit_payloads tests/unit_process/test_flowsheet_builder.py::test_junction_sink_and_line_reference_compile_to_explicit_topology tests/unit_process/test_flowsheet_builder.py::test_endpoint_validation_and_overlay_rules_are_actionable tests/unit_process/test_flowsheet_integration.py::test_cascade_reference_to_line_owned_pump_actuator_updates_namespaced_command_point`
+Expected: PASS; removed wrapper imports and saved payloads fail cleanly, while the replacement flowsheet surface continues to pass.
+
+### Task 4: Run the final targeted regression sweep and sign off
+
+**Files:**
+- Reference: `tests/integration/test_examples_smoke.py`
+- Reference: `tests/test_rework_examples_review_alignment.py`
+- Reference: `tests/unit_process/test_canonical_wrapper_removal.py`
+- Reference: `tests/test_save_load_minimal.py`
+- Reference: `tests/unit_process/test_flowsheet_builder.py`
+- Reference: `tests/unit_process/test_flowsheet_integration.py`
+- Reference: `tests/unit_process/test_flowsheet_validation.py`
+- Reference: `tests/connection/test_junction_runtime.py`
+- Reference: `tests/connection/test_junction_mixing.py`
+- Reference: `tests/connection/test_migration_hygiene_gate.py`
+
+- [ ] **Step 1: Run the recycle and junction regression subset first**
+
+Run: `uv run python -m pytest -q tests/unit_process/test_flowsheet_validation.py::TestRecycleLoopRejection tests/connection/test_junction_runtime.py tests/connection/test_junction_mixing.py`
+Expected: PASS; compile-time recycle rejection and junction runtime/mixing behavior remain stable.
+
+- [ ] **Step 2: Run the end-to-end targeted signoff suite**
+
+Run: `uv run python -m pytest -q tests/integration/test_examples_smoke.py::test_curated_heater_flash_example_smoke tests/integration/test_examples_smoke.py::test_curated_dual_feed_exchanger_example_smoke tests/integration/test_examples_smoke.py::test_curated_ammonia_recycle_example_smoke tests/test_rework_examples_review_alignment.py::test_curated_docs_describe_terminal_unit_outlets tests/test_rework_examples_review_alignment.py::test_complex_5_wording_matches_reference_only_catalog_status tests/test_rework_examples_review_alignment.py::test_complex_8_pressure_flash_recovery_example_runs_and_returns_report tests/test_rework_examples_review_alignment.py::test_reference_examples_use_junctions_sinks_and_line_installs_instead_of_wrapper_units tests/unit_process/test_canonical_wrapper_removal.py tests/test_save_load_minimal.py::test_process_model_load_rejects_removed_wrapper_unit_payloads tests/unit_process/test_flowsheet_builder.py::test_junction_sink_and_line_reference_compile_to_explicit_topology tests/unit_process/test_flowsheet_builder.py::test_endpoint_validation_and_overlay_rules_are_actionable tests/unit_process/test_flowsheet_integration.py::test_cascade_reference_to_line_owned_pump_actuator_updates_namespaced_command_point tests/unit_process/test_flowsheet_validation.py::TestRecycleLoopRejection tests/connection/test_junction_runtime.py tests/connection/test_junction_mixing.py tests/connection/test_migration_hygiene_gate.py`
+Expected: PASS; curated examples, targeted doc alignment, wrapper migration behavior, focused flowsheet builder/runtime behavior, recycle validation, junction runtime, and migration hygiene all pass together without depending on unrelated tests in larger files.
+
+- [ ] **Step 3: Re-read the touched files before handoff**
+
+Confirm the final diff stays inside the file list in this plan and that no pre-implementation placeholder wording remains on the curated public path.
+
+- [ ] **Step 4: Close the bead only after the verification evidence is fresh**
+
+Do not mark `ModularSimulator-szt.4` done until the commands in Steps 1 and 2 have been run successfully on the final diff.

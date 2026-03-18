@@ -100,6 +100,15 @@ def test_curated_dual_feed_exchanger_example_smoke() -> None:
     assert heat_duty != 0.0
 
 
+def test_curated_dual_feed_exchanger_runs_without_dangling_outlet_warnings() -> None:
+    """Regression: easy_3 must be a fully grounded topology with no dangling exchanger outlets."""
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", UserWarning)
+        run_dual_feed_exchanger_example(steps=4, dt=0.2, make_plot=False)
+
+
 def test_curated_ammonia_recycle_example_smoke() -> None:
     topology_results = build_ammonia_loop_flowsheet(dt=0.2).run(steps=4, dt=0.2)
     recycle_leg = topology_results.get_stream("purge_split.recycle", "synthesis_mixer.recycle")

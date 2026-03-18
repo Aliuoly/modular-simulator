@@ -308,14 +308,58 @@ def test_system_load_legacy_payload_rejected_for_controller_runtime_sp() -> None
         System.load(payload_with_legacy_state)
 
 
+_WRAPPER_GUIDANCE: dict[str, list[str]] = {
+    "Pump": [
+        r"saved wrapper-unit payload 'Pump' is no longer supported",
+        r"Flowsheet\.connect\(source, target, pump=PumpInstall",
+        r"valve=ValveInstall",
+        r"Flowsheet\.add_junction",
+        r"Flowsheet\.add_sink",
+    ],
+    "Valve": [
+        r"saved wrapper-unit payload 'Valve' is no longer supported",
+        r"Flowsheet\.connect\(source, target, valve=ValveInstall",
+        r"pump=PumpInstall",
+        r"Flowsheet\.add_junction",
+        r"Flowsheet\.add_sink",
+    ],
+    "Mixer": [
+        r"saved wrapper-unit payload 'Mixer' is no longer supported",
+        r"Flowsheet\.add_junction",
+        r"Flowsheet\.add_sink",
+        r"pump=PumpInstall",
+        r"valve=ValveInstall",
+    ],
+    "Splitter": [
+        r"saved wrapper-unit payload 'Splitter' is no longer supported",
+        r"Flowsheet\.add_junction",
+        r"Flowsheet\.add_sink",
+        r"pump=PumpInstall",
+        r"valve=ValveInstall",
+    ],
+}
+
+
 @pytest.mark.parametrize("legacy_type", ("Pump", "Valve", "Mixer", "Splitter"))
 def test_process_model_load_rejects_removed_wrapper_unit_payloads(legacy_type: str) -> None:
+    """Rejection error must be a hard failure with actionable migration guidance.
+
+    Each removed wrapper type must name the canonical Flowsheet replacement surface
+    so users know exactly which API to migrate to.
+    """
     payload = HeaterCooler(n_species=2).save()
     payload["type"] = legacy_type
     payload["module"] = "modular_simulation.unit_processes"
 
-    with pytest.raises(
-        ValueError,
-        match=rf"saved wrapper-unit payload '{legacy_type}' is no longer supported",
-    ):
+    import re
+
+    with pytest.raises(ValueError) as exc_info:
         ProcessModel.load(payload)
+
+    error_message = str(exc_info.value)
+    expected_fragments = _WRAPPER_GUIDANCE[legacy_type]
+    for fragment in expected_fragments:
+        assert re.search(fragment, error_message), (
+            f"Missing actionable guidance for '{legacy_type}': "
+            f"expected pattern {fragment!r} not found in error message:\n{error_message}"
+        )

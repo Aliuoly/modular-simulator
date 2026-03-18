@@ -29,11 +29,15 @@ def run_example(*, steps: int = 30, dt: float = 0.2, make_plot: bool = True) -> 
 
     flowsheet.add_feed_from_values("hot_feed", T=382.0, P=1.9e5, z=(0.72, 0.28), flow=3.2)
     flowsheet.add_feed_from_values("cold_feed", T=300.0, P=1.8e5, z=(0.24, 0.76), flow=2.8)
+    flowsheet.add_sink("hot_product")
+    flowsheet.add_sink("cold_product")
 
     flowsheet.connect("hot_feed", "hot_trim")
     flowsheet.connect("hot_trim", "exchanger.hot_inlet")
     flowsheet.connect("cold_feed", "cold_trim")
     flowsheet.connect("cold_trim", "exchanger.cold_inlet")
+    flowsheet.connect("exchanger.hot_outlet", "hot_product")
+    flowsheet.connect("exchanger.cold_outlet", "cold_product")
 
     results = flowsheet.run(steps=steps, dt=dt)
     exchanger = results.get_unit("exchanger")

@@ -137,6 +137,38 @@ def test_endpoint_validation_and_overlay_rules_are_actionable() -> None:
         )
 
 
+def test_valve_install_replacement_path_compiles() -> None:
+    """Positive regression: ValveInstall on connect() must produce a line-owned valve
+    actuator id and compile to a valid ConnectedPlantOrchestrator.
+
+    This proves the replacement path described in the Valve-wrapper migration guidance
+    actually works end-to-end.
+    """
+    context = SimulationRuntimeContext.create(species_names=["water", "ethanol"])
+    flowsheet = Flowsheet(context=context)
+
+    flowsheet.add_unit("heater", HeaterCooler(n_species=2))
+    flowsheet.add_feed_from_values("feed", T=305.0, P=165000.0, z=(0.5, 0.5), flow=3.0)
+    flowsheet.add_sink("product")
+
+    line_ref = flowsheet.connect(
+        "feed",
+        "heater",
+        valve=ValveInstall(initial_open_fraction=0.75),
+    )
+    flowsheet.connect("heater", "product")
+
+    # The line reference must expose the auto-generated valve actuator id.
+    assert line_ref.valve_id is not None
+    assert line_ref.valve_id.startswith("line_")
+    assert line_ref.pump_id is None
+
+    # Compiling must succeed - proves the valve replacement path is accepted
+    # by the hydraulic system builder.
+    plant = flowsheet.compile()
+    assert isinstance(plant, ConnectedPlantOrchestrator)
+
+
 def test_duplicate_node_and_line_owned_ids_fail_early() -> None:
     context = SimulationRuntimeContext.create(species_names=["water", "ethanol"])
     flowsheet = Flowsheet(context=context)
