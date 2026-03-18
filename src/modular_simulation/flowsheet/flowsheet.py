@@ -745,9 +745,14 @@ class Flowsheet:
                 stacklevel=2,
             )
 
-        cycle = self._find_directed_cycle(directed_neighbors=directed_neighbors)
-        if cycle is None:
+        all_cycles = self._find_all_directed_cycles(directed_neighbors=directed_neighbors)
+        if not all_cycles:
             return
+
+        self._reject_invalid_recycle_loops(cycles=all_cycles)
+
+        # Emit warning for any remaining (valid) cycles
+        cycle = all_cycles[0]
         cycle_path = " -> ".join(cycle)
         warnings.warn(
             "flowsheet compile validation warning: recycle/cycle detected in topology "
@@ -755,37 +760,167 @@ class Flowsheet:
             stacklevel=2,
         )
 
-    def _find_directed_cycle(
-        self, *, directed_neighbors: Mapping[str, set[str]]
-    ) -> tuple[str, ...] | None:
-        visiting: set[str] = set()
-        visited: set[str] = set()
-        stack: list[str] = []
+    def _find_all_directed_cycles(
+        self, *, directed_neighbors: dict[str, set[str]]
+    ) -> list[tuple[str, ...]]:
+        """Find all elementary directed cycles in the graph, deduplicated by canonical rotation.
 
-        def dfs(node_id: str) -> tuple[str, ...] | None:
-            visiting.add(node_id)
-            stack.append(node_id)
-            for neighbor in sorted(directed_neighbors[node_id]):
-                if neighbor in visited:
-                    continue
-                if neighbor in visiting:
-                    cycle_start = stack.index(neighbor)
-                    return tuple((*stack[cycle_start:], neighbor))
-                cycle = dfs(neighbor)
-                if cycle is not None:
-                    return cycle
-            _ = stack.pop()
-            visiting.remove(node_id)
-            visited.add(node_id)
-            return None
+        Uses a complete start-node DFS enumerator: for each node *s* (in sorted
+        order), depth-first enumerate all simple cycles that return to *s*,
+        only traversing neighbors with node id >= *s* so each cycle is emitted
+        exactly once under its minimum node.  Uses a path list and *on_path*
+        set with no blocked-set or suppression — this is obviously complete
+        for the small graphs encountered in flowsheet topologies.
+        """
+        all_raw_cycles: list[tuple[str, ...]] = []
 
-        for node_id in sorted(directed_neighbors):
-            if node_id in visited:
+        for start_node in sorted(directed_neighbors):
+            # DFS from start_node; only follow nodes >= start_node to avoid
+            # double-counting cycles already enumerated from earlier start nodes.
+            path: list[str] = [start_node]
+            on_path: set[str] = {start_node}
+
+            def _dfs(node: str) -> None:
+                for neighbor in sorted(directed_neighbors.get(node, set())):
+                    if neighbor < start_node:
+                        continue  # skip nodes below start — those cycles were already found
+                    if neighbor == start_node:
+                        # Found a cycle: path contains the route back to start
+                        all_raw_cycles.append(tuple((*path, start_node)))
+                    elif neighbor not in on_path:
+                        path.append(neighbor)
+                        on_path.add(neighbor)
+                        _dfs(neighbor)
+                        on_path.remove(neighbor)
+                        path.pop()
+
+            _dfs(start_node)
+
+        return self._deduplicate_cycles(all_raw_cycles)
+
+    @staticmethod
+    def _normalize_cycle(cycle: tuple[str, ...]) -> tuple[str, ...]:
+        """Normalize a cycle to its lexicographically smallest rotation.
+
+        Input cycle has the form (a, b, c, a) — last element repeats first.
+        Output is the same form under the rotation that starts with the
+        lexicographic minimum node.
+        """
+        body = cycle[:-1]
+        if not body:
+            return cycle
+        min_idx = min(range(len(body)), key=lambda i: body[i])
+        rotated_body = body[min_idx:] + body[:min_idx]
+        return (*rotated_body, rotated_body[0])
+
+    @staticmethod
+    def _deduplicate_cycles(
+        raw_cycles: list[tuple[str, ...]],
+    ) -> list[tuple[str, ...]]:
+        """Deduplicate cycles under canonical rotation, returning sorted unique cycles."""
+        seen: set[tuple[str, ...]] = set()
+        unique: list[tuple[str, ...]] = []
+        for cycle in raw_cycles:
+            normalized = Flowsheet._normalize_cycle(cycle)
+            if normalized not in seen:
+                seen.add(normalized)
+                unique.append(normalized)
+        unique.sort(key=lambda c: " -> ".join(c))
+        return unique
+
+    def _reject_invalid_recycle_loops(self, *, cycles: list[tuple[str, ...]]) -> None:
+        """Raise a diagnostic ValueError for any directed cycles that lack a supported
+        positive line-installed pump boost on their edges.
+
+        When multiple connections exist between the same node pair (port-distinct
+        parallel lines), each combination of edges forms a distinct cycle that
+        must be checked independently.
+        """
+        from itertools import product as cartesian_product
+
+        from modular_simulation.connection.domain.error_catalog import (
+            DiagnosticValueError,
+            build_diagnostic_payload,
+        )
+
+        # Build a multi-edge lookup: (source_node_id, target_node_id) -> list[_ConnectionSpec]
+        edge_connections: dict[tuple[str, str], list[_ConnectionSpec]] = {}
+        for connection in self._connections:
+            source_node_id, _ = self._split_explicit_endpoint(connection.source)
+            target_node_id, _ = self._split_explicit_endpoint(connection.target)
+            edge_connections.setdefault((source_node_id, target_node_id), []).append(connection)
+
+        invalid_loop_paths: list[str] = []
+        for cycle in cycles:
+            body = cycle[:-1]
+            # Collect all connection options for each edge in this cycle.
+            edge_options: list[list[_ConnectionSpec]] = []
+            cycle_viable = True
+            for i in range(len(body)):
+                edge_key = (body[i], body[(i + 1) % len(body)])
+                connections = edge_connections.get(edge_key, [])
+                if not connections:
+                    cycle_viable = False
+                    break
+                edge_options.append(connections)
+
+            if not cycle_viable:
                 continue
-            cycle = dfs(node_id)
-            if cycle is not None:
-                return cycle
-        return None
+
+            # Determine whether any of the node-pair edges has parallel connections
+            # (port-distinct parallel lines).  Used below to decide whether to
+            # include concrete line-id identity in the diagnostic.
+            has_parallel_edges = any(len(opts) > 1 for opts in edge_options)
+
+            # For each concrete combination of edges, check pump validity.
+            for edge_combo in cartesian_product(*edge_options):
+                has_positive_boost = any(
+                    conn.pump is not None and conn.pump.initial_pump_speed > 0.0
+                    for conn in edge_combo
+                )
+                if not has_positive_boost:
+                    node_path = " -> ".join(cycle)
+                    if has_parallel_edges:
+                        # Include the line IDs of the offending concrete combination so
+                        # the user can distinguish the invalid path from pumped siblings.
+                        combo_line_ids = ", ".join(conn.line_id for conn in edge_combo)
+                        loop_path = f"{node_path} [lines: {combo_line_ids}]"
+                    else:
+                        loop_path = node_path
+                    invalid_loop_paths.append(loop_path)
+                    break  # One invalid combination is enough to report this cycle
+
+        if not invalid_loop_paths:
+            return
+
+        invalid_loop_paths.sort()
+        # Deduplicate identical loop path strings (can arise from normalization).
+        seen_paths: list[str] = []
+        for path in invalid_loop_paths:
+            if path not in seen_paths:
+                seen_paths.append(path)
+        invalid_loop_paths = seen_paths
+
+        if len(invalid_loop_paths) == 1:
+            message = (
+                f"flowsheet compile validation failed: recycle loop {invalid_loop_paths[0]} "
+                f"has no positive line-installed pressure boost on any edge"
+            )
+        else:
+            loop_descriptions = "; ".join(invalid_loop_paths)
+            message = (
+                f"flowsheet compile validation failed: {len(invalid_loop_paths)} recycle loops "
+                f"have no positive line-installed pressure boost on any edge: {loop_descriptions}"
+            )
+
+        raise DiagnosticValueError(
+            build_diagnostic_payload(
+                code="INVALID_RECYCLE_LOOP",
+                message=message,
+                path="Flowsheet.compile",
+                hint="Add a pump or pressure-boosting stage on the recycle path with a strictly positive initial_pump_speed",
+            )
+        )
 
     def run(self, steps: int, dt: float | None = None) -> FlowsheetResults:
         if steps < 0:
