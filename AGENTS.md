@@ -114,3 +114,13 @@ For more details, see README.md and docs/QUICKSTART.md.
 - If push fails, resolve and retry until it succeeds
 
 <!-- END BEADS INTEGRATION -->
+
+## Hybrid OpenCode Workflow
+
+- Prefer the repo-local OpenCode agents: `hybrid-planner`, `hybrid-plan-reviewer`, `hybrid-orchestrator`, `hybrid-explore`, `hybrid-general-low`, `hybrid-general-high`, and `hybrid-code-reviewer`.
+- OpenSpec owns durable intent and documentation: `proposal.md`, `design.md`, delta specs, and `tasks.md`.
+- Beads owns mutable execution state: epics, tasks, blockers, claiming, discovered work, and session handoff.
+- Superpowers is limited to execution discipline in this repo. Keep `using-git-worktrees`, `dispatching-parallel-agents`, `test-driven-development`, `systematic-debugging`, and `verification-before-completion`. Do not create `docs/superpowers/plans/*.md` as a second planning system.
+- Make OpenSpec `tasks.md` execution-ready: concrete task waves, exact files when known, explicit verification commands, and clear TDD expectations for behavior changes.
+- `hybrid-orchestrator` owns delegation and closure. It should use Beads to claim/update work, keep implementation inside a git worktree, dispatch coding agents with bounded task packets, require independent code review before completion, and only close work after evidence-backed verification.
+- If OpenSpec artifacts changed during implementation, run change verification, sync delta specs into `openspec/specs/` when appropriate, and archive only when the change is actually complete. Then perform the Beads landing sequence and push.

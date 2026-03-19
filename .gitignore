@@ -4,7 +4,11 @@ scripts/
 
 # opencode stuff
 opencode.*
-.opencode/
+!opencode.json
+.opencode/*
+!.opencode/.gitignore
+!.opencode/agents/
+!.opencode/agents/**
 .sisyphus/
 
 # Byte-compiled / optimized / DLL files

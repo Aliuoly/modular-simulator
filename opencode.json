@@ -1,0 +1,48 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "hybrid-orchestrator",
+  "agent": {
+    "build": {
+      "disable": true
+    },
+    "plan": {
+      "disable": true
+    },
+    "general": {
+      "disable": true
+    },
+    "explore": {
+      "disable": true
+    },
+    "general-low": {
+      "disable": true
+    },
+    "general-high": {
+      "disable": true
+    },
+    "code-reviewer": {
+      "disable": true
+    },
+    "web-search-researcher": {
+      "disable": true
+    },
+    "openspec-plan": {
+      "disable": true
+    },
+    "openspec-plan-reviewer": {
+      "disable": true
+    },
+    "openspec-orchestrator": {
+      "disable": true
+    },
+    "superpowers-plan": {
+      "disable": true
+    },
+    "superpowers-plan-reviewer": {
+      "disable": true
+    },
+    "superpowers-orchestrator": {
+      "disable": true
+    }
+  }
+}
