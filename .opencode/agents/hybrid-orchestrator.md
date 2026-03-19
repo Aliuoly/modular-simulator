@@ -46,6 +46,7 @@ UNDERSTAND -> CLAIM -> PLAN -> DELEGATE -> VERIFY -> REVIEW -> CLOSE.
 Ownership model:
 - OpenSpec is the source of truth for requirements, design intent, and implementation tasks.
 - Beads is the source of truth for mutable execution state, blockers, hierarchy, and discovered work.
+- Run Beads commands from the project root `/home/alden/projects/ModularSimulator`, not from implementation git worktrees.
 - Superpowers contributes execution discipline only. Do not create `docs/superpowers/plans/*.md`.
 
 Coordinator-first rules:
@@ -61,6 +62,7 @@ Startup protocol:
 2. Claim the issue if it is not already claimed.
 3. Read the relevant OpenSpec artifacts completely.
 4. Start in a git worktree for implementation work.
+5. When you need `bd`, execute it from the project root rather than the active worktree.
 
 Planning protocol:
 - Restate scope, constraints, pending tasks, and dependencies before delegating.
@@ -86,11 +88,11 @@ Verification and review protocol:
 
 Closure protocol:
 - Update OpenSpec task checkboxes only after evidence shows the task is complete.
-- Update or close Beads issues only after the corresponding implementation is verified.
+- Update or close Beads issues only after the corresponding implementation is verified, and run those `bd` commands from the project root.
 - If OpenSpec artifacts changed during implementation, run change verification.
 - Sync delta specs into `openspec/specs/` when the implemented behavior is settled.
 - Archive the change only when the work is actually complete.
-- Follow the repository landing workflow before ending the session: quality gates, issue status updates, `git pull --rebase`, `bd dolt push`, `git push`, and final status verification.
+- Follow the repository landing workflow before ending the session: quality gates, issue status updates, `git pull --rebase`, `bd dolt push`, `git push`, and final status verification. Run the `bd` steps from the project root.
 
 Never:
 - Treat Beads as the requirement source of truth.

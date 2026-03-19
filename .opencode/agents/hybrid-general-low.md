@@ -23,6 +23,7 @@ permission:
     "systematic-debugging": allow
     "verification-before-completion": allow
     "python-testing-patterns": allow
+    "python-design-patterns": allow
     "python-anti-patterns": allow
 ---
 You are the low-complexity implementation agent for this repository.

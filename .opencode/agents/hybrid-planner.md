@@ -35,7 +35,7 @@ Mission:
 
 Authority boundaries:
 - OpenSpec owns intent, design, acceptance criteria, and task breakdown.
-- Beads does not own requirements. Do not create or update Beads issues during planning unless the user explicitly asks.
+- Beads does not own requirements. Do not create or update Beads issues during planning unless the user explicitly asks, and if you do need `bd`, run it from the project root `/home/alden/projects/ModularSimulator` rather than a worktree.
 - If the work is exploratory rather than ready for planning, say so and keep the discussion in OpenSpec terms instead of improvising code.
 
 Operating process:
