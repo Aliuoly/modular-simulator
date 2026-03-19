@@ -186,8 +186,8 @@ def test_disconnected_subgraph_warns() -> None:
     assert any("disconnected topology detected" in message for message in messages)
 
 
-def test_cycle_warns_without_failing_compile() -> None:
-    """Recycle loop with a junction-based topology emits a cycle warning during compile.
+def test_cycle_compiles_without_legacy_recycle_warning() -> None:
+    """Recycle loop with supported positive pump boost compiles without the legacy cycle warning.
 
     Replaces the pre-szt.2 version that used illegal direct unit-port fan-in.
     Uses the canonical junction API: fresh feed + recycle merge through a junction.
@@ -201,7 +201,7 @@ def test_cycle_warns_without_failing_compile() -> None:
         _ = flowsheet.compile()
 
     messages = [str(item.message) for item in caught]
-    assert any("recycle/cycle detected" in message for message in messages)
+    assert not any("recycle/cycle detected" in message for message in messages)
 
 
 def test_compile_requires_pressure_boundary_feed() -> None:
@@ -267,11 +267,8 @@ class TestRecycleLoopRejection:
         _assert_recycle_diagnostic_schema(payload)
 
     def test_recycle_loop_with_positive_boost_pump_compiles(self) -> None:
-        """A recycle loop with a positive-boost pump must compile successfully.
-
-        The existing pre-szt.3 cycle warning should still fire (it has not been
-        replaced yet), and the plant must compile without recycle rejection.
-        """
+        """A recycle loop with a positive-boost pump must compile successfully
+        without emitting the legacy recycle warning."""
         flowsheet = _build_single_recycle_loop(
             pump=PumpInstall(initial_pump_speed=80_000.0),
         )
@@ -281,9 +278,8 @@ class TestRecycleLoopRejection:
             plant = flowsheet.compile()
 
         assert plant is not None
-        # The existing cycle detection warning should still be emitted.
         messages = [str(item.message) for item in caught]
-        assert any("recycle/cycle detected" in msg for msg in messages)
+        assert not any("recycle/cycle detected" in msg for msg in messages)
 
     def test_multiple_invalid_recycle_loops_report_deterministic_payloads(self) -> None:
         """When multiple invalid recycle loops exist, the diagnostic payload must

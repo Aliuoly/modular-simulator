@@ -751,15 +751,6 @@ class Flowsheet:
 
         self._reject_invalid_recycle_loops(cycles=all_cycles)
 
-        # Emit warning for any remaining (valid) cycles
-        cycle = all_cycles[0]
-        cycle_path = " -> ".join(cycle)
-        warnings.warn(
-            "flowsheet compile validation warning: recycle/cycle detected in topology "
-            + f"({cycle_path}); convergence handling is not enabled in compile-time validation",
-            stacklevel=2,
-        )
-
     def _find_all_directed_cycles(
         self, *, directed_neighbors: dict[str, set[str]]
     ) -> list[tuple[str, ...]]:
