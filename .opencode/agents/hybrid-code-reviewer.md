@@ -7,12 +7,7 @@ temperature: 0.1
 color: error
 permission:
   edit: deny
-  bash:
-    "*": deny
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "git status*": allow
+  bash: allow
   webfetch: deny
   task:
     "*": deny

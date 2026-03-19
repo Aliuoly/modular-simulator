@@ -6,14 +6,7 @@ temperature: 0.1
 color: success
 permission:
   edit: allow
-  bash:
-    "*": ask
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "uv sync*": allow
-    "uv run *": allow
-    "pytest *": allow
+  bash: allow
   webfetch: deny
   task:
     "*": deny

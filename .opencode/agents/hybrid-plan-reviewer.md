@@ -7,7 +7,7 @@ temperature: 0.1
 color: warning
 permission:
   edit: deny
-  bash: deny
+  bash: allow
   webfetch: deny
   task:
     "*": deny

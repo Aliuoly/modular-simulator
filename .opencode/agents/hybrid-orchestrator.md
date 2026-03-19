@@ -7,18 +7,7 @@ temperature: 0.1
 color: primary
 permission:
   edit: ask
-  bash:
-    "*": ask
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "git rev-parse*": allow
-    "git merge-base*": allow
-    "bd *": allow
-    "openspec *": allow
-    "uv sync*": allow
-    "uv run *": allow
-    "pytest *": allow
+  bash: allow
   webfetch: ask
   task:
     "*": deny

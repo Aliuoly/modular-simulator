@@ -7,17 +7,7 @@ temperature: 0.1
 color: info
 permission:
   edit: ask
-  bash:
-    "*": ask
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "bd show*": allow
-    "bd list*": allow
-    "bd ready*": allow
-    "openspec list*": allow
-    "openspec show*": allow
-    "openspec instructions*": allow
+  bash: allow
   webfetch: ask
   task:
     "*": deny

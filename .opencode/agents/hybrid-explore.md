@@ -6,7 +6,7 @@ temperature: 0.1
 color: secondary
 permission:
   edit: deny
-  bash: deny
+  bash: allow
   webfetch: deny
   task:
     "*": deny
