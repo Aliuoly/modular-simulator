@@ -247,6 +247,7 @@ class _UnitPressureRelation:
     inlet_port_name: str
     outlet_port_name: str
     pressure_drop_pa: float
+    explicitly_declared: bool
 
 
 class Flowsheet:
@@ -927,7 +928,7 @@ class Flowsheet:
             for unit_id, unit in self._units.items()
         }
         stream_trace_values: dict[str, dict[str, list[object]]] = {
-            f"{connection.display_source}->{connection.display_target}": {
+            f"{connection.display_source}->{connection.target}": {
                 "flow_rate": [],
                 "temperature": [],
                 "pressure": [],
@@ -946,7 +947,7 @@ class Flowsheet:
                     unit_state_trace_values[unit_id][state_name].append(state_value)
 
             for connection in self._connections:
-                stream_key = f"{connection.display_source}->{connection.display_target}"
+                stream_key = f"{connection.display_source}->{connection.target}"
                 stream = self._stream_snapshot_for_connection(connection=connection)
                 stream_trace_values[stream_key]["flow_rate"].append(float(stream.molar_flow_rate))
                 stream_trace_values[stream_key]["temperature"].append(float(stream.temperature))
@@ -1864,7 +1865,11 @@ class Flowsheet:
 
                 linear_residual_equations.append(
                     LinearResidualEquation(
-                        residual_name=(f"unit__{unit_id}__pressure_relation__{relation_index:02d}"),
+                        residual_name=(
+                            f"unit__{unit_id}__pressure_relation"
+                            if relation_index == 1
+                            else f"unit__{unit_id}__pressure_relation__{relation_index:02d}"
+                        ),
                         coefficients=MappingProxyType(
                             {
                                 inlet_node_spec.pressure_unknown_name: 1.0,
@@ -2003,13 +2008,14 @@ class Flowsheet:
         if not inlet_ports or not outlet_ports:
             return ()
 
-        pressure_drop_value = self._infer_unit_pressure_drop_value(unit=unit)
+        pressure_drop_value, explicitly_declared = self._infer_unit_pressure_drop_value(unit=unit)
 
         pairwise_relations = self._infer_pairwise_unit_pressure_relations(
             unit_id=unit_id,
             inlet_ports=inlet_ports,
             outlet_ports=outlet_ports,
             pressure_drop_value=pressure_drop_value,
+            explicitly_declared=explicitly_declared,
         )
         if pairwise_relations:
             return pairwise_relations
@@ -2037,6 +2043,7 @@ class Flowsheet:
                     inlet_port_name=inlet_port_name,
                     outlet_port_name=outlet_port_name,
                     pressure_drop_pa=pressure_drop_value,
+                    explicitly_declared=explicitly_declared,
                 )
             )
         return tuple(relations)
@@ -2048,6 +2055,7 @@ class Flowsheet:
         inlet_ports: tuple[str, ...],
         outlet_ports: tuple[str, ...],
         pressure_drop_value: float,
+        explicitly_declared: bool,
     ) -> tuple[_UnitPressureRelation, ...]:
         if len(inlet_ports) != len(outlet_ports) or len(inlet_ports) <= 1:
             return ()
@@ -2087,20 +2095,26 @@ class Flowsheet:
                     inlet_port_name=inlet_port_name,
                     outlet_port_name=outlet_port_name,
                     pressure_drop_pa=pressure_drop_value,
+                    explicitly_declared=explicitly_declared,
                 )
             )
         return tuple(relations)
 
-    def _infer_unit_pressure_drop_value(self, *, unit: ProcessModel) -> float:
-        pressure_drop_value = 0.0
+    def _infer_unit_pressure_drop_value(self, *, unit: ProcessModel) -> tuple[float, bool]:
         metadata = unit.state_metadata_dict.get("pressure_drop")
-        if metadata is not None and metadata.type == StateType.CONSTANT:
-            pressure_drop = getattr(unit, "pressure_drop", None)
-            if isinstance(pressure_drop, (int, float)):
-                candidate_value = float(pressure_drop)
-                if isfinite(candidate_value) and candidate_value >= 0.0:
-                    pressure_drop_value = candidate_value
-        return pressure_drop_value
+        if metadata is None or metadata.type != StateType.CONSTANT:
+            return 0.0, False
+        if not self._field_was_explicitly_declared(unit=unit, attribute_name="pressure_drop"):
+            return 0.0, False
+
+        pressure_drop = self._explicit_declared_field_value(
+            unit=unit, attribute_name="pressure_drop"
+        )
+        if isinstance(pressure_drop, (int, float)):
+            candidate_value = float(pressure_drop)
+            if isfinite(candidate_value) and candidate_value >= 0.0:
+                return candidate_value, True
+        return 0.0, False
 
     def _port_exposes_pressure_metadata(
         self,
@@ -2160,6 +2174,8 @@ class Flowsheet:
             rel_tol=1.0e-9,
             abs_tol=1.0e-9,
         ):
+            return
+        if not relation.explicitly_declared:
             return
         raise ValueError(
             "conflicting unit hydraulic boundary conditions for '{}': explicit anchors {}={} Pa and {}={} Pa conflict with inferred pressure_drop={} Pa; remove one fixed-pressure declaration or add an explicit junction/unit model with the intended hydraulic semantics".format(

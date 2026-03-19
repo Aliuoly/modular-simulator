@@ -136,7 +136,7 @@ def test_connect_rejects_malformed_endpoint_deterministically() -> None:
         _ = network.connect("reactor", "sink")
 
     assert str(error.value) == (
-        "invalid endpoint 'reactor': process endpoints must use '<process_id>.<port_name>' format"
+        "invalid endpoint 'reactor': process endpoints must use '<node_id>.<port_name>' format"
     )
 
 

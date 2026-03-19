@@ -127,6 +127,7 @@ class ThermoBoundaryPropagationStep:
         incoming_conditions_by_target: dict[str, list[PortCondition]] = {}
         target_bindings: dict[str, tuple[str, object, str]] = {}
         target_stream_port_ios: dict[str, ProcessStreamIO] = {}
+        canonical_outlet_snapshot_keys: set[tuple[str, str]] = set()
         edge_by_id = {edge.edge_id: edge for edge in compiled.topology.edges}
 
         for edge in sorted(compiled.topology.edges, key=lambda item: item.edge_id):
@@ -163,6 +164,7 @@ class ThermoBoundaryPropagationStep:
                 source_projection=provider_projection,
                 target_projection=receiver_projection,
                 global_species_ids=species_ids,
+                recorded_outlet_keys=canonical_outlet_snapshot_keys,
             )
             if stream_condition is not None:
                 target_key = f"{receiver_node_id}.{receiver_port_name}"
@@ -289,6 +291,7 @@ class ThermoBoundaryPropagationStep:
             network=network,
             hydraulic_result=hydraulic_result,
             macro_step_time_s=macro_step_time_s,
+            skip_outlet_keys=canonical_outlet_snapshot_keys,
         )
 
         for target_key in sorted(incoming_conditions_by_target):
@@ -346,6 +349,7 @@ class ThermoBoundaryPropagationStep:
         network: ConnectionNetwork,
         hydraulic_result: HydraulicSolveResult,
         macro_step_time_s: float,
+        skip_outlet_keys: set[tuple[str, str]] | None = None,
     ) -> None:
         runtime_port_snapshot_store = self._config.runtime_port_snapshot_store
         if runtime_port_snapshot_store is None:
@@ -365,12 +369,24 @@ class ThermoBoundaryPropagationStep:
             source_node_id = process_node.process_id
             source_binding = compiled.process_bindings.get(source_node_id)
             for source_port_name in process_node.outlet_ports:
-                source_condition = self._resolve_source_outlet_condition(
-                    source_node_id=source_node_id,
-                    source_port_name=source_port_name,
-                    source_binding=source_binding,
-                    allow_binding_payload_fallback=True,
-                )
+                if (
+                    skip_outlet_keys is not None
+                    and (
+                        source_node_id,
+                        source_port_name,
+                    )
+                    in skip_outlet_keys
+                ):
+                    continue
+                try:
+                    source_condition = self._resolve_source_outlet_condition(
+                        source_node_id=source_node_id,
+                        source_port_name=source_port_name,
+                        source_binding=source_binding,
+                        allow_binding_payload_fallback=True,
+                    )
+                except BindingError:
+                    continue
                 if source_condition is None:
                     continue
 
@@ -411,6 +427,7 @@ class ThermoBoundaryPropagationStep:
         source_projection: SpeciesProjection | None,
         target_projection: SpeciesProjection | None,
         global_species_ids: tuple[str, ...],
+        recorded_outlet_keys: set[tuple[str, str]] | None = None,
     ) -> PortCondition | None:
         source_condition = self._resolve_source_outlet_condition(
             source_node_id=source_node_id,
@@ -437,8 +454,6 @@ class ThermoBoundaryPropagationStep:
             compiled_hydraulic=compiled_hydraulic,
             hydraulic_result=hydraulic_result,
         )
-        if flow_rate is None and source_binding is not None:
-            return None
         if flow_rate is None:
             flow_rate = float(source_condition.through_molar_flow_rate)
         else:
@@ -483,6 +498,8 @@ class ThermoBoundaryPropagationStep:
                     macro_step_time_s=macro_step_time_s,
                 ),
             )
+            if recorded_outlet_keys is not None:
+                recorded_outlet_keys.add((source_node_id, source_port_name))
 
         return resolved_condition
 
@@ -501,9 +518,12 @@ class ThermoBoundaryPropagationStep:
                 return boundary_stream.to_port_condition()
 
         configured_bindings = self._config.stream_port_io_by_node_id
+        configured_candidate = (
+            configured_bindings.get(source_node_id) if configured_bindings is not None else None
+        )
         candidates: list[object | None] = []
         if configured_bindings is not None:
-            candidates.append(configured_bindings.get(source_node_id))
+            candidates.append(configured_candidate)
         candidates.append(source_binding)
 
         seen_candidate_ids: set[int] = set()
@@ -520,6 +540,14 @@ class ThermoBoundaryPropagationStep:
             resolved_condition = resolve_process_outlet_condition(candidate, source_port_name)
             if resolved_condition is not None:
                 return resolved_condition
+
+            if candidate is configured_candidate and candidate is not source_binding:
+                stream_port_condition = self._resolve_stream_port_outlet_condition(
+                    candidate=candidate,
+                    port_name=source_port_name,
+                )
+                if stream_port_condition is not None:
+                    return stream_port_condition
 
             if self._supports_outlet_payload(candidate):
                 saw_payload_binding = True
@@ -549,6 +577,25 @@ class ThermoBoundaryPropagationStep:
                 + "resolve_outlet_condition(port_name)."
             )
         return None
+
+    def _resolve_stream_port_outlet_condition(
+        self,
+        *,
+        candidate: object,
+        port_name: str,
+    ) -> PortCondition | None:
+        get_outlet_stream = getattr(candidate, "get_outlet_stream", None)
+        if not callable(get_outlet_stream):
+            return None
+        try:
+            outlet_stream = get_outlet_stream(port_name)
+        except BindingError:
+            return None
+
+        to_port_condition = getattr(outlet_stream, "to_port_condition", None)
+        if not callable(to_port_condition):
+            return None
+        return cast("PortCondition", to_port_condition())
 
     def _resolve_stream_port_io(
         self,
@@ -823,6 +870,10 @@ class ThermoBoundaryPropagationStep:
         if hydraulic_pressure is not None:
             return hydraulic_pressure
 
+        raw_signal_pressure = self._pressure_from_hydraulic_unknowns(hydraulic_result)
+        if raw_signal_pressure is not None:
+            return raw_signal_pressure
+
         outlet_pressure = self._pressure_from_outlet_payload(outlet_payload)
         if outlet_pressure is not None:
             return outlet_pressure
@@ -865,6 +916,19 @@ class ThermoBoundaryPropagationStep:
             and float(state_pressure) > 0.0
         ):
             return float(state_pressure)
+        return None
+
+    def _pressure_from_hydraulic_unknowns(
+        self,
+        hydraulic_result: HydraulicSolveResult,
+    ) -> float | None:
+        raw_pressure = hydraulic_result.unknowns.get("pressure")
+        if (
+            isinstance(raw_pressure, (float, int))
+            and isfinite(float(raw_pressure))
+            and float(raw_pressure) > 0.0
+        ):
+            return float(raw_pressure)
         return None
 
     def _resolve_hydraulic_pressure(

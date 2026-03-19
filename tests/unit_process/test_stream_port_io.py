@@ -8,7 +8,8 @@ from typing import cast
 import numpy as np
 import pytest
 
-from modular_simulation.thermodynamics.property_package import FlashResult, PropertyPackage
+from modular_simulation.thermodynamics.property_package import PropertyPackage
+from modular_simulation.thermodynamics.property_package import FlashResult
 from modular_simulation.thermodynamics.stream import StreamData
 from modular_simulation.framework.system import System
 from modular_simulation.unit_processes import (
@@ -18,29 +19,21 @@ from modular_simulation.unit_processes import (
     FlashDrum,
     HeatExchanger,
     HeaterCooler,
-    Mixer,
     PFR,
-    Pump,
     ShortcutDistillation,
-    Splitter,
-    Valve,
 )
 
 
 def _attach(
     model: (
         HeaterCooler
-        | Pump
-        | Valve
         | ConversionReactor
         | CSTR
         | ComponentSeparator
         | FlashDrum
         | ShortcutDistillation
         | HeatExchanger
-        | Mixer
         | PFR
-        | Splitter
     ),
 ) -> None:
     model.attach_system(cast(System, cast(object, SimpleNamespace(solver_options={}))))
@@ -101,70 +94,6 @@ def test_heater_cooler_stream_port_round_trip() -> None:
     assert outlet.pressure == pytest.approx(inlet.pressure)
     assert outlet.molar_flow_rate == pytest.approx(inlet.molar_flow_rate)
     assert outlet.mole_fractions == pytest.approx(inlet.mole_fractions)
-
-
-def test_pump_flow_conversion_uses_density() -> None:
-    package = _DensityPackage(density_kg_m3=1000.0, molecular_weight_g_mol=18.0)
-    pump = Pump(
-        n_species=2,
-        inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
-        outlet_composition=np.array([0.5, 0.5], dtype=np.float64),
-    )
-    pump.set_property_package(cast(PropertyPackage, cast(object, package)))
-
-    inlet = StreamData(
-        temperature=300.0,
-        pressure=101325.0,
-        mole_fractions=(0.7, 0.3),
-        molar_flow_rate=100.0,
-    )
-    pump.apply_inlet("inlet", inlet)
-
-    expected_inlet_m3_s = 100.0 * (18.0 / 1000.0) / 1000.0
-    assert pump.inlet_flow == pytest.approx(expected_inlet_m3_s)
-
-    pump.outlet_flow = expected_inlet_m3_s * 2.0
-    pump.outlet_temperature = 310.0
-    pump.outlet_pressure = 201325.0
-    pump.outlet_composition = np.array([0.6, 0.4], dtype=np.float64)
-
-    outlet = pump.get_outlet_stream("outlet")
-    assert outlet.molar_flow_rate == pytest.approx(200.0)
-    assert outlet.temperature == pytest.approx(310.0)
-    assert outlet.pressure == pytest.approx(201325.0)
-    assert outlet.mole_fractions == pytest.approx((0.6, 0.4))
-
-
-def test_valve_flow_conversion_uses_density() -> None:
-    package = _DensityPackage(density_kg_m3=900.0, molecular_weight_g_mol=30.0)
-    valve = Valve(
-        n_species=2,
-        inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
-        outlet_composition=np.array([0.5, 0.5], dtype=np.float64),
-    )
-    valve.set_property_package(cast(PropertyPackage, cast(object, package)))
-
-    inlet = StreamData(
-        temperature=320.0,
-        pressure=180000.0,
-        mole_fractions=(0.4, 0.6),
-        molar_flow_rate=45.0,
-    )
-    valve.apply_inlet("inlet", inlet)
-
-    expected_inlet_m3_s = 45.0 * (30.0 / 1000.0) / 900.0
-    assert valve.inlet_flow == pytest.approx(expected_inlet_m3_s)
-
-    valve.outlet_flow = expected_inlet_m3_s * 3.0
-    valve.outlet_temperature = 315.0
-    valve.outlet_pressure = 140000.0
-    valve.outlet_composition = np.array([0.3, 0.7], dtype=np.float64)
-
-    outlet = valve.get_outlet_stream("outlet")
-    assert outlet.molar_flow_rate == pytest.approx(135.0)
-    assert outlet.temperature == pytest.approx(315.0)
-    assert outlet.pressure == pytest.approx(140000.0)
-    assert outlet.mole_fractions == pytest.approx((0.3, 0.7))
 
 
 def test_cstr_flow_conversion_uses_density() -> None:
@@ -445,113 +374,10 @@ def test_heat_exchanger_dual_inlet_and_dual_outlet_stream_io() -> None:
     assert cold_out.mole_fractions == pytest.approx((0.15, 0.85))
 
 
-def test_mixer_dynamic_inlets_and_standard_outlet_stream_io() -> None:
-    mixer = Mixer(n_inlets=3, n_species=2)
-
-    inlet_2 = StreamData(
-        temperature=340.0,
-        pressure=155000.0,
-        mole_fractions=(0.7, 0.3),
-        molar_flow_rate=6.0,
-    )
-    inlet_3 = StreamData(
-        temperature=360.0,
-        pressure=165000.0,
-        mole_fractions=(0.2, 0.8),
-        molar_flow_rate=4.0,
-    )
-
-    mixer.apply_inlet("inlet_2", inlet_2)
-    mixer.apply_inlet("inlet_3", inlet_3)
-
-    assert mixer.inlet_flows[1] == pytest.approx(6.0)
-    assert mixer.inlet_temperatures[1] == pytest.approx(340.0)
-    assert mixer.inlet_pressures[1] == pytest.approx(155000.0)
-    assert mixer.inlet_compositions.reshape(3, 2)[1] == pytest.approx((0.7, 0.3))
-    assert mixer.inlet_flows[2] == pytest.approx(4.0)
-    assert mixer.inlet_compositions.reshape(3, 2)[2] == pytest.approx((0.2, 0.8))
-
-    mixer.outlet_flow = 10.0
-    mixer.outlet_temperature = 348.0
-    mixer.outlet_pressure = 150000.0
-    mixer.outlet_composition = np.array([0.5, 0.5], dtype=np.float64)
-
-    outlet = mixer.get_outlet_stream("outlet")
-    assert outlet.molar_flow_rate == pytest.approx(10.0)
-    assert outlet.temperature == pytest.approx(348.0)
-    assert outlet.pressure == pytest.approx(150000.0)
-    assert outlet.mole_fractions == pytest.approx((0.5, 0.5))
-
-
-def test_splitter_standard_inlet_and_dynamic_outlets_stream_io() -> None:
-    splitter = Splitter(n_outlets=3, n_species=2)
-    inlet = StreamData(
-        temperature=325.0,
-        pressure=180000.0,
-        mole_fractions=(0.6, 0.4),
-        molar_flow_rate=12.0,
-    )
-    splitter.apply_inlet("inlet", inlet)
-
-    assert splitter.inlet_flow == pytest.approx(12.0)
-    assert splitter.inlet_temperature == pytest.approx(325.0)
-    assert splitter.inlet_pressure == pytest.approx(180000.0)
-    assert splitter.inlet_composition == pytest.approx((0.6, 0.4))
-
-    splitter.outlet_flows = np.array([3.0, 4.0, 5.0], dtype=np.float64)
-    splitter.outlet_temperatures = np.array([325.0, 324.0, 323.0], dtype=np.float64)
-    splitter.outlet_pressures = np.array([179000.0, 178000.0, 177000.0], dtype=np.float64)
-    splitter.outlet_compositions = np.array([0.6, 0.4, 0.55, 0.45, 0.5, 0.5], dtype=np.float64)
-
-    outlet_2 = splitter.get_outlet_stream("outlet_2")
-    assert outlet_2.molar_flow_rate == pytest.approx(4.0)
-    assert outlet_2.temperature == pytest.approx(324.0)
-    assert outlet_2.pressure == pytest.approx(178000.0)
-    assert outlet_2.mole_fractions == pytest.approx((0.55, 0.45))
-
-
-def test_mixer_splitter_invalid_indices_raise_clear_errors() -> None:
-    stream = StreamData(
-        temperature=300.0,
-        pressure=101325.0,
-        mole_fractions=(0.5, 0.5),
-        molar_flow_rate=1.0,
-    )
-    mixer = Mixer(n_inlets=2, n_species=2)
-    splitter = Splitter(n_outlets=2, n_species=2)
-
-    with pytest.raises(
-        ValueError,
-        match="Invalid inlet port 'inlet_3'.*Allowed inlet ports: inlet_1, inlet_2",
-    ):
-        mixer.apply_inlet("inlet_3", stream)
-
-    with pytest.raises(
-        ValueError,
-        match="Invalid outlet port 'outlet_0'.*Allowed outlet ports: outlet_1, outlet_2",
-    ):
-        _ = splitter.get_outlet_stream("outlet_0")
-
-
-@pytest.mark.parametrize("unit", [Pump(n_species=2), Valve(n_species=2)])
-def test_volumetric_units_raise_clear_error_without_property_package(unit: Pump | Valve) -> None:
-    stream = StreamData(
-        temperature=300.0,
-        pressure=101325.0,
-        mole_fractions=(0.5, 0.5),
-        molar_flow_rate=1.0,
-    )
-
-    with pytest.raises(ValueError, match="property package"):
-        unit.apply_inlet("inlet", stream)
-
-
 @pytest.mark.parametrize(
     "unit",
     [
         HeaterCooler(mode="duty", n_species=2),
-        Pump(n_species=2),
-        Valve(n_species=2),
         ConversionReactor(n_species=2),
         ComponentSeparator(
             n_species=2,
@@ -560,26 +386,20 @@ def test_volumetric_units_raise_clear_error_without_property_package(unit: Pump 
         FlashDrum(n_species=2),
         ShortcutDistillation(n_species=2),
         HeatExchanger(n_species=2),
-        Mixer(n_species=2),
         CSTR(n_species=2),
         PFR(n_species=2),
-        Splitter(n_species=2),
     ],
 )
 def test_invalid_port_names_raise_clear_errors(
     unit: (
         HeaterCooler
-        | Pump
-        | Valve
         | ConversionReactor
         | ComponentSeparator
         | FlashDrum
         | ShortcutDistillation
         | HeatExchanger
-        | Mixer
         | CSTR
         | PFR
-        | Splitter
     ),
 ) -> None:
     stream = StreamData(

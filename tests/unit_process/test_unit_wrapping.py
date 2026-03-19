@@ -15,8 +15,7 @@ from modular_simulation.framework.system import System
 from modular_simulation.measurables.process_model import StateType
 from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 from modular_simulation.thermodynamics.stream import StreamData
-from modular_simulation.unit_processes import CSTR, HeaterCooler
-from modular_simulation.unit_processes.separation.splitter import Splitter
+from modular_simulation.unit_processes import CSTR, FlashDrum, HeaterCooler
 
 
 def test_auto_wrap_heater() -> None:
@@ -82,14 +81,14 @@ def test_auto_wrap_heater() -> None:
     for state_name in differential_states:
         assert state_name in cstr_subsystem.descriptor.publication_map
 
-    splitter = Splitter(n_species=2)
-    splitter_subsystem = create_subsystem_for_unit(
-        unit=splitter,
-        unit_id="splitter",
+    flash = FlashDrum(n_species=2)
+    flash_subsystem = create_subsystem_for_unit(
+        unit=flash,
+        unit_id="flash",
         dt=0.1,
         runtime_context=runtime_context,
     )
-    assert splitter_subsystem.descriptor.process_id == "splitter"
+    assert flash_subsystem.descriptor.process_id == "flash"
 
 
 def test_sensor_on_wrapped_unit() -> None:

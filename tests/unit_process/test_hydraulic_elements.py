@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from math import isfinite
 from types import MappingProxyType
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -32,11 +32,7 @@ from modular_simulation.unit_processes import (
     FlashDrum,
     HeatExchanger,
     HeaterCooler,
-    Mixer,
-    Pump,
     ShortcutDistillation,
-    Splitter,
-    Valve,
 )
 
 
@@ -65,10 +61,10 @@ def _single_flow_equation(
 
 
 def test_pump_hydraulic() -> None:
-    pump = Pump(n_species=2, pump_speed=120_000.0)
-    element = pump.to_hydraulic_element("outlet")
-
-    assert isinstance(element, PumpHydraulicElement)
+    element = PumpHydraulicElement(
+        dp_curve=lambda flow_rate, pump_speed: pump_speed,
+        d_dp_d_mdot=lambda flow_rate, pump_speed: 0.0,
+    )
 
     residual = element.residuals(
         inputs=MappingProxyType(
@@ -78,7 +74,7 @@ def test_pump_hydraulic() -> None:
             }
         ),
         unknowns=MappingProxyType({"flow_rate": 1.25}),
-        parameters=MappingProxyType(default_pump_hydraulic_parameters(pump_speed=pump.pump_speed)),
+        parameters=MappingProxyType(default_pump_hydraulic_parameters(pump_speed=120_000.0)),
     )["head_balance"]
     jacobian = element.jacobian(
         inputs=MappingProxyType(
@@ -88,7 +84,7 @@ def test_pump_hydraulic() -> None:
             }
         ),
         unknowns=MappingProxyType({"flow_rate": 1.25}),
-        parameters=MappingProxyType(default_pump_hydraulic_parameters(pump_speed=pump.pump_speed)),
+        parameters=MappingProxyType(default_pump_hydraulic_parameters(pump_speed=120_000.0)),
     )[("head_balance", "flow_rate")]
 
     assert residual == pytest.approx(0.0, abs=1.0e-12)
@@ -97,8 +93,11 @@ def test_pump_hydraulic() -> None:
 
 def test_network_hydraulic_solve() -> None:
     heater = HeaterCooler(n_species=2)
-    valve = Valve(n_species=2, Cv=0.01, open_fraction=0.8, delta=1.0e-6)
-    mixer = Mixer(n_inlets=2, n_species=2)
+    valve = ValveHydraulicElement()
+    pump = PumpHydraulicElement(
+        dp_curve=lambda flow_rate, pump_speed: pump_speed - 40_000.0 * flow_rate,
+        d_dp_d_mdot=lambda flow_rate, pump_speed: -40_000.0,
+    )
 
     equations = (
         _single_flow_equation(
@@ -113,28 +112,26 @@ def test_network_hydraulic_solve() -> None:
         ),
         _single_flow_equation(
             name="valve_line",
-            element=valve.to_hydraulic_element("outlet"),
+            element=valve,
             upstream_pressure=180_000.0,
             downstream_pressure=120_000.0,
             flow_unknown_name="valve_flow",
             parameters=default_valve_hydraulic_parameters(
-                cv=valve.Cv,
-                open_fraction=valve.open_fraction,
-                minimum_open_fraction=valve.minimum_open_fraction,
-                maximum_open_fraction=valve.maximum_open_fraction,
-                min_relative_open_fraction=valve.min_relative_open_fraction,
-                delta=valve.delta,
+                cv=0.01,
+                open_fraction=0.8,
+                minimum_open_fraction=0.0,
+                maximum_open_fraction=1.0,
+                min_relative_open_fraction=1.0e-3,
+                delta=1.0e-6,
             ),
         ),
         _single_flow_equation(
-            name="mixer_line",
-            element=mixer.to_hydraulic_element("outlet"),
-            upstream_pressure=130_000.0,
-            downstream_pressure=100_000.0,
-            flow_unknown_name="mixer_flow",
-            parameters=default_pipe_hydraulic_parameters(
-                resistance=default_pipe_resistance_for_unit(unit_name=type(mixer).__name__)
-            ),
+            name="pump_line",
+            element=pump,
+            upstream_pressure=100_000.0,
+            downstream_pressure=220_000.0,
+            flow_unknown_name="pump_flow",
+            parameters=default_pump_hydraulic_parameters(pump_speed=200_000.0),
         ),
     )
     system = HydraulicSystemDefinition(equations=equations)
@@ -144,7 +141,7 @@ def test_network_hydraulic_solve() -> None:
             {
                 "heater_flow": 0.0,
                 "valve_flow": 0.0,
-                "mixer_flow": 0.0,
+                "pump_flow": 0.0,
             }
         ),
         tolerance=1.0e-10,
@@ -155,10 +152,10 @@ def test_network_hydraulic_solve() -> None:
     assert result.residual_norm <= 1.0e-8
     assert isfinite(result.unknowns["heater_flow"])
     assert isfinite(result.unknowns["valve_flow"])
-    assert isfinite(result.unknowns["mixer_flow"])
+    assert isfinite(result.unknowns["pump_flow"])
     assert result.unknowns["heater_flow"] > 0.0
     assert result.unknowns["valve_flow"] > 0.0
-    assert result.unknowns["mixer_flow"] > 0.0
+    assert result.unknowns["pump_flow"] > 0.0
 
 
 @pytest.mark.parametrize(
@@ -190,9 +187,6 @@ def test_network_hydraulic_solve() -> None:
         ),
         (HeatExchanger(n_species=2), "hot_outlet", 5.0e3),
         (HeatExchanger(n_species=2), "cold_outlet", 5.0e3),
-        (Mixer(n_inlets=2, n_species=2), "outlet", 1.0e3),
-        (Splitter(n_outlets=2, n_species=2), "outlet_1", 1.0e3),
-        (Splitter(n_outlets=2, n_species=2), "outlet_2", 1.0e3),
     ],
 )
 def test_pipe_hydraulic_defaults_for_units(
@@ -239,18 +233,26 @@ def test_pipe_hydraulic_element_owns_default_parameters_and_geometry_bootstrap()
 
 
 def test_pump_hydraulic_element_owns_default_parameters_and_bootstrap() -> None:
-    pump = Pump(n_species=2, pump_speed=120_000.0)
-    element = pump.to_hydraulic_element("outlet")
+    class _PumpSeedSource:
+        def hydraulic_parameters_for_port(self, port_name: str) -> MappingProxyType[str, float]:
+            assert port_name == "outlet"
+            return MappingProxyType({"pump_speed": 120_000.0})
+
+    element = PumpHydraulicElement(
+        dp_curve=lambda flow_rate, pump_speed: pump_speed,
+        d_dp_d_mdot=lambda flow_rate, pump_speed: 0.0,
+    )
+    seed_source = _PumpSeedSource()
 
     parameters = element.default_parameters(
-        source_unit=pump,
+        source_unit=cast(Any, seed_source),
         source_node_id="pump",
         source_port_name="outlet",
         target_unit=None,
         target_node_id="sink",
     )
     bootstrap = element.line_bootstrap(
-        source_unit=pump,
+        source_unit=cast(Any, seed_source),
         source_node_id="pump",
         source_port_name="outlet",
         line_id="pump_line",

@@ -17,7 +17,8 @@ from modular_simulation.connection.hydraulics.hydraulic_element import (
     ValveHydraulicElement,
     smooth_signed_quadratic_flow_term,
 )
-from modular_simulation.thermodynamics.property_package import FlashResult
+from modular_simulation.thermodynamics.property_package import FlashResult, PropertyPackage
+from modular_simulation.thermodynamics.stream import StreamData
 from modular_simulation.unit_processes.flow.pump import Pump
 from modular_simulation.unit_processes.flow.valve import Valve
 
@@ -104,6 +105,102 @@ class _SyntheticLiquidPackage:
     @property
     def species_cas(self) -> tuple[str, ...]:
         return ("7732-18-5", "64-17-5")
+
+
+class _DensityPackage:
+    _density_kg_m3: float
+    _molecular_weight_g_mol: float
+
+    def __init__(self, *, density_kg_m3: float, molecular_weight_g_mol: float) -> None:
+        self._density_kg_m3 = density_kg_m3
+        self._molecular_weight_g_mol = molecular_weight_g_mol
+
+    def flash_tp(self, T: float, P: float, z: tuple[float, ...]) -> FlashResult:
+        return FlashResult(
+            temperature=T,
+            pressure=P,
+            vapor_fraction=0.0,
+            phase="liquid",
+            liquid_composition=z,
+            vapor_composition=None,
+            enthalpy_molar=0.0,
+            entropy_molar=0.0,
+            liquid_density=self._density_kg_m3,
+            vapor_density=None,
+            K_values=None,
+        )
+
+    def density(self, T: float, P: float, z: tuple[float, ...], phase: str) -> float:
+        del T, P, z, phase
+        return self._density_kg_m3
+
+    def molecular_weight(self, z: tuple[float, ...]) -> float:
+        del z
+        return self._molecular_weight_g_mol
+
+
+def test_pump_flow_conversion_uses_density() -> None:
+    package = _DensityPackage(density_kg_m3=1000.0, molecular_weight_g_mol=18.0)
+    pump = Pump(
+        n_species=2,
+        inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
+        outlet_composition=np.array([0.5, 0.5], dtype=np.float64),
+    )
+    pump.set_property_package(cast(PropertyPackage, cast(object, package)))
+
+    inlet = StreamData(
+        temperature=300.0,
+        pressure=101325.0,
+        mole_fractions=(0.7, 0.3),
+        molar_flow_rate=100.0,
+    )
+    pump.apply_inlet("inlet", inlet)
+
+    expected_inlet_m3_s = 100.0 * (18.0 / 1000.0) / 1000.0
+    assert pump.inlet_flow == pytest.approx(expected_inlet_m3_s)
+
+    pump.outlet_flow = expected_inlet_m3_s * 2.0
+    pump.outlet_temperature = 310.0
+    pump.outlet_pressure = 201325.0
+    pump.outlet_composition = np.array([0.6, 0.4], dtype=np.float64)
+
+    outlet = pump.get_outlet_stream("outlet")
+    assert outlet.molar_flow_rate == pytest.approx(200.0)
+    assert outlet.temperature == pytest.approx(310.0)
+    assert outlet.pressure == pytest.approx(201325.0)
+    assert outlet.mole_fractions == pytest.approx((0.6, 0.4))
+
+
+def test_valve_flow_conversion_uses_density() -> None:
+    package = _DensityPackage(density_kg_m3=900.0, molecular_weight_g_mol=30.0)
+    valve = Valve(
+        n_species=2,
+        inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
+        outlet_composition=np.array([0.5, 0.5], dtype=np.float64),
+    )
+    valve.set_property_package(cast(PropertyPackage, cast(object, package)))
+
+    inlet = StreamData(
+        temperature=320.0,
+        pressure=180000.0,
+        mole_fractions=(0.4, 0.6),
+        molar_flow_rate=45.0,
+    )
+    valve.apply_inlet("inlet", inlet)
+
+    expected_inlet_m3_s = 45.0 * (30.0 / 1000.0) / 900.0
+    assert valve.inlet_flow == pytest.approx(expected_inlet_m3_s)
+
+    valve.outlet_flow = expected_inlet_m3_s * 3.0
+    valve.outlet_temperature = 315.0
+    valve.outlet_pressure = 140000.0
+    valve.outlet_composition = np.array([0.3, 0.7], dtype=np.float64)
+
+    outlet = valve.get_outlet_stream("outlet")
+    assert outlet.molar_flow_rate == pytest.approx(135.0)
+    assert outlet.temperature == pytest.approx(315.0)
+    assert outlet.pressure == pytest.approx(140000.0)
+    assert outlet.mole_fractions == pytest.approx((0.3, 0.7))
 
 
 def test_pump_pressure_power_and_hydraulic_invariant() -> None:
@@ -267,6 +364,35 @@ def test_pump_exposes_hydraulic_parameters_for_port_with_pump_speed_authority() 
     parameters = pump.hydraulic_parameters_for_port("outlet")
 
     assert parameters["pump_speed"] == pytest.approx(75000.0)
+
+
+@pytest.mark.parametrize("unit", [Pump(n_species=2), Valve(n_species=2)])
+def test_volumetric_units_raise_clear_error_without_property_package(unit: Pump | Valve) -> None:
+    stream = StreamData(
+        temperature=300.0,
+        pressure=101325.0,
+        mole_fractions=(0.5, 0.5),
+        molar_flow_rate=1.0,
+    )
+
+    with pytest.raises(ValueError, match="property package"):
+        unit.apply_inlet("inlet", stream)
+
+
+@pytest.mark.parametrize("unit", [Pump(n_species=2), Valve(n_species=2)])
+def test_invalid_port_names_raise_clear_errors(unit: Pump | Valve) -> None:
+    stream = StreamData(
+        temperature=300.0,
+        pressure=101325.0,
+        mole_fractions=(0.5, 0.5),
+        molar_flow_rate=1.0,
+    )
+
+    with pytest.raises(ValueError, match="Invalid inlet port 'bad_inlet'"):
+        unit.apply_inlet("bad_inlet", stream)
+
+    with pytest.raises(ValueError, match="Invalid outlet port 'bad_outlet'"):
+        _ = unit.get_outlet_stream("bad_outlet")
 
 
 @pytest.mark.parametrize(
