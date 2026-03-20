@@ -13,6 +13,7 @@ from modular_simulation.validation.exceptions import MeasurableConfigurationErro
 
 if TYPE_CHECKING:
     from modular_simulation.connection.domain.state import PortCondition
+    from modular_simulation.thermodynamics.hydraulic_participation import HydraulicParticipationSpec
     from modular_simulation.thermodynamics.stream import StreamData
 
 
@@ -37,6 +38,11 @@ ENERGY_IO = UnitProcessPorts(("inlet", "energy_in"), ("outlet", "energy_out"))
 
 
 class AlgebraicProcessModel(ProcessModel, ABC):
+    @property
+    @override
+    def hydraulic_participation(self) -> HydraulicParticipationSpec | None:
+        return super().hydraulic_participation
+
     @override
     def model_post_init(self, context: Any) -> None:
         super().model_post_init(context)

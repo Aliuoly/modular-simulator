@@ -83,6 +83,10 @@ class HydraulicTopologyLookup:
     node_pressure_unknown_by_junction: Mapping[str, str] = field(
         default_factory=_empty_string_mapping
     )
+    endpoint_role_by_endpoint: Mapping[str, str] = field(default_factory=_empty_string_mapping)
+    balancing_group_name_by_endpoint: Mapping[str, str] = field(
+        default_factory=_empty_string_mapping
+    )
 
 
 @dataclass(frozen=True)

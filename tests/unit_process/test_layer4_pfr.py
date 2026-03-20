@@ -11,6 +11,7 @@ import pytest
 from numpy.typing import NDArray
 from pydantic import ValidationError
 
+from modular_simulation.thermodynamics.hydraulic_participation import HydraulicScalarStateRef
 from modular_simulation.thermodynamics import PowerLawRateLaw, Reaction, ReactionSet
 from modular_simulation.unit_processes import CSTR, PFR
 
@@ -172,3 +173,24 @@ def test_pfr_rejects_legacy_imposed_jacket_temperature_field() -> None:
 
     with pytest.raises(ValidationError):
         PFR(imposed_jacket_temperature=330.0)
+
+
+def test_pfr_declares_explicit_hydraulic_participation() -> None:
+    reactor = PFR()
+
+    participation = reactor.hydraulic_participation
+
+    assert participation is not None
+    assert set(participation.ports) == {"inlet", "outlet"}
+    assert participation.ports["inlet"].role == "pressure_state"
+    assert participation.ports["inlet"].pressure_state == HydraulicScalarStateRef(
+        state="inlet_pressure"
+    )
+    assert participation.ports["inlet"].fixed_value_state is None
+    assert participation.ports["outlet"].role == "fixed_pressure_anchor"
+    assert participation.ports["outlet"].pressure_state == HydraulicScalarStateRef(state="pressure")
+    assert participation.ports["outlet"].fixed_value_state == HydraulicScalarStateRef(
+        state="pressure"
+    )
+    assert len(participation.balancing_groups) == 1
+    assert participation.balancing_groups[0].ports == ("inlet", "outlet")

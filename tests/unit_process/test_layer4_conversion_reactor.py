@@ -8,6 +8,13 @@ from typing import Any, cast
 import numpy as np
 import pytest
 
+from modular_simulation.thermodynamics.hydraulic_participation import (
+    HydraulicBalancingGroupSpec,
+    HydraulicParticipationSpec,
+    HydraulicPortSpec,
+    HydraulicRelationSpec,
+    HydraulicScalarStateRef,
+)
 from modular_simulation.thermodynamics.property_package import FlashResult
 from modular_simulation.unit_processes import ConversionReactor
 
@@ -160,3 +167,31 @@ def test_pressure_drop_remains_fixed_hydraulic_data() -> None:
 
     assert "pressure_drop" not in reactor.boundary_view.state_list
     assert "pressure_drop" in reactor.constant_view.state_list
+
+
+def test_conversion_reactor_declares_explicit_hydraulic_participation() -> None:
+    reactor = ConversionReactor(n_species=2)
+
+    assert reactor.hydraulic_participation == HydraulicParticipationSpec(
+        ports={
+            "inlet": HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicScalarStateRef("inlet_pressure"),
+            ),
+            "outlet": HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicScalarStateRef("outlet_pressure"),
+            ),
+        },
+        balancing_groups=(
+            HydraulicBalancingGroupSpec(name="flow_balance", ports=("inlet", "outlet")),
+        ),
+        relations=(
+            HydraulicRelationSpec(
+                name="pressure_drop",
+                kind="pressure_drop",
+                ports=("inlet", "outlet"),
+                parameter_state=HydraulicScalarStateRef("pressure_drop"),
+            ),
+        ),
+    )

@@ -16,6 +16,12 @@ from modular_simulation.thermodynamics.algebraic_process_model import (
     UnitProcessPorts,
 )
 from modular_simulation.thermodynamics.hydraulic_adapters import pipe_hydraulic_element_for_outlet
+from modular_simulation.thermodynamics.hydraulic_participation import (
+    HydraulicBalancingGroupSpec,
+    HydraulicParticipationSpec,
+    HydraulicPortSpec,
+    HydraulicScalarStateRef,
+)
 from modular_simulation.thermodynamics.property_package import FlashResult, PropertyPackage
 from modular_simulation.thermodynamics.stream import PortAttributeMap, StreamData
 from modular_simulation.utils.typing import ArrayIndex, Seconds
@@ -398,6 +404,34 @@ class ShortcutDistillation(AlgebraicProcessModel):
     @property
     def ports(self) -> UnitProcessPorts:
         return SHORTCUT_DISTILLATION_PORTS
+
+    @property
+    @override
+    def hydraulic_participation(self) -> HydraulicParticipationSpec:
+        return HydraulicParticipationSpec(
+            ports={
+                "inlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("inlet_pressure"),
+                ),
+                "distillate": HydraulicPortSpec(
+                    role="fixed_pressure_anchor",
+                    pressure_state=HydraulicScalarStateRef("condenser_pressure"),
+                    fixed_value_state=HydraulicScalarStateRef("condenser_pressure"),
+                ),
+                "bottoms": HydraulicPortSpec(
+                    role="fixed_pressure_anchor",
+                    pressure_state=HydraulicScalarStateRef("reboiler_pressure"),
+                    fixed_value_state=HydraulicScalarStateRef("reboiler_pressure"),
+                ),
+            },
+            balancing_groups=(
+                HydraulicBalancingGroupSpec(
+                    name="flow_balance",
+                    ports=("inlet", "distillate", "bottoms"),
+                ),
+            ),
+        )
 
     def set_property_package(self, package: PropertyPackage | None) -> None:
         self._property_package = package

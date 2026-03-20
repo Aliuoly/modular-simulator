@@ -21,6 +21,7 @@ from modular_simulation.connection.domain.transport import (
     LagTransportUpdateResult,
 )
 from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
+from modular_simulation.unit_processes import FlashDrum, ShortcutDistillation
 
 
 def _linear_equation(
@@ -234,3 +235,23 @@ def test_mixer_like_multi_inlet_single_outlet_binding_compiles_and_routes() -> N
 
     assert conditions["consumer.inlet"].through_molar_flow_rate == 2.0
     assert tuple(conditions["consumer.inlet"].state.mole_fractions) == (0.4, 0.6)
+
+
+def test_flash_drum_outlet_ports_share_one_declared_pressure_ref() -> None:
+    participation = FlashDrum().hydraulic_participation
+
+    assert participation is not None
+    assert (
+        participation.ports["vapor_outlet"].pressure_state
+        == participation.ports["liquid_outlet"].pressure_state
+    )
+
+
+def test_shortcut_distillation_outlet_ports_keep_distinct_declared_pressure_refs() -> None:
+    participation = ShortcutDistillation().hydraulic_participation
+
+    assert participation is not None
+    assert (
+        participation.ports["distillate"].pressure_state
+        != participation.ports["bottoms"].pressure_state
+    )

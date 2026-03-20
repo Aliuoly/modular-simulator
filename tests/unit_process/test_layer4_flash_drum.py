@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from modular_simulation.framework.system import System
+from modular_simulation.thermodynamics.hydraulic_participation import HydraulicScalarStateRef
 from modular_simulation.thermodynamics.property_package import PengRobinsonPackage
 from modular_simulation.unit_processes import FlashDrum
 
@@ -128,3 +129,32 @@ def test_vf_boundary_compositions_are_valid(temperature: float, expected_vf: flo
     assert np.all(np.isfinite(x))
     assert float(np.sum(y)) == pytest.approx(1.0, abs=1.0e-8)
     assert float(np.sum(x)) == pytest.approx(1.0, abs=1.0e-8)
+
+
+def test_flash_drum_declares_explicit_hydraulic_participation_with_shared_outlet_pressure_ref() -> (
+    None
+):
+    drum = FlashDrum()
+
+    participation = drum.hydraulic_participation
+
+    assert participation is not None
+    assert participation.relations == ()
+    assert set(participation.ports) == {"inlet", "vapor_outlet", "liquid_outlet"}
+    assert participation.ports["inlet"].role == "pressure_state"
+    assert participation.ports["inlet"].pressure_state == HydraulicScalarStateRef(
+        state="inlet_pressure"
+    )
+
+    vapor_port = participation.ports["vapor_outlet"]
+    liquid_port = participation.ports["liquid_outlet"]
+    shared_outlet_pressure_ref = HydraulicScalarStateRef(state="outlet_pressure")
+
+    assert vapor_port.role == "fixed_pressure_anchor"
+    assert liquid_port.role == "fixed_pressure_anchor"
+    assert vapor_port.pressure_state == shared_outlet_pressure_ref
+    assert liquid_port.pressure_state == shared_outlet_pressure_ref
+    assert vapor_port.fixed_value_state == HydraulicScalarStateRef(state="imposed_pressure")
+    assert liquid_port.fixed_value_state == HydraulicScalarStateRef(state="imposed_pressure")
+    assert len(participation.balancing_groups) == 1
+    assert participation.balancing_groups[0].ports == ("inlet", "vapor_outlet", "liquid_outlet")

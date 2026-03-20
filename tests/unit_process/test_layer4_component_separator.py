@@ -9,6 +9,13 @@ import pytest
 from numpy.typing import NDArray
 from pydantic import ValidationError
 
+from modular_simulation.thermodynamics.hydraulic_participation import (
+    HydraulicBalancingGroupSpec,
+    HydraulicParticipationSpec,
+    HydraulicPortSpec,
+    HydraulicRelationSpec,
+    HydraulicScalarStateRef,
+)
 from modular_simulation.unit_processes.separation.component_separator import ComponentSeparator
 
 
@@ -75,6 +82,40 @@ def test_component_separator_supports_species_named_split_mapping() -> None:
     assert np.asarray(
         separator.configured_split_fraction_targets, dtype=np.float64
     ) == pytest.approx(np.array([0.9, 0.1], dtype=np.float64))
+
+
+def test_component_separator_declares_explicit_hydraulic_participation() -> None:
+    separator = ComponentSeparator(n_species=2)
+
+    assert separator.hydraulic_participation == HydraulicParticipationSpec(
+        ports={
+            "inlet": HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicScalarStateRef(state="inlet_pressure"),
+            ),
+            "outlet_1": HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicScalarStateRef(state="outlet_1_pressure"),
+            ),
+            "outlet_2": HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicScalarStateRef(state="outlet_2_pressure"),
+            ),
+        },
+        balancing_groups=(
+            HydraulicBalancingGroupSpec(
+                name="component_split_balance",
+                ports=("inlet", "outlet_1", "outlet_2"),
+            ),
+        ),
+        relations=(
+            HydraulicRelationSpec(
+                name="component_split_equal_pressure",
+                kind="pressure_equal",
+                ports=("inlet", "outlet_1", "outlet_2"),
+            ),
+        ),
+    )
 
 
 def test_component_separator_rejects_legacy_split_fractions_alias() -> None:

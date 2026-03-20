@@ -43,6 +43,7 @@ _REMOVED_WRAPPER_TYPE_MIGRATION_GUIDANCE: dict[str, str] = {
 
 if TYPE_CHECKING:
     from modular_simulation.framework.system import System
+    from modular_simulation.thermodynamics.hydraulic_participation import HydraulicParticipationSpec
 
 
 class AlgebraicCallable(Protocol):
@@ -537,3 +538,7 @@ class ProcessModel(BaseModel, ABC):  # pyright: ignore[reportUnsafeMultipleInher
     def state_list(self) -> list[str]:
         """list of measurable states' names ('tag list')"""
         return list(self.state_metadata_dict.keys())
+
+    @property
+    def hydraulic_participation(self) -> HydraulicParticipationSpec | None:
+        return None

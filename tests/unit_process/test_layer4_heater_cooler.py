@@ -11,6 +11,13 @@ from pydantic import ValidationError
 
 from modular_simulation.components import ControlElement, ControllerMode, Trajectory
 from modular_simulation.framework.system import System
+from modular_simulation.thermodynamics.hydraulic_participation import (
+    HydraulicBalancingGroupSpec,
+    HydraulicParticipationSpec,
+    HydraulicPortSpec,
+    HydraulicRelationSpec,
+    HydraulicScalarStateRef,
+)
 from modular_simulation.thermodynamics.property_package import FlashResult
 from modular_simulation.unit_processes import HeaterCooler
 
@@ -237,3 +244,31 @@ def test_heater_cooler_well_mixed_external_boundaries_are_driven_via_heat_actuat
     assert heater.external_outlet_temperature == pytest.approx(330.0)
     assert "actuator/heat/heater_cooler_loop" in pending_heat_commands
     assert pending_heat_commands["actuator/heat/heater_cooler_loop"] == pytest.approx(-1500.0)
+
+
+def test_heater_cooler_declares_explicit_hydraulic_participation() -> None:
+    heater = HeaterCooler(n_species=2)
+
+    assert heater.hydraulic_participation == HydraulicParticipationSpec(
+        ports={
+            "inlet": HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicScalarStateRef("inlet_pressure"),
+            ),
+            "outlet": HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicScalarStateRef("outlet_pressure"),
+            ),
+        },
+        balancing_groups=(
+            HydraulicBalancingGroupSpec(name="flow_balance", ports=("inlet", "outlet")),
+        ),
+        relations=(
+            HydraulicRelationSpec(
+                name="pressure_drop",
+                kind="pressure_drop",
+                ports=("inlet", "outlet"),
+                parameter_state=HydraulicScalarStateRef("pressure_drop"),
+            ),
+        ),
+    )

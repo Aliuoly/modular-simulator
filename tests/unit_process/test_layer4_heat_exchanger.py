@@ -208,6 +208,97 @@ def test_flow_sensitivity_changes_capacity_rates_and_duty() -> None:
     assert high_flow.heat_duty > low_flow.heat_duty
 
 
+def test_hydraulic_participation_declares_all_four_ports_as_pressure_state() -> None:
+    exchanger = HeatExchanger(
+        n_species=2,
+        ua=500.0,
+        hot_inlet_composition=np.array([0.8, 0.2], dtype=np.float64),
+        cold_inlet_composition=np.array([0.2, 0.8], dtype=np.float64),
+    )
+
+    spec = exchanger.hydraulic_participation
+    assert spec is not None
+
+    expected_ports = {"hot_inlet", "hot_outlet", "cold_inlet", "cold_outlet"}
+    assert set(spec.ports.keys()) == expected_ports
+
+    for port_name in expected_ports:
+        port_spec = spec.ports[port_name]
+        assert port_spec.role == "pressure_state", (
+            f"Expected port '{port_name}' to have role 'pressure_state', got '{port_spec.role}'"
+        )
+        assert port_spec.pressure_state is not None, (
+            f"Expected port '{port_name}' to have a pressure_state ref"
+        )
+
+
+def test_hydraulic_participation_has_two_balancing_groups_no_cross_side() -> None:
+    exchanger = HeatExchanger(
+        n_species=2,
+        ua=500.0,
+        hot_inlet_composition=np.array([0.8, 0.2], dtype=np.float64),
+        cold_inlet_composition=np.array([0.2, 0.8], dtype=np.float64),
+    )
+
+    spec = exchanger.hydraulic_participation
+    assert spec is not None
+
+    assert len(spec.balancing_groups) == 2
+
+    group_ports = {frozenset(g.ports) for g in spec.balancing_groups}
+    assert frozenset({"hot_inlet", "hot_outlet"}) in group_ports
+    assert frozenset({"cold_inlet", "cold_outlet"}) in group_ports
+
+    # No cross-side group
+    for group in spec.balancing_groups:
+        ports = set(group.ports)
+        assert not (
+            ports & {"hot_inlet", "hot_outlet"} and ports & {"cold_inlet", "cold_outlet"}
+        ), f"Balancing group '{group.name}' crosses hot/cold sides: {group.ports}"
+
+
+def test_hydraulic_participation_has_two_pressure_equal_relations_no_cross_side() -> None:
+    exchanger = HeatExchanger(
+        n_species=2,
+        ua=500.0,
+        hot_inlet_composition=np.array([0.8, 0.2], dtype=np.float64),
+        cold_inlet_composition=np.array([0.2, 0.8], dtype=np.float64),
+    )
+
+    spec = exchanger.hydraulic_participation
+    assert spec is not None
+
+    assert len(spec.relations) == 2
+
+    for relation in spec.relations:
+        assert relation.kind == "pressure_equal"
+
+    relation_ports = {frozenset(r.ports) for r in spec.relations}
+    assert frozenset({"hot_inlet", "hot_outlet"}) in relation_ports
+    assert frozenset({"cold_inlet", "cold_outlet"}) in relation_ports
+
+    # No cross-side relation
+    for relation in spec.relations:
+        ports = set(relation.ports)
+        assert not (
+            ports & {"hot_inlet", "hot_outlet"} and ports & {"cold_inlet", "cold_outlet"}
+        ), f"Relation '{relation.name}' crosses hot/cold sides: {relation.ports}"
+
+
+def test_hydraulic_participation_has_no_element_couplings() -> None:
+    exchanger = HeatExchanger(
+        n_species=2,
+        ua=500.0,
+        hot_inlet_composition=np.array([0.8, 0.2], dtype=np.float64),
+        cold_inlet_composition=np.array([0.2, 0.8], dtype=np.float64),
+    )
+
+    spec = exchanger.hydraulic_participation
+    assert spec is not None
+
+    assert len(spec.element_couplings) == 0
+
+
 def test_lmtd_and_ua_lmtd_are_diagnostic_outputs() -> None:
     package = _ConstantCpPackage(cp_hot=105.0, cp_cold=95.0)
     exchanger = HeatExchanger(

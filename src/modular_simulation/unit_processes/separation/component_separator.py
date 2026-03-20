@@ -17,6 +17,13 @@ from modular_simulation.thermodynamics.algebraic_process_model import (
     UnitProcessPorts,
 )
 from modular_simulation.thermodynamics.hydraulic_adapters import pipe_hydraulic_element_for_outlet
+from modular_simulation.thermodynamics.hydraulic_participation import (
+    HydraulicBalancingGroupSpec,
+    HydraulicParticipationSpec,
+    HydraulicPortSpec,
+    HydraulicRelationSpec,
+    HydraulicScalarStateRef,
+)
 from modular_simulation.thermodynamics.stream import PortAttributeMap, StreamData
 from modular_simulation.utils.typing import ArrayIndex
 
@@ -308,6 +315,37 @@ class ComponentSeparator(AlgebraicProcessModel):
     @property
     def ports(self) -> UnitProcessPorts:
         return DUAL_OUTLET
+
+    @property
+    @override
+    def hydraulic_participation(self) -> HydraulicParticipationSpec:
+        all_ports = ("inlet", "outlet_1", "outlet_2")
+        return HydraulicParticipationSpec(
+            ports={
+                "inlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef(state="inlet_pressure"),
+                ),
+                "outlet_1": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef(state="outlet_1_pressure"),
+                ),
+                "outlet_2": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef(state="outlet_2_pressure"),
+                ),
+            },
+            balancing_groups=(
+                HydraulicBalancingGroupSpec(name="component_split_balance", ports=all_ports),
+            ),
+            relations=(
+                HydraulicRelationSpec(
+                    name="component_split_equal_pressure",
+                    kind="pressure_equal",
+                    ports=all_ports,
+                ),
+            ),
+        )
 
     def apply_inlet(self, port_name: str, stream: StreamData) -> None:
         if port_name not in self.ports.inlets:

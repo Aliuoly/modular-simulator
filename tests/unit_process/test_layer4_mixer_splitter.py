@@ -10,6 +10,14 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
+from modular_simulation.thermodynamics.hydraulic_participation import (
+    HydraulicBalancingGroupSpec,
+    HydraulicIndexedStateRef,
+    HydraulicParticipationSpec,
+    HydraulicPortSpec,
+    HydraulicRelationSpec,
+    HydraulicScalarStateRef,
+)
 from modular_simulation.thermodynamics.property_package import FlashResult
 from modular_simulation.unit_processes.mixing.mixer import Mixer
 from modular_simulation.unit_processes.separation.splitter import Splitter
@@ -107,6 +115,44 @@ def test_mixer_uses_property_package_for_enthalpy_correct_temperature() -> None:
     assert mixer.outlet_temperature != pytest.approx(linear_temperature)
 
 
+def test_mixer_declares_explicit_hydraulic_participation_with_zero_based_indexed_inlets() -> None:
+    mixer = Mixer(n_inlets=3, n_species=2)
+
+    assert mixer.hydraulic_participation == HydraulicParticipationSpec(
+        ports={
+            "inlet_1": HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicIndexedStateRef(state="inlet_pressures", index=0),
+            ),
+            "inlet_2": HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicIndexedStateRef(state="inlet_pressures", index=1),
+            ),
+            "inlet_3": HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicIndexedStateRef(state="inlet_pressures", index=2),
+            ),
+            "outlet": HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicScalarStateRef(state="outlet_pressure"),
+            ),
+        },
+        balancing_groups=(
+            HydraulicBalancingGroupSpec(
+                name="mixing_flow_balance",
+                ports=("inlet_1", "inlet_2", "inlet_3", "outlet"),
+            ),
+        ),
+        relations=(
+            HydraulicRelationSpec(
+                name="mixing_equal_pressure",
+                kind="pressure_equal",
+                ports=("inlet_1", "inlet_2", "inlet_3", "outlet"),
+            ),
+        ),
+    )
+
+
 def test_splitter_copies_state_without_internal_branch_allocation() -> None:
     splitter = Splitter(
         n_outlets=2,
@@ -137,6 +183,46 @@ def test_splitter_copies_state_without_internal_branch_allocation() -> None:
     assert "inlet_flow" in splitter.boundary_view.state_list
     assert splitter.ports.inlets == ("inlet",)
     assert splitter.ports.outlets == ("outlet_1", "outlet_2")
+
+
+def test_splitter_declares_explicit_hydraulic_participation_with_zero_based_indexed_outlets() -> (
+    None
+):
+    splitter = Splitter(n_outlets=3, n_species=2)
+
+    assert splitter.hydraulic_participation == HydraulicParticipationSpec(
+        ports={
+            "inlet": HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicScalarStateRef(state="inlet_pressure"),
+            ),
+            "outlet_1": HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicIndexedStateRef(state="outlet_pressures", index=0),
+            ),
+            "outlet_2": HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicIndexedStateRef(state="outlet_pressures", index=1),
+            ),
+            "outlet_3": HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicIndexedStateRef(state="outlet_pressures", index=2),
+            ),
+        },
+        balancing_groups=(
+            HydraulicBalancingGroupSpec(
+                name="split_flow_balance",
+                ports=("inlet", "outlet_1", "outlet_2", "outlet_3"),
+            ),
+        ),
+        relations=(
+            HydraulicRelationSpec(
+                name="split_equal_pressure",
+                kind="pressure_equal",
+                ports=("inlet", "outlet_1", "outlet_2", "outlet_3"),
+            ),
+        ),
+    )
 
 
 @pytest.mark.parametrize(

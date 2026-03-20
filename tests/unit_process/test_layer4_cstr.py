@@ -16,6 +16,7 @@ from modular_simulation.components import (
     Trajectory,
 )
 from modular_simulation.framework.system import System
+from modular_simulation.thermodynamics.hydraulic_participation import HydraulicScalarStateRef
 from modular_simulation.thermodynamics import PowerLawRateLaw, Reaction, ReactionSet
 from modular_simulation.unit_processes import CSTR
 
@@ -234,3 +235,24 @@ def test_cstr_well_mixed_jacket_boundary_is_driven_via_external_heat_actuator_pl
     assert reactor.jacket_temperature == pytest.approx(290.0)
     assert "actuator/heat/cstr_jacket_loop" in pending_heat_commands
     assert pending_heat_commands["actuator/heat/cstr_jacket_loop"] == pytest.approx(1200.0)
+
+
+def test_cstr_declares_explicit_hydraulic_participation() -> None:
+    reactor = CSTR()
+
+    participation = reactor.hydraulic_participation
+
+    assert participation is not None
+    assert set(participation.ports) == {"inlet", "outlet"}
+    assert participation.ports["inlet"].role == "pressure_state"
+    assert participation.ports["inlet"].pressure_state == HydraulicScalarStateRef(
+        state="inlet_pressure"
+    )
+    assert participation.ports["inlet"].fixed_value_state is None
+    assert participation.ports["outlet"].role == "fixed_pressure_anchor"
+    assert participation.ports["outlet"].pressure_state == HydraulicScalarStateRef(state="pressure")
+    assert participation.ports["outlet"].fixed_value_state == HydraulicScalarStateRef(
+        state="pressure"
+    )
+    assert len(participation.balancing_groups) == 1
+    assert participation.balancing_groups[0].ports == ("inlet", "outlet")

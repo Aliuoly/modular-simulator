@@ -16,6 +16,14 @@ from modular_simulation.thermodynamics.algebraic_process_model import (
     UnitProcessPorts,
 )
 from modular_simulation.thermodynamics.hydraulic_adapters import pipe_hydraulic_element_for_outlet
+from modular_simulation.thermodynamics.hydraulic_participation import (
+    HydraulicBalancingGroupSpec,
+    HydraulicIndexedStateRef,
+    HydraulicParticipationSpec,
+    HydraulicPortSpec,
+    HydraulicRelationSpec,
+    HydraulicScalarStateRef,
+)
 from modular_simulation.thermodynamics.property_package import PropertyPackage
 from modular_simulation.thermodynamics.stream import (
     PortAttributeMap,
@@ -183,6 +191,39 @@ class Mixer(AlgebraicProcessModel):
         return UnitProcessPorts(
             inlets=tuple(f"inlet_{index + 1}" for index in range(self.n_inlets)),
             outlets=("outlet",),
+        )
+
+    @property
+    @override
+    def hydraulic_participation(self) -> HydraulicParticipationSpec:
+        inlet_ports = self.ports.inlets
+        all_ports = (*inlet_ports, "outlet")
+        ports: dict[str, HydraulicPortSpec] = {
+            port_name: HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicIndexedStateRef(
+                    state="inlet_pressures",
+                    index=inlet_index,
+                ),
+            )
+            for inlet_index, port_name in enumerate(inlet_ports)
+        }
+        ports["outlet"] = HydraulicPortSpec(
+            role="pressure_state",
+            pressure_state=HydraulicScalarStateRef(state="outlet_pressure"),
+        )
+        return HydraulicParticipationSpec(
+            ports=ports,
+            balancing_groups=(
+                HydraulicBalancingGroupSpec(name="mixing_flow_balance", ports=all_ports),
+            ),
+            relations=(
+                HydraulicRelationSpec(
+                    name="mixing_equal_pressure",
+                    kind="pressure_equal",
+                    ports=all_ports,
+                ),
+            ),
         )
 
     def set_property_package(self, package: PropertyPackage | None) -> None:

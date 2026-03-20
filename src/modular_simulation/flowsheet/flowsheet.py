@@ -35,16 +35,25 @@ from modular_simulation.connection.runtime.process_stream_io import ProcessStrea
 from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
 from modular_simulation.connection.topology.subsystem_descriptor import Subsystem
 from modular_simulation.connection.topology.unit_process_wiring import create_subsystem_for_unit
-from modular_simulation.thermodynamics.algebraic_process_model import UnitProcessPorts
+from modular_simulation.measurables.process_model import ProcessModel, StateType
+from modular_simulation.thermodynamics.algebraic_process_model import (
+    UnitProcessPorts,
+)
+from modular_simulation.thermodynamics.hydraulic_participation import (
+    HydraulicBalancingGroupSpec,
+    HydraulicElementCouplingSpec,
+    HydraulicIndexedStateRef,
+    HydraulicParticipationSpec,
+    HydraulicPortSpec,
+    HydraulicRelationSpec,
+    HydraulicStateRef,
+)
 from modular_simulation.thermodynamics.stream import StreamData
 
 if TYPE_CHECKING:
-    from modular_simulation.measurables.process_model import ProcessModel
     from modular_simulation.framework.system import System
     from modular_simulation.connection.topology.topology import TopologyGraph
     from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
-
-from modular_simulation.measurables.process_model import StateType
 
 
 @dataclass(frozen=True)
@@ -234,6 +243,9 @@ class _HydraulicNodeCompileSpec:
     pressure_unknown_name: str
     endpoint_ids: tuple[str, ...]
     anchor_pressure_pa: float | None
+    process_node_id: str | None = None
+    process_port_name: str | None = None
+    declaration_driven: bool = False
 
 
 @dataclass(frozen=True)
@@ -244,10 +256,17 @@ class _UnitFlowBalanceEquationCandidate:
 
 @dataclass(frozen=True)
 class _UnitPressureRelation:
+    relation_name: str
     inlet_port_name: str
     outlet_port_name: str
     pressure_drop_pa: float
     explicitly_declared: bool
+
+
+@dataclass(frozen=True)
+class _PreparedHydraulicParticipation:
+    spec: HydraulicParticipationSpec
+    balancing_group_name_by_port: Mapping[str, str]
 
 
 class Flowsheet:
@@ -481,6 +500,64 @@ class Flowsheet:
         self._validate_species_compatibility(resolved_connections=resolved_connections)
         self._warn_dangling_outlets(resolved_connections=resolved_connections)
         self._warn_on_topology_issues(resolved_connections=resolved_connections)
+        self._validate_required_hydraulic_participation(resolved_connections=resolved_connections)
+
+    def _validate_required_hydraulic_participation(
+        self, *, resolved_connections: tuple[_ResolvedConnection, ...]
+    ) -> None:
+        connected_ports_by_unit: dict[str, set[str]] = {}
+        incidence_by_unit_port: dict[tuple[str, str], int] = {}
+        for connection in resolved_connections:
+            if connection.source_node_kind == "unit":
+                connected_ports_by_unit.setdefault(connection.source_node_id, set()).add(
+                    connection.source_port_name
+                )
+                key = (connection.source_node_id, connection.source_port_name)
+                incidence_by_unit_port[key] = incidence_by_unit_port.get(key, 0) + 1
+            if connection.target_node_kind == "unit":
+                connected_ports_by_unit.setdefault(connection.target_node_id, set()).add(
+                    connection.target_port_name
+                )
+                key = (connection.target_node_id, connection.target_port_name)
+                incidence_by_unit_port[key] = incidence_by_unit_port.get(key, 0) + 1
+
+        for (unit_id, port_name), incidence_count in sorted(incidence_by_unit_port.items()):
+            if incidence_count <= 1:
+                continue
+            unit = self._units[unit_id]
+            prepared = None
+            if unit.hydraulic_participation is not None:
+                prepared = self._prepare_hydraulic_participation(
+                    unit_id=unit_id,
+                    spec=unit.hydraulic_participation,
+                )
+            if self._process_port_supports_direct_multi_edge_balancing(
+                node_id=unit_id,
+                port_name=port_name,
+                incidence_count=incidence_count,
+                prepared_participation=prepared,
+            ):
+                continue
+            raise ValueError(
+                "direct unit-port fan-in/fan-out is illegal at {}.{}: {} incident lines attach to one unit port; add an explicit junction or use a unit model that declares the required hydraulic balancing semantics".format(
+                    unit_id,
+                    port_name,
+                    incidence_count,
+                )
+            )
+
+        for unit_id in sorted(connected_ports_by_unit):
+            unit = self._units[unit_id]
+            if unit.hydraulic_participation is not None:
+                continue
+            raise ValueError(
+                "flowsheet compile validation failed: connected unit '{}' ({}) is missing "
+                "hydraulic_participation for connected process ports {}; add a hydraulic_participation declaration or insert an explicit junction".format(
+                    unit_id,
+                    type(unit).__name__,
+                    sorted(connected_ports_by_unit[unit_id]),
+                )
+            )
 
     def _validate_pressure_boundary_presence(
         self, *, resolved_connections: tuple[_ResolvedConnection, ...]
@@ -1111,12 +1188,20 @@ class Flowsheet:
         equations: list[ElementEquation] = []
         linear_residual_equations: list[LinearResidualEquation] = []
         pressure_anchor_metadata: list[HydraulicPressureAnchorMetadata] = []
-        node_specs_by_key = self._build_hydraulic_node_specs(topology=topology)
+        prepared_participation_by_unit = self._prepared_hydraulic_participation_by_unit(
+            topology=topology
+        )
+        node_specs_by_key = self._build_hydraulic_node_specs(
+            topology=topology,
+            prepared_participation_by_unit=prepared_participation_by_unit,
+        )
         line_flow_unknown_by_line: dict[str, str] = {}
         edge_source_pressure_unknown_by_line: dict[str, str] = {}
         edge_target_pressure_unknown_by_line: dict[str, str] = {}
         node_pressure_unknown_by_endpoint: dict[str, str] = {}
         node_pressure_unknown_by_junction: dict[str, str] = {}
+        endpoint_role_by_endpoint: dict[str, str] = {}
+        balancing_group_name_by_endpoint: dict[str, str] = {}
 
         for edge in sorted(topology.edges, key=lambda item: item.edge_id):
             source_key = self._hydraulic_node_key(
@@ -1189,11 +1274,20 @@ class Flowsheet:
             incidence_by_node_key[source_key].append((edge.edge_id, -1.0))
             incidence_by_node_key[target_key].append((edge.edge_id, 1.0))
 
+        self._append_declared_element_coupling_equations(
+            topology=topology,
+            node_specs_by_key=node_specs_by_key,
+            incidence_by_node_key=incidence_by_node_key,
+            equations=equations,
+            prepared_participation_by_unit=prepared_participation_by_unit,
+        )
+
         self._append_inferred_unit_hydraulic_relations(
             topology=topology,
             node_specs_by_key=node_specs_by_key,
             incidence_by_node_key=incidence_by_node_key,
             linear_residual_equations=linear_residual_equations,
+            prepared_participation_by_unit=prepared_participation_by_unit,
         )
 
         for node_key in sorted(node_specs_by_key):
@@ -1201,6 +1295,20 @@ class Flowsheet:
             incidence_count = len(incidence_by_node_key[node_key])
             for endpoint_id in node_spec.endpoint_ids:
                 node_pressure_unknown_by_endpoint[endpoint_id] = node_spec.pressure_unknown_name
+                if (
+                    node_spec.process_node_id is not None
+                    and node_spec.process_port_name is not None
+                ):
+                    prepared = prepared_participation_by_unit.get(node_spec.process_node_id)
+                    if prepared is not None:
+                        port_spec = prepared.spec.ports.get(node_spec.process_port_name)
+                        if port_spec is not None:
+                            endpoint_role_by_endpoint[endpoint_id] = port_spec.role
+                        balancing_group_name = prepared.balancing_group_name_by_port.get(
+                            node_spec.process_port_name
+                        )
+                        if balancing_group_name is not None:
+                            balancing_group_name_by_endpoint[endpoint_id] = balancing_group_name
             if node_key.startswith("junction:"):
                 node_pressure_unknown_by_junction[node_key.removeprefix("junction:")] = (
                     node_spec.pressure_unknown_name
@@ -1212,6 +1320,7 @@ class Flowsheet:
                     node_id=node_id,
                     port_name=port_name,
                     incidence_count=incidence_count,
+                    prepared_participation=prepared_participation_by_unit.get(node_id),
                 ):
                     raise ValueError(
                         "direct unit-port fan-in/fan-out is illegal at {}: {} incident lines attach to one unit port; add an explicit junction or use a unit model that declares the required hydraulic balancing semantics".format(
@@ -1229,6 +1338,21 @@ class Flowsheet:
                 )
 
             needs_mass_balance = incidence_count > 1 or node_key.startswith("junction:")
+            if (
+                node_spec.declaration_driven
+                and node_spec.process_node_id is not None
+                and node_spec.process_port_name is not None
+                and incidence_count > 1
+                and self._process_port_supports_direct_multi_edge_balancing(
+                    node_id=node_spec.process_node_id,
+                    port_name=node_spec.process_port_name,
+                    incidence_count=incidence_count,
+                    prepared_participation=prepared_participation_by_unit.get(
+                        node_spec.process_node_id
+                    ),
+                )
+            ):
+                needs_mass_balance = False
             if needs_mass_balance:
                 coefficients = {
                     line_id: coefficient for line_id, coefficient in incidence_by_node_key[node_key]
@@ -1244,21 +1368,31 @@ class Flowsheet:
             anchor_pressure_pa = node_spec.anchor_pressure_pa
             if anchor_pressure_pa is not None:
                 residual_name = f"{node_spec.pressure_unknown_name}__anchor"
-                linear_residual_equations.append(
-                    LinearResidualEquation(
-                        residual_name=residual_name,
-                        coefficients=MappingProxyType({node_spec.pressure_unknown_name: 1.0}),
-                        constant=-anchor_pressure_pa,
+                if not any(
+                    metadata.pressure_unknown_name == node_spec.pressure_unknown_name
+                    and isclose(
+                        metadata.pressure_value,
+                        anchor_pressure_pa,
+                        rel_tol=1.0e-9,
+                        abs_tol=1.0e-9,
                     )
-                )
-                pressure_anchor_metadata.append(
-                    HydraulicPressureAnchorMetadata(
-                        pressure_unknown_name=node_spec.pressure_unknown_name,
-                        residual_name=residual_name,
-                        pressure_value=anchor_pressure_pa,
-                        topology_label=node_spec.topology_label,
+                    for metadata in pressure_anchor_metadata
+                ):
+                    linear_residual_equations.append(
+                        LinearResidualEquation(
+                            residual_name=residual_name,
+                            coefficients=MappingProxyType({node_spec.pressure_unknown_name: 1.0}),
+                            constant=-anchor_pressure_pa,
+                        )
                     )
-                )
+                    pressure_anchor_metadata.append(
+                        HydraulicPressureAnchorMetadata(
+                            pressure_unknown_name=node_spec.pressure_unknown_name,
+                            residual_name=residual_name,
+                            pressure_value=anchor_pressure_pa,
+                            topology_label=node_spec.topology_label,
+                        )
+                    )
 
         topology_lookup = HydraulicTopologyLookup(
             line_flow_unknown_by_line=MappingProxyType(
@@ -1276,6 +1410,12 @@ class Flowsheet:
             node_pressure_unknown_by_junction=MappingProxyType(
                 dict(sorted(node_pressure_unknown_by_junction.items()))
             ),
+            endpoint_role_by_endpoint=MappingProxyType(
+                dict(sorted(endpoint_role_by_endpoint.items()))
+            ),
+            balancing_group_name_by_endpoint=MappingProxyType(
+                dict(sorted(balancing_group_name_by_endpoint.items()))
+            ),
         )
         return HydraulicSystemDefinition(
             equations=tuple(equations),
@@ -1283,6 +1423,82 @@ class Flowsheet:
             topology_lookup=topology_lookup,
             pressure_anchor_metadata=tuple(pressure_anchor_metadata),
         )
+
+    def _append_declared_element_coupling_equations(
+        self,
+        *,
+        topology: TopologyGraph,
+        node_specs_by_key: Mapping[str, _HydraulicNodeCompileSpec],
+        incidence_by_node_key: Mapping[str, list[tuple[str, float]]],
+        equations: list[ElementEquation],
+        prepared_participation_by_unit: Mapping[str, _PreparedHydraulicParticipation],
+    ) -> None:
+        for unit_id in sorted(prepared_participation_by_unit):
+            prepared = prepared_participation_by_unit[unit_id]
+            for coupling in prepared.spec.element_couplings:
+                upstream_port, downstream_port = coupling.ports
+                canonical_node_key = self._hydraulic_node_key(
+                    node_id=unit_id,
+                    port_name=coupling.port,
+                    topology=topology,
+                )
+                canonical_incidences = incidence_by_node_key.get(canonical_node_key, [])
+                if len(canonical_incidences) > 1:
+                    raise ValueError(
+                        "direct unit-port fan-in/fan-out is illegal at {}.{}: {} incident lines attach to one unit port; add an explicit junction or use a unit model that declares the required hydraulic balancing semantics".format(
+                            unit_id,
+                            coupling.port,
+                            len(canonical_incidences),
+                        )
+                    )
+                if len(canonical_incidences) != 1:
+                    continue
+                flow_unknown_name = canonical_incidences[0][0]
+                upstream_node_spec = node_specs_by_key[
+                    self._hydraulic_node_key(
+                        node_id=unit_id,
+                        port_name=upstream_port,
+                        topology=topology,
+                    )
+                ]
+                downstream_node_spec = node_specs_by_key[
+                    self._hydraulic_node_key(
+                        node_id=unit_id,
+                        port_name=downstream_port,
+                        topology=topology,
+                    )
+                ]
+                wrapped_element = self._resolve_hydraulic_element_for_connection(
+                    line_id=None,
+                    source_node_id=unit_id,
+                    source_port_name=coupling.port,
+                )
+                parameters = self._resolve_element_parameters(
+                    line_id=None,
+                    element=wrapped_element,
+                    source_node_id=unit_id,
+                    source_port_name=coupling.port,
+                    target_node_id=unit_id,
+                )
+                equation_name = f"unit__{unit_id}__element_coupling__{coupling.name}"
+                equations.append(
+                    ElementEquation(
+                        name=equation_name,
+                        element=CanonicalNodePressureHydraulicElement(wrapped=wrapped_element),
+                        inputs=MappingProxyType({}),
+                        parameters=parameters,
+                        unknown_name_map=MappingProxyType(
+                            {
+                                "flow_rate": flow_unknown_name,
+                                "upstream_pressure": upstream_node_spec.pressure_unknown_name,
+                                "downstream_pressure": downstream_node_spec.pressure_unknown_name,
+                            }
+                        ),
+                        residual_name_map=MappingProxyType(
+                            {"head_balance": f"{equation_name}__head_balance"}
+                        ),
+                    )
+                )
 
     def _configure_edge_hydraulic_actuator_state(
         self,
@@ -1375,6 +1591,16 @@ class Flowsheet:
             return self._line_installed_pump_element()
         if connection is not None and connection.valve is not None:
             return self._line_installed_valve_element()
+        coupling = self._declared_element_coupling_for_port(
+            unit_id=source_node_id,
+            port_name=source_port_name,
+        )
+        if coupling is not None:
+            source_unit = self._units.get(source_node_id)
+            if source_unit is not None:
+                to_hydraulic_element = getattr(source_unit, "to_hydraulic_element", None)
+                if callable(to_hydraulic_element):
+                    return cast(HydraulicElement, to_hydraulic_element(coupling.port))
         return resolve_hydraulic_element(
             source_unit=self._units.get(source_node_id),
             source_node_id=source_node_id,
@@ -1417,16 +1643,56 @@ class Flowsheet:
             return MappingProxyType({"pump_speed": connection.pump.initial_pump_speed})
         if connection is not None and connection.valve is not None:
             return MappingProxyType({"valve_resistance": 1.0, "delta": 1.0e-6})
-        return element.default_parameters(
-            source_unit=self._units.get(source_node_id),
-            source_node_id=source_node_id,
-            source_port_name=source_port_name,
-            target_unit=self._units.get(target_node_id),
-            target_node_id=target_node_id,
+        coupling = self._declared_element_coupling_for_port(
+            unit_id=source_node_id,
+            port_name=source_port_name,
         )
+        if coupling is not None:
+            source_unit = self._units.get(source_node_id)
+            if source_unit is not None:
+                parameter_getter = getattr(source_unit, "hydraulic_parameters_for_port", None)
+                if callable(parameter_getter):
+                    parameters = cast("Mapping[str, float]", parameter_getter(coupling.port))
+                    return MappingProxyType(
+                        cast("dict[str, float]", dict(sorted(parameters.items())))
+                    )
+        source_unit = self._units.get(source_node_id)
+        target_unit = self._units.get(target_node_id)
+        try:
+            return element.default_parameters(
+                source_unit=source_unit,
+                source_node_id=source_node_id,
+                source_port_name=source_port_name,
+                target_unit=target_unit,
+                target_node_id=target_node_id,
+            )
+        except ValueError:
+            if target_unit is None or target_unit.hydraulic_participation is None:
+                raise
+            return element.default_parameters(
+                source_unit=source_unit,
+                source_node_id=source_node_id,
+                source_port_name=source_port_name,
+                target_unit=None,
+                target_node_id=target_node_id,
+            )
+
+    def _declared_element_coupling_for_port(
+        self, *, unit_id: str, port_name: str
+    ) -> HydraulicElementCouplingSpec | None:
+        unit = self._units.get(unit_id)
+        if unit is None or unit.hydraulic_participation is None:
+            return None
+        for coupling in unit.hydraulic_participation.element_couplings:
+            if coupling.port == port_name:
+                return coupling
+        return None
 
     def _build_hydraulic_node_specs(
-        self, *, topology: TopologyGraph
+        self,
+        *,
+        topology: TopologyGraph,
+        prepared_participation_by_unit: Mapping[str, _PreparedHydraulicParticipation],
     ) -> dict[str, _HydraulicNodeCompileSpec]:
         endpoint_ids_by_key: dict[str, set[str]] = {}
         connected_process_ids: set[str] = set()
@@ -1457,7 +1723,6 @@ class Flowsheet:
 
         specs: dict[str, _HydraulicNodeCompileSpec] = {}
         for node_key in sorted(endpoint_ids_by_key):
-            pressure_unknown_name = self._pressure_unknown_name(node_key=node_key)
             endpoint_ids = tuple(sorted(endpoint_ids_by_key[node_key]))
 
             if node_key.startswith("junction:"):
@@ -1465,7 +1730,7 @@ class Flowsheet:
                 specs[node_key] = _HydraulicNodeCompileSpec(
                     node_key=node_key,
                     topology_label=f"junction:{junction_id}",
-                    pressure_unknown_name=pressure_unknown_name,
+                    pressure_unknown_name=self._pressure_unknown_name(node_key=node_key),
                     endpoint_ids=endpoint_ids,
                     anchor_pressure_pa=None,
                 )
@@ -1473,11 +1738,23 @@ class Flowsheet:
 
             endpoint_id = endpoint_ids[0]
             node_id, port_name = endpoint_id.split(".", maxsplit=1)
-            anchor_pressure = self._resolve_hydraulic_anchor_pressure(
-                node_id=node_id,
-                port_name=port_name,
-                topology=topology,
-            )
+            prepared_participation = prepared_participation_by_unit.get(node_id)
+            anchor_pressure = None
+            declaration_driven = False
+            if prepared_participation is not None:
+                declaration_driven = True
+                pressure_unknown_name, anchor_pressure, _ = self._declared_hydraulic_node_mapping(
+                    unit_id=node_id,
+                    port_name=port_name,
+                    prepared_participation=prepared_participation,
+                )
+            else:
+                pressure_unknown_name = self._pressure_unknown_name(node_key=node_key)
+                anchor_pressure = self._resolve_hydraulic_anchor_pressure(
+                    node_id=node_id,
+                    port_name=port_name,
+                    topology=topology,
+                )
             if anchor_pressure is None and self._is_implicit_terminal_outlet_anchor(
                 node_id=node_id,
                 port_name=port_name,
@@ -1490,6 +1767,9 @@ class Flowsheet:
                 pressure_unknown_name=pressure_unknown_name,
                 endpoint_ids=endpoint_ids,
                 anchor_pressure_pa=anchor_pressure,
+                process_node_id=node_id if node_id in self._units else None,
+                process_port_name=port_name if node_id in self._units else None,
+                declaration_driven=declaration_driven,
             )
         return specs
 
@@ -1518,6 +1798,310 @@ class Flowsheet:
         ).strip("_")
         return f"pressure__{sanitized}"
 
+    def _prepared_hydraulic_participation_by_unit(
+        self, *, topology: TopologyGraph
+    ) -> dict[str, _PreparedHydraulicParticipation]:
+        connected_unit_ids: set[str] = set()
+        for edge in topology.edges:
+            if edge.source.node_id in self._units:
+                connected_unit_ids.add(edge.source.node_id)
+            if edge.target.node_id in self._units:
+                connected_unit_ids.add(edge.target.node_id)
+
+        prepared: dict[str, _PreparedHydraulicParticipation] = {}
+        for unit_id in sorted(connected_unit_ids):
+            spec = self._units[unit_id].hydraulic_participation
+            if spec is None:
+                continue
+            prepared[unit_id] = self._prepare_hydraulic_participation(unit_id=unit_id, spec=spec)
+        return prepared
+
+    def _prepare_hydraulic_participation(
+        self, *, unit_id: str, spec: HydraulicParticipationSpec
+    ) -> _PreparedHydraulicParticipation:
+        unit = self._units[unit_id]
+        expected_ports = set(self._available_unit_ports(unit_id=unit_id, role="target")) | set(
+            self._available_unit_ports(unit_id=unit_id, role="source")
+        )
+        declared_ports = set(spec.ports)
+        if declared_ports != expected_ports:
+            missing_ports = sorted(expected_ports - declared_ports)
+            extra_ports = sorted(declared_ports - expected_ports)
+            raise ValueError(
+                "invalid hydraulic_participation for unit '{}' ({}): declared ports must match UnitProcessPorts exactly; missing={}, extra={}; add an entry for each missing port or remove entries for extra ports in the hydraulic_participation declaration".format(
+                    unit_id,
+                    type(unit).__name__,
+                    missing_ports,
+                    extra_ports,
+                )
+            )
+
+        balancing_group_name_by_port: dict[str, str] = {}
+        non_passive_ports = {
+            port_name for port_name, port_spec in spec.ports.items() if port_spec.role != "passive"
+        }
+        for port_name, port_spec in spec.ports.items():
+            self._validate_hydraulic_port_spec(
+                unit_id=unit_id, port_name=port_name, port_spec=port_spec
+            )
+
+        relation_names: set[str] = set()
+        for relation in spec.relations:
+            if relation.name in relation_names:
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}': duplicate relation name '{relation.name}'"
+                )
+            relation_names.add(relation.name)
+            self._validate_hydraulic_relation_spec(
+                unit_id=unit_id,
+                spec=spec,
+                relation=relation,
+                non_passive_ports=non_passive_ports,
+            )
+
+        balancing_group_names: set[str] = set()
+        for group in spec.balancing_groups:
+            if group.name in balancing_group_names:
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}': duplicate balancing group '{group.name}'"
+                )
+            balancing_group_names.add(group.name)
+            self._validate_hydraulic_balancing_group_spec(
+                unit_id=unit_id,
+                spec=spec,
+                group=group,
+                non_passive_ports=non_passive_ports,
+                balancing_group_name_by_port=balancing_group_name_by_port,
+            )
+
+        coupling_names: set[str] = set()
+        coupling_name_by_port: dict[str, str] = {}
+        for coupling in spec.element_couplings:
+            if coupling.name in coupling_names:
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}': duplicate coupling '{coupling.name}'"
+                )
+            coupling_names.add(coupling.name)
+            self._validate_hydraulic_element_coupling_spec(
+                unit_id=unit_id,
+                spec=spec,
+                coupling=coupling,
+                non_passive_ports=non_passive_ports,
+                coupling_name_by_port=coupling_name_by_port,
+            )
+
+        return _PreparedHydraulicParticipation(
+            spec=spec,
+            balancing_group_name_by_port=MappingProxyType(
+                dict(sorted(balancing_group_name_by_port.items()))
+            ),
+        )
+
+    def _validate_hydraulic_port_spec(
+        self, *, unit_id: str, port_name: str, port_spec: HydraulicPortSpec
+    ) -> None:
+        if port_spec.role == "passive":
+            if port_spec.pressure_state is not None or port_spec.fixed_value_state is not None:
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}' port '{port_name}': passive ports cannot declare pressure_state or fixed_value_state"
+                )
+            return
+
+        if port_spec.pressure_state is None:
+            raise ValueError(
+                f"invalid hydraulic_participation for unit '{unit_id}' port '{port_name}': role '{port_spec.role}' requires pressure_state"
+            )
+        self._resolve_declared_state_ref(unit_id=unit_id, state_ref=port_spec.pressure_state)
+        if port_spec.role == "fixed_pressure_anchor":
+            if port_spec.fixed_value_state is None:
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}' port '{port_name}': fixed_pressure_anchor requires fixed_value_state"
+                )
+            anchor_value = self._declared_state_scalar_value(
+                unit_id=unit_id,
+                state_ref=port_spec.fixed_value_state,
+            )
+            if anchor_value is None:
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}' port '{port_name}': fixed_value_state must resolve to a finite scalar"
+                )
+            return
+
+        if port_spec.fixed_value_state is not None:
+            raise ValueError(
+                f"invalid hydraulic_participation for unit '{unit_id}' port '{port_name}': fixed_value_state is only valid for fixed_pressure_anchor"
+            )
+
+    def _validate_hydraulic_relation_spec(
+        self,
+        *,
+        unit_id: str,
+        spec: HydraulicParticipationSpec,
+        relation: HydraulicRelationSpec,
+        non_passive_ports: set[str],
+    ) -> None:
+        for port_name in relation.ports:
+            if port_name not in spec.ports:
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}' relation '{relation.name}': unknown port '{port_name}'"
+                )
+            if port_name not in non_passive_ports:
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}' relation '{relation.name}': passive port '{port_name}' cannot participate"
+                )
+
+        if relation.kind == "pressure_equal":
+            if len(relation.ports) < 2 or relation.parameter_state is not None:
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}' relation '{relation.name}': pressure_equal requires 2+ ports and no parameter_state"
+                )
+            return
+
+        if len(relation.ports) != 2 or relation.parameter_state is None:
+            raise ValueError(
+                f"invalid hydraulic_participation for unit '{unit_id}' relation '{relation.name}': {relation.kind} requires exactly two ports and parameter_state"
+            )
+        parameter_value = self._declared_state_scalar_value(
+            unit_id=unit_id,
+            state_ref=relation.parameter_state,
+        )
+        if parameter_value is None:
+            raise ValueError(
+                f"invalid hydraulic_participation for unit '{unit_id}' relation '{relation.name}': parameter_state must resolve to a finite scalar"
+            )
+
+    def _validate_hydraulic_balancing_group_spec(
+        self,
+        *,
+        unit_id: str,
+        spec: HydraulicParticipationSpec,
+        group: HydraulicBalancingGroupSpec,
+        non_passive_ports: set[str],
+        balancing_group_name_by_port: dict[str, str],
+    ) -> None:
+        if len(group.ports) < 2:
+            raise ValueError(
+                f"invalid hydraulic_participation for unit '{unit_id}' balancing group '{group.name}': must name at least two ports"
+            )
+        for port_name in group.ports:
+            if port_name not in spec.ports:
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}' balancing group '{group.name}': unknown port '{port_name}'"
+                )
+            if port_name not in non_passive_ports:
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}' balancing group '{group.name}': passive port '{port_name}' cannot participate"
+                )
+            previous = balancing_group_name_by_port.get(port_name)
+            if previous is not None:
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}': port '{port_name}' appears in balancing groups '{previous}' and '{group.name}'"
+                )
+            balancing_group_name_by_port[port_name] = group.name
+
+    def _validate_hydraulic_element_coupling_spec(
+        self,
+        *,
+        unit_id: str,
+        spec: HydraulicParticipationSpec,
+        coupling: HydraulicElementCouplingSpec,
+        non_passive_ports: set[str],
+        coupling_name_by_port: dict[str, str],
+    ) -> None:
+        if coupling.port not in spec.ports:
+            raise ValueError(
+                f"invalid hydraulic_participation for unit '{unit_id}' coupling '{coupling.name}': unknown canonical port '{coupling.port}'"
+            )
+        if coupling.port not in non_passive_ports:
+            raise ValueError(
+                f"invalid hydraulic_participation for unit '{unit_id}' coupling '{coupling.name}': passive port '{coupling.port}' cannot participate"
+            )
+        if len(coupling.ports) != 2:
+            raise ValueError(
+                f"invalid hydraulic_participation for unit '{unit_id}' coupling '{coupling.name}': ports must contain exactly two ports"
+            )
+        for port_name in coupling.ports:
+            if port_name not in spec.ports:
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}' coupling '{coupling.name}': unknown port '{port_name}'"
+                )
+            if spec.ports[port_name].role == "passive":
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}' coupling '{coupling.name}': passive port '{port_name}' cannot appear in element_couplings"
+                )
+            if port_name not in non_passive_ports:
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}' coupling '{coupling.name}': passive port '{port_name}' cannot participate"
+                )
+        previous = coupling_name_by_port.get(coupling.port)
+        if previous is not None:
+            raise ValueError(
+                f"invalid hydraulic_participation for unit '{unit_id}': port '{coupling.port}' appears in couplings '{previous}' and '{coupling.name}'"
+            )
+        coupling_name_by_port[coupling.port] = coupling.name
+
+    def _declared_hydraulic_node_mapping(
+        self,
+        *,
+        unit_id: str,
+        port_name: str,
+        prepared_participation: _PreparedHydraulicParticipation,
+    ) -> tuple[str, float | None, str]:
+        port_spec = prepared_participation.spec.ports[port_name]
+        if port_spec.pressure_state is None:
+            return (
+                self._pressure_unknown_name(node_key=f"process:{unit_id}.{port_name}"),
+                None,
+                port_name,
+            )
+        ref_key = self._hydraulic_state_ref_key(unit_id=unit_id, state_ref=port_spec.pressure_state)
+        pressure_unknown_name = self._pressure_unknown_name(
+            node_key=f"declared:{unit_id}:{ref_key}"
+        )
+        anchor_pressure = None
+        if port_spec.role == "fixed_pressure_anchor" and port_spec.fixed_value_state is not None:
+            anchor_pressure = self._declared_state_scalar_value(
+                unit_id=unit_id,
+                state_ref=port_spec.fixed_value_state,
+            )
+        return pressure_unknown_name, anchor_pressure, ref_key
+
+    def _hydraulic_state_ref_key(self, *, unit_id: str, state_ref: HydraulicStateRef) -> str:
+        if isinstance(state_ref, HydraulicIndexedStateRef):
+            self._resolve_declared_state_ref(unit_id=unit_id, state_ref=state_ref)
+            return f"{state_ref.state}[{state_ref.index}]"
+        self._resolve_declared_state_ref(unit_id=unit_id, state_ref=state_ref)
+        return state_ref.state
+
+    def _resolve_declared_state_ref(self, *, unit_id: str, state_ref: HydraulicStateRef) -> object:
+        unit = self._units[unit_id]
+        raw_value = getattr(unit, state_ref.state, None)
+        if raw_value is None:
+            raise ValueError(
+                f"invalid hydraulic_participation for unit '{unit_id}': state ref '{state_ref.state}' does not exist"
+            )
+        if isinstance(state_ref, HydraulicIndexedStateRef):
+            try:
+                vector = np.asarray(raw_value, dtype=float).reshape(-1)
+            except Exception as error:
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}': state ref '{state_ref.state}' is not indexable for index {state_ref.index}"
+                ) from error
+            if state_ref.index < 0 or state_ref.index >= vector.size:
+                raise ValueError(
+                    f"invalid hydraulic_participation for unit '{unit_id}': state ref '{state_ref.state}' index {state_ref.index} is out of range"
+                )
+            return float(vector[state_ref.index])
+        return raw_value
+
+    def _declared_state_scalar_value(
+        self, *, unit_id: str, state_ref: HydraulicStateRef
+    ) -> float | None:
+        resolved = self._resolve_declared_state_ref(unit_id=unit_id, state_ref=state_ref)
+        if isinstance(resolved, (int, float)) and isfinite(float(resolved)):
+            return float(resolved)
+        return None
+
     def _resolve_hydraulic_anchor_pressure(
         self, *, node_id: str, port_name: str, topology: TopologyGraph | None
     ) -> float | None:
@@ -1537,53 +2121,19 @@ class Flowsheet:
         unit = self._units.get(node_id)
         if unit is None:
             return None
-
-        outlet_ports = self._available_unit_ports(unit_id=node_id, role="source")
-        inlet_ports = self._available_unit_ports(unit_id=node_id, role="target")
-
-        if port_name in outlet_ports:
-            for attribute_name in self._pressure_attribute_candidates(
-                port_name=port_name,
-                role="source",
-            ):
-                value = self._explicit_pressure_attribute_value(
-                    unit=unit,
-                    attribute_name=attribute_name,
-                )
-                if value is not None:
-                    return value
-            for attribute_name in self._pressure_vector_attribute_candidates(role="source"):
-                value = self._explicit_pressure_vector_value(
-                    unit=unit,
-                    attribute_name=attribute_name,
-                    port_name=port_name,
-                    ordered_ports=outlet_ports,
-                )
-                if value is not None:
-                    return value
-
-        if port_name in inlet_ports:
-            for attribute_name in self._pressure_attribute_candidates(
-                port_name=port_name,
-                role="target",
-            ):
-                value = self._explicit_pressure_attribute_value(
-                    unit=unit,
-                    attribute_name=attribute_name,
-                )
-                if value is not None:
-                    return value
-            for attribute_name in self._pressure_vector_attribute_candidates(role="target"):
-                value = self._explicit_pressure_vector_value(
-                    unit=unit,
-                    attribute_name=attribute_name,
-                    port_name=port_name,
-                    ordered_ports=inlet_ports,
-                )
-                if value is not None:
-                    return value
-
-        return None
+        spec = unit.hydraulic_participation
+        if spec is None:
+            return None
+        prepared = self._prepare_hydraulic_participation(unit_id=node_id, spec=spec)
+        port_spec = prepared.spec.ports.get(port_name)
+        if port_spec is None or port_spec.role != "fixed_pressure_anchor":
+            return None
+        if port_spec.fixed_value_state is None:
+            return None
+        return self._declared_state_scalar_value(
+            unit_id=node_id,
+            state_ref=port_spec.fixed_value_state,
+        )
 
     def _pressure_attribute_candidates(
         self, *, port_name: str, role: Literal["source", "target"]
@@ -1596,58 +2146,6 @@ class Flowsheet:
         candidates.append("outlet_pressure" if role == "source" else "inlet_pressure")
         return tuple(dict.fromkeys(candidates))
 
-    def _pressure_vector_attribute_candidates(
-        self, *, role: Literal["source", "target"]
-    ) -> tuple[str, ...]:
-        return ("outlet_pressures",) if role == "source" else ("inlet_pressures",)
-
-    def _explicit_pressure_attribute_value(
-        self, *, unit: ProcessModel, attribute_name: str
-    ) -> float | None:
-        if not self._pressure_attribute_was_explicitly_declared(
-            unit=unit,
-            attribute_name=attribute_name,
-        ):
-            return None
-        raw_value = self._explicit_declared_field_value(unit=unit, attribute_name=attribute_name)
-        return self._pressure_value_from_object(raw_value)
-
-    def _explicit_pressure_vector_value(
-        self,
-        *,
-        unit: ProcessModel,
-        attribute_name: str,
-        port_name: str,
-        ordered_ports: tuple[str, ...],
-    ) -> float | None:
-        if not self._pressure_attribute_was_explicitly_declared(
-            unit=unit,
-            attribute_name=attribute_name,
-        ):
-            return None
-        raw_vector = self._explicit_declared_field_value(unit=unit, attribute_name=attribute_name)
-        return self._pressure_vector_object_value(
-            raw_vector=raw_vector,
-            port_name=port_name,
-            ordered_ports=ordered_ports,
-        )
-
-    def _explicit_declared_field_value(self, *, unit: ProcessModel, attribute_name: str) -> object:
-        snapshots = self._user_declared_field_values_by_unit_object_id.get(id(unit))
-        if snapshots is not None and attribute_name in snapshots:
-            return snapshots[attribute_name]
-        return getattr(unit, attribute_name, None)
-
-    def _pressure_attribute_was_explicitly_declared(
-        self, *, unit: ProcessModel, attribute_name: str
-    ) -> bool:
-        if not self._field_was_explicitly_declared(unit=unit, attribute_name=attribute_name):
-            return False
-        state_metadata = unit.state_metadata_dict.get(attribute_name)
-        if state_metadata is None:
-            return False
-        return state_metadata.type in {StateType.BOUNDARY, StateType.ALGEBRAIC}
-
     def _field_was_explicitly_declared(self, *, unit: ProcessModel, attribute_name: str) -> bool:
         explicit_fields = self._user_declared_fields_by_unit_object_id.get(id(unit))
         if explicit_fields is None:
@@ -1659,48 +2157,15 @@ class Flowsheet:
 
     def _pressure_attribute_value(self, *, unit: ProcessModel, attribute_name: str) -> float | None:
         value = getattr(unit, attribute_name, None)
-        return self._pressure_value_from_object(value)
-
-    def _pressure_value_from_object(self, value: object) -> float | None:
         if isinstance(value, (int, float)) and isfinite(float(value)) and float(value) > 0.0:
             return float(value)
         return None
 
-    def _pressure_vector_value(
-        self,
-        *,
-        unit: ProcessModel,
-        attribute_name: str,
-        port_name: str,
-        ordered_ports: tuple[str, ...],
-    ) -> float | None:
-        raw_vector = getattr(unit, attribute_name, None)
-        return self._pressure_vector_object_value(
-            raw_vector=raw_vector,
-            port_name=port_name,
-            ordered_ports=ordered_ports,
-        )
-
-    def _pressure_vector_object_value(
-        self,
-        *,
-        raw_vector: object,
-        port_name: str,
-        ordered_ports: tuple[str, ...],
-    ) -> float | None:
-        if raw_vector is None or port_name not in ordered_ports:
-            return None
-        try:
-            vector = np.asarray(raw_vector, dtype=float).reshape(-1)
-        except Exception:
-            return None
-        port_index = ordered_ports.index(port_name)
-        if port_index >= vector.size:
-            return None
-        value = float(vector[port_index])
-        if isfinite(value) and value > 0.0:
-            return value
-        return None
+    def _explicit_declared_field_value(self, *, unit: ProcessModel, attribute_name: str) -> object:
+        snapshots = self._user_declared_field_values_by_unit_object_id.get(id(unit))
+        if snapshots is not None and attribute_name in snapshots:
+            return snapshots[attribute_name]
+        return getattr(unit, attribute_name, None)
 
     def _append_inferred_unit_hydraulic_relations(
         self,
@@ -1709,16 +2174,19 @@ class Flowsheet:
         node_specs_by_key: Mapping[str, _HydraulicNodeCompileSpec],
         incidence_by_node_key: Mapping[str, list[tuple[str, float]]],
         linear_residual_equations: list[LinearResidualEquation],
+        prepared_participation_by_unit: Mapping[str, _PreparedHydraulicParticipation],
     ) -> None:
         self._append_inferred_unit_flow_balance_equations(
             topology=topology,
             incidence_by_node_key=incidence_by_node_key,
             linear_residual_equations=linear_residual_equations,
+            prepared_participation_by_unit=prepared_participation_by_unit,
         )
         self._append_inferred_unit_pressure_relation_equations(
             topology=topology,
             node_specs_by_key=node_specs_by_key,
             linear_residual_equations=linear_residual_equations,
+            prepared_participation_by_unit=prepared_participation_by_unit,
         )
 
     def _append_inferred_unit_flow_balance_equations(
@@ -1727,13 +2195,18 @@ class Flowsheet:
         topology: TopologyGraph,
         incidence_by_node_key: Mapping[str, list[tuple[str, float]]],
         linear_residual_equations: list[LinearResidualEquation],
+        prepared_participation_by_unit: Mapping[str, _PreparedHydraulicParticipation],
     ) -> None:
         candidates: list[_UnitFlowBalanceEquationCandidate] = []
         for unit_id in sorted(self._units):
-            for group_index, port_group in enumerate(
-                self._infer_unit_flow_balance_groups(unit_id=unit_id),
-                start=1,
-            ):
+            prepared_participation = prepared_participation_by_unit.get(unit_id)
+            if prepared_participation is not None:
+                port_groups = tuple(
+                    group.ports for group in prepared_participation.spec.balancing_groups
+                )
+            else:
+                port_groups = ()
+            for group_index, port_group in enumerate(port_groups, start=1):
                 coefficients: dict[str, float] = {}
                 connected_port_count = 0
                 for port_name in port_group:
@@ -1830,12 +2303,18 @@ class Flowsheet:
         topology: TopologyGraph,
         node_specs_by_key: Mapping[str, _HydraulicNodeCompileSpec],
         linear_residual_equations: list[LinearResidualEquation],
+        prepared_participation_by_unit: Mapping[str, _PreparedHydraulicParticipation],
     ) -> None:
         for unit_id in sorted(self._units):
-            for relation_index, relation in enumerate(
-                self._infer_unit_pressure_relations(unit_id=unit_id),
-                start=1,
-            ):
+            prepared_participation = prepared_participation_by_unit.get(unit_id)
+            if prepared_participation is not None:
+                relations = self._declared_unit_pressure_relations(
+                    unit_id=unit_id,
+                    prepared_participation=prepared_participation,
+                )
+            else:
+                relations = ()
+            for relation_index, relation in enumerate(relations, start=1):
                 inlet_key = self._hydraulic_node_key(
                     node_id=unit_id,
                     port_name=relation.inlet_port_name,
@@ -1861,6 +2340,8 @@ class Flowsheet:
                     inlet_node_spec.anchor_pressure_pa is not None
                     and outlet_node_spec.anchor_pressure_pa is not None
                 ):
+                    continue
+                if inlet_node_spec.pressure_unknown_name == outlet_node_spec.pressure_unknown_name:
                     continue
 
                 linear_residual_equations.append(
@@ -2040,6 +2521,7 @@ class Flowsheet:
                 return ()
             relations.append(
                 _UnitPressureRelation(
+                    relation_name=(f"inferred::{inlet_port_name}->{outlet_port_name}"),
                     inlet_port_name=inlet_port_name,
                     outlet_port_name=outlet_port_name,
                     pressure_drop_pa=pressure_drop_value,
@@ -2092,6 +2574,7 @@ class Flowsheet:
                 return ()
             relations.append(
                 _UnitPressureRelation(
+                    relation_name=(f"inferred::{inlet_port_name}->{outlet_port_name}"),
                     inlet_port_name=inlet_port_name,
                     outlet_port_name=outlet_port_name,
                     pressure_drop_pa=pressure_drop_value,
@@ -2178,15 +2661,100 @@ class Flowsheet:
         if not relation.explicitly_declared:
             return
         raise ValueError(
-            "conflicting unit hydraulic boundary conditions for '{}': explicit anchors {}={} Pa and {}={} Pa conflict with inferred pressure_drop={} Pa; remove one fixed-pressure declaration or add an explicit junction/unit model with the intended hydraulic semantics".format(
+            "conflicting unit hydraulic boundary conditions for '{}': explicit anchors {}={} Pa and {}={} Pa conflict with relation '{}' pressure_drop={} Pa; remove one fixed-pressure declaration or add an explicit junction/unit model with the intended hydraulic semantics".format(
                 unit_id,
                 inlet_node_spec.topology_label,
                 inlet_anchor,
                 outlet_node_spec.topology_label,
                 outlet_anchor,
+                relation.relation_name,
                 relation.pressure_drop_pa,
             )
         )
+
+    def _declared_unit_pressure_relations(
+        self,
+        *,
+        unit_id: str,
+        prepared_participation: _PreparedHydraulicParticipation,
+    ) -> tuple[_UnitPressureRelation, ...]:
+        relations: list[_UnitPressureRelation] = []
+        seen_pairs: set[tuple[str, str, float]] = set()
+        for relation in prepared_participation.spec.relations:
+            if relation.kind == "pressure_equal":
+                ports = relation.ports
+                first_port = ports[0]
+                for other_port in ports[1:]:
+                    first_node_key = self._hydraulic_state_ref_key(
+                        unit_id=unit_id,
+                        state_ref=cast(
+                            HydraulicStateRef,
+                            prepared_participation.spec.ports[first_port].pressure_state,
+                        ),
+                    )
+                    other_node_key = self._hydraulic_state_ref_key(
+                        unit_id=unit_id,
+                        state_ref=cast(
+                            HydraulicStateRef,
+                            prepared_participation.spec.ports[other_port].pressure_state,
+                        ),
+                    )
+                    if first_node_key == other_node_key:
+                        continue
+                    pair_key = tuple(sorted((first_node_key, other_node_key))) + (0.0,)
+                    if pair_key in seen_pairs:
+                        continue
+                    seen_pairs.add(pair_key)
+                    relations.append(
+                        _UnitPressureRelation(
+                            relation_name=relation.name,
+                            inlet_port_name=first_port,
+                            outlet_port_name=other_port,
+                            pressure_drop_pa=0.0,
+                            explicitly_declared=True,
+                        )
+                    )
+                continue
+
+            parameter_value = self._declared_state_scalar_value(
+                unit_id=unit_id,
+                state_ref=cast(HydraulicStateRef, relation.parameter_state),
+            )
+            if parameter_value is None:
+                continue
+            signed_pressure_change = parameter_value
+            if relation.kind == "pressure_rise":
+                signed_pressure_change = -parameter_value
+            pair_key = (
+                self._hydraulic_state_ref_key(
+                    unit_id=unit_id,
+                    state_ref=cast(
+                        HydraulicStateRef,
+                        prepared_participation.spec.ports[relation.ports[0]].pressure_state,
+                    ),
+                ),
+                self._hydraulic_state_ref_key(
+                    unit_id=unit_id,
+                    state_ref=cast(
+                        HydraulicStateRef,
+                        prepared_participation.spec.ports[relation.ports[1]].pressure_state,
+                    ),
+                ),
+                signed_pressure_change,
+            )
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
+            relations.append(
+                _UnitPressureRelation(
+                    relation_name=relation.name,
+                    inlet_port_name=relation.ports[0],
+                    outlet_port_name=relation.ports[1],
+                    pressure_drop_pa=signed_pressure_change,
+                    explicitly_declared=True,
+                )
+            )
+        return tuple(relations)
 
     def _process_port_supports_direct_multi_edge_balancing(
         self,
@@ -2194,9 +2762,20 @@ class Flowsheet:
         node_id: str,
         port_name: str,
         incidence_count: int,
+        prepared_participation: _PreparedHydraulicParticipation | None,
     ) -> bool:
-        del node_id, port_name
-        return incidence_count <= 1
+        if incidence_count <= 1:
+            return True
+        if prepared_participation is None:
+            return False
+        if port_name not in prepared_participation.balancing_group_name_by_port:
+            return False
+        canonical_element_coupling_ports = {
+            coupling.port for coupling in prepared_participation.spec.element_couplings
+        }
+        if port_name in canonical_element_coupling_ports:
+            return False
+        return True
 
     def _source_pressure(self, *, node_id: str, port_name: str) -> float:
         feed_stream = self._feeds.get(node_id)

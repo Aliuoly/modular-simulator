@@ -17,6 +17,9 @@ from modular_simulation.connection.hydraulics.hydraulic_element import (
     ValveHydraulicElement,
     smooth_signed_quadratic_flow_term,
 )
+from modular_simulation.thermodynamics.hydraulic_participation import (
+    HydraulicScalarStateRef,
+)
 from modular_simulation.thermodynamics.property_package import FlashResult, PropertyPackage
 from modular_simulation.thermodynamics.stream import StreamData
 from modular_simulation.unit_processes.flow.pump import Pump
@@ -364,6 +367,52 @@ def test_pump_exposes_hydraulic_parameters_for_port_with_pump_speed_authority() 
     parameters = pump.hydraulic_parameters_for_port("outlet")
 
     assert parameters["pump_speed"] == pytest.approx(75000.0)
+
+
+def test_pump_declares_explicit_hydraulic_participation() -> None:
+    pump = Pump(n_species=2)
+
+    participation = pump.hydraulic_participation
+
+    assert participation is not None
+    assert participation.ports.keys() == {"inlet", "outlet"}
+    assert participation.ports["inlet"].role == "pressure_state"
+    assert participation.ports["inlet"].pressure_state == HydraulicScalarStateRef(
+        state="inlet_pressure"
+    )
+    assert participation.ports["outlet"].role == "pressure_state"
+    assert participation.ports["outlet"].pressure_state == HydraulicScalarStateRef(
+        state="outlet_pressure"
+    )
+    assert len(participation.balancing_groups) == 1
+    assert participation.balancing_groups[0].ports == ("inlet", "outlet")
+    assert participation.relations == ()
+    assert len(participation.element_couplings) == 1
+    assert participation.element_couplings[0].port == "outlet"
+    assert participation.element_couplings[0].ports == ("inlet", "outlet")
+
+
+def test_valve_declares_explicit_hydraulic_participation() -> None:
+    valve = Valve(n_species=2)
+
+    participation = valve.hydraulic_participation
+
+    assert participation is not None
+    assert participation.ports.keys() == {"inlet", "outlet"}
+    assert participation.ports["inlet"].role == "pressure_state"
+    assert participation.ports["inlet"].pressure_state == HydraulicScalarStateRef(
+        state="inlet_pressure"
+    )
+    assert participation.ports["outlet"].role == "pressure_state"
+    assert participation.ports["outlet"].pressure_state == HydraulicScalarStateRef(
+        state="outlet_pressure"
+    )
+    assert len(participation.balancing_groups) == 1
+    assert participation.balancing_groups[0].ports == ("inlet", "outlet")
+    assert participation.relations == ()
+    assert len(participation.element_couplings) == 1
+    assert participation.element_couplings[0].port == "outlet"
+    assert participation.element_couplings[0].ports == ("inlet", "outlet")
 
 
 @pytest.mark.parametrize("unit", [Pump(n_species=2), Valve(n_species=2)])

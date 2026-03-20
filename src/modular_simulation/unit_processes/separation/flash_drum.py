@@ -16,6 +16,12 @@ from modular_simulation.thermodynamics.algebraic_process_model import (
     UnitProcessPorts,
 )
 from modular_simulation.thermodynamics.hydraulic_adapters import pipe_hydraulic_element_for_outlet
+from modular_simulation.thermodynamics.hydraulic_participation import (
+    HydraulicBalancingGroupSpec,
+    HydraulicParticipationSpec,
+    HydraulicPortSpec,
+    HydraulicScalarStateRef,
+)
 from modular_simulation.thermodynamics.property_package import PropertyPackage
 from modular_simulation.thermodynamics.stream import PortAttributeMap, StreamData
 from modular_simulation.utils.typing import ArrayIndex, Seconds
@@ -235,6 +241,34 @@ class FlashDrum(AlgebraicProcessModel):
     @property
     def ports(self) -> UnitProcessPorts:
         return FLASH_DRUM_PORTS
+
+    @property
+    @override
+    def hydraulic_participation(self) -> HydraulicParticipationSpec:
+        return HydraulicParticipationSpec(
+            ports={
+                "inlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("inlet_pressure"),
+                ),
+                "vapor_outlet": HydraulicPortSpec(
+                    role="fixed_pressure_anchor",
+                    pressure_state=HydraulicScalarStateRef("outlet_pressure"),
+                    fixed_value_state=HydraulicScalarStateRef("imposed_pressure"),
+                ),
+                "liquid_outlet": HydraulicPortSpec(
+                    role="fixed_pressure_anchor",
+                    pressure_state=HydraulicScalarStateRef("outlet_pressure"),
+                    fixed_value_state=HydraulicScalarStateRef("imposed_pressure"),
+                ),
+            },
+            balancing_groups=(
+                HydraulicBalancingGroupSpec(
+                    name="flow_balance",
+                    ports=("inlet", "vapor_outlet", "liquid_outlet"),
+                ),
+            ),
+        )
 
     def set_property_package(self, package: PropertyPackage | None) -> None:
         self._property_package = package

@@ -17,6 +17,13 @@ from modular_simulation.thermodynamics.algebraic_process_model import (
     UnitProcessPorts,
 )
 from modular_simulation.thermodynamics.hydraulic_adapters import pipe_hydraulic_element_for_outlet
+from modular_simulation.thermodynamics.hydraulic_participation import (
+    HydraulicBalancingGroupSpec,
+    HydraulicParticipationSpec,
+    HydraulicPortSpec,
+    HydraulicRelationSpec,
+    HydraulicScalarStateRef,
+)
 from modular_simulation.thermodynamics.stream import PortAttributeMap, StreamData
 from modular_simulation.thermodynamics.property_package import PropertyPackage
 from modular_simulation.utils.typing import ArrayIndex, Seconds
@@ -211,6 +218,33 @@ class HeaterCooler(AlgebraicProcessModel):
     @property
     def ports(self) -> UnitProcessPorts:
         return SINGLE_IO
+
+    @property
+    @override
+    def hydraulic_participation(self) -> HydraulicParticipationSpec:
+        return HydraulicParticipationSpec(
+            ports={
+                "inlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("inlet_pressure"),
+                ),
+                "outlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("outlet_pressure"),
+                ),
+            },
+            balancing_groups=(
+                HydraulicBalancingGroupSpec(name="flow_balance", ports=("inlet", "outlet")),
+            ),
+            relations=(
+                HydraulicRelationSpec(
+                    name="pressure_drop",
+                    kind="pressure_drop",
+                    ports=("inlet", "outlet"),
+                    parameter_state=HydraulicScalarStateRef("pressure_drop"),
+                ),
+            ),
+        )
 
     def set_property_package(self, package: PropertyPackage | None) -> None:
         self._property_package = package

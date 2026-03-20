@@ -11,10 +11,36 @@ from modular_simulation.connection.domain.error_catalog import (
     DiagnosticPayload,
     extract_diagnostic_payload,
 )
+from modular_simulation.connection.hydraulics.hydraulic_element import (
+    PumpHydraulicElement,
+    ValveHydraulicElement,
+)
 from modular_simulation.flowsheet import Flowsheet, PumpInstall
 from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
+from modular_simulation.thermodynamics.hydraulic_participation import (
+    HydraulicBalancingGroupSpec,
+    HydraulicElementCouplingSpec,
+    HydraulicParticipationSpec,
+    HydraulicPortSpec,
+    HydraulicRelationSpec,
+    HydraulicScalarStateRef,
+)
 from modular_simulation.thermodynamics.stream import StreamData
 from modular_simulation.unit_processes import ComponentSeparator, FlashDrum, HeaterCooler
+from modular_simulation.unit_processes.flow.pump import Pump
+from modular_simulation.unit_processes.flow.valve import Valve
+from modular_simulation.unit_processes.thermal.heater_cooler import HeaterCooler
+from modular_simulation.unit_processes.thermal.heat_exchanger import HeatExchanger
+from modular_simulation.unit_processes.reactors.cstr import CSTR
+from modular_simulation.unit_processes.reactors.pfr import PFR
+
+
+def _install_hydraulic_participation_property(
+    monkeypatch: pytest.MonkeyPatch,
+    cls: type[object],
+    getter,
+) -> None:
+    monkeypatch.setattr(cls, "hydraulic_participation", property(getter), raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +240,323 @@ def test_compile_requires_pressure_boundary_feed() -> None:
 
     with pytest.raises(ValueError, match="at least one feed boundary is required"):
         _ = flowsheet.compile()
+
+
+def test_declared_single_path_balancing_group_emits_unit_flow_balance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_hydraulic_participation_property(
+        monkeypatch,
+        HeaterCooler,
+        lambda self: HydraulicParticipationSpec(
+            ports={
+                "inlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("inlet_pressure"),
+                ),
+                "outlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("outlet_pressure"),
+                ),
+            },
+            balancing_groups=(
+                HydraulicBalancingGroupSpec(name="through_unit", ports=("inlet", "outlet")),
+            ),
+            relations=(
+                HydraulicRelationSpec(
+                    name="through_unit_equal_pressure",
+                    kind="pressure_equal",
+                    ports=("inlet", "outlet"),
+                ),
+            ),
+        ),
+    )
+
+    flowsheet = Flowsheet(context=_make_context())
+    flowsheet.add_unit("heater", HeaterCooler(n_species=2))
+    flowsheet.add_feed_from_values("feed", T=300.0, P=130_000.0, z=(0.5, 0.5), flow=1.0)
+    flowsheet.add_sink("product")
+    flowsheet.connect("feed", "heater")
+    flowsheet.connect("heater", "product")
+
+    plant = flowsheet.compile()
+
+    compiled = plant._network.compiled
+    assert compiled is not None and compiled.hydraulic is not None
+    residuals = {
+        equation.residual_name for equation in compiled.hydraulic.system.linear_residual_equations
+    }
+    assert "unit__heater__flow_balance__01" in residuals
+
+
+def test_declared_paired_path_balancing_groups_emit_one_equation_per_side(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_hydraulic_participation_property(
+        monkeypatch,
+        HeatExchanger,
+        lambda self: HydraulicParticipationSpec(
+            ports={
+                "hot_inlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("hot_inlet_pressure"),
+                ),
+                "hot_outlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("hot_outlet_pressure"),
+                ),
+                "cold_inlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("cold_inlet_pressure"),
+                ),
+                "cold_outlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("cold_outlet_pressure"),
+                ),
+            },
+            balancing_groups=(
+                HydraulicBalancingGroupSpec(name="hot_side", ports=("hot_inlet", "hot_outlet")),
+                HydraulicBalancingGroupSpec(name="cold_side", ports=("cold_inlet", "cold_outlet")),
+            ),
+            relations=(
+                HydraulicRelationSpec(
+                    name="hot_equal_pressure",
+                    kind="pressure_equal",
+                    ports=("hot_inlet", "hot_outlet"),
+                ),
+                HydraulicRelationSpec(
+                    name="cold_equal_pressure",
+                    kind="pressure_equal",
+                    ports=("cold_inlet", "cold_outlet"),
+                ),
+            ),
+        ),
+    )
+
+    flowsheet = Flowsheet(context=_make_context())
+    flowsheet.add_unit("hx", HeatExchanger(n_species=2))
+    flowsheet.add_feed_from_values("hot_feed", T=360.0, P=140_000.0, z=(0.5, 0.5), flow=1.0)
+    flowsheet.add_feed_from_values("cold_feed", T=290.0, P=120_000.0, z=(0.5, 0.5), flow=1.0)
+    flowsheet.add_sink("hot_product")
+    flowsheet.add_sink("cold_product")
+    flowsheet.connect("hot_feed", "hx.hot_inlet")
+    flowsheet.connect("cold_feed", "hx.cold_inlet")
+    flowsheet.connect("hx.hot_outlet", "hot_product")
+    flowsheet.connect("hx.cold_outlet", "cold_product")
+
+    plant = flowsheet.compile()
+
+    compiled = plant._network.compiled
+    assert compiled is not None and compiled.hydraulic is not None
+    residuals = {
+        equation.residual_name for equation in compiled.hydraulic.system.linear_residual_equations
+    }
+    assert "unit__hx__flow_balance__01" in residuals
+    assert "unit__hx__flow_balance__02" in residuals
+
+
+@pytest.mark.parametrize("unit_cls", (CSTR, PFR))
+def test_declared_fixed_pressure_anchor_emits_pressure_anchor_for_reactor_outlet(
+    monkeypatch: pytest.MonkeyPatch,
+    unit_cls,
+) -> None:
+    _install_hydraulic_participation_property(
+        monkeypatch,
+        unit_cls,
+        lambda self: HydraulicParticipationSpec(
+            ports={
+                "inlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("inlet_pressure"),
+                ),
+                "outlet": HydraulicPortSpec(
+                    role="fixed_pressure_anchor",
+                    pressure_state=HydraulicScalarStateRef("pressure"),
+                    fixed_value_state=HydraulicScalarStateRef("pressure"),
+                ),
+            },
+            balancing_groups=(
+                HydraulicBalancingGroupSpec(name="through_reactor", ports=("inlet", "outlet")),
+            ),
+        ),
+    )
+
+    flowsheet = Flowsheet(context=_make_context())
+    if unit_cls is CSTR:
+        reactor = CSTR(n_species=2, pressure=125_000.0)
+    else:
+        reactor = PFR(n_species=2, pressure=125_000.0)
+    flowsheet.add_unit("reactor", reactor)
+    flowsheet.add_feed_from_values("feed", T=300.0, P=130_000.0, z=(0.5, 0.5), flow=1.0)
+    flowsheet.add_sink("product")
+    flowsheet.connect("feed", "reactor")
+    flowsheet.connect("reactor", "product")
+
+    plant = flowsheet.compile()
+
+    compiled = plant._network.compiled
+    assert compiled is not None and compiled.hydraulic is not None
+    anchors = {
+        anchor.topology_label: anchor.pressure_value
+        for anchor in compiled.hydraulic.system.pressure_anchor_metadata
+    }
+    assert anchors["reactor.outlet"] == pytest.approx(125_000.0)
+
+
+def test_declared_affine_pressure_relation_emits_pressure_drop_equation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_hydraulic_participation_property(
+        monkeypatch,
+        HeaterCooler,
+        lambda self: HydraulicParticipationSpec(
+            ports={
+                "inlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("inlet_pressure"),
+                ),
+                "outlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("outlet_pressure"),
+                ),
+            },
+            balancing_groups=(
+                HydraulicBalancingGroupSpec(name="through_unit", ports=("inlet", "outlet")),
+            ),
+            relations=(
+                HydraulicRelationSpec(
+                    name="unit_drop",
+                    kind="pressure_drop",
+                    ports=("inlet", "outlet"),
+                    parameter_state=HydraulicScalarStateRef("pressure_drop"),
+                ),
+            ),
+        ),
+    )
+
+    flowsheet = Flowsheet(context=_make_context())
+    flowsheet.add_unit("heater", HeaterCooler(n_species=2, pressure_drop=2_500.0))
+    flowsheet.add_unit("cooler", HeaterCooler(n_species=2, inlet_pressure=118_000.0))
+    flowsheet.add_feed_from_values("feed", T=300.0, P=120_500.0, z=(0.5, 0.5), flow=1.0)
+    flowsheet.connect("feed", "heater")
+    flowsheet.connect("heater", "cooler")
+
+    plant = flowsheet.compile()
+
+    compiled = plant._network.compiled
+    assert compiled is not None and compiled.hydraulic is not None
+    residuals = {
+        equation.residual_name: equation
+        for equation in compiled.hydraulic.system.linear_residual_equations
+    }
+    relation = residuals["unit__heater__pressure_relation"]
+    assert relation.constant == pytest.approx(-2_500.0)
+
+
+def test_declared_element_coupling_uses_unit_owned_hydraulic_element(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for unit_cls, unit_id, unit_instance, expected_element_type in (
+        (Pump, "pump", Pump(n_species=2), PumpHydraulicElement),
+        (Valve, "valve", Valve(n_species=2), ValveHydraulicElement),
+    ):
+        _install_hydraulic_participation_property(
+            monkeypatch,
+            unit_cls,
+            lambda self: HydraulicParticipationSpec(
+                ports={
+                    "inlet": HydraulicPortSpec(
+                        role="pressure_state",
+                        pressure_state=HydraulicScalarStateRef("inlet_pressure"),
+                    ),
+                    "outlet": HydraulicPortSpec(
+                        role="pressure_state",
+                        pressure_state=HydraulicScalarStateRef("outlet_pressure"),
+                    ),
+                },
+                balancing_groups=(
+                    HydraulicBalancingGroupSpec(name="through_unit", ports=("inlet", "outlet")),
+                ),
+                element_couplings=(
+                    HydraulicElementCouplingSpec(
+                        name="unit_element",
+                        port="outlet",
+                        ports=("inlet", "outlet"),
+                    ),
+                ),
+            ),
+        )
+
+        flowsheet = Flowsheet(context=_make_context())
+        flowsheet.add_unit(unit_id, unit_instance)
+        flowsheet.add_feed_from_values("feed", T=300.0, P=130_000.0, z=(0.5, 0.5), flow=1.0)
+        flowsheet.add_sink("product")
+        flowsheet.connect("feed", unit_id)
+        flowsheet.connect(unit_id, "product")
+
+        plant = flowsheet.compile()
+
+        compiled = plant._network.compiled
+        assert compiled is not None and compiled.hydraulic is not None
+        equation = next(
+            candidate
+            for candidate in compiled.hydraulic.system.equations
+            if candidate.name == f"unit__{unit_id}__element_coupling__unit_element"
+        )
+        wrapped_element = getattr(equation.element, "wrapped")
+        assert isinstance(wrapped_element, expected_element_type)
+
+
+def test_identical_declared_pressure_refs_share_one_hydraulic_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_hydraulic_participation_property(
+        monkeypatch,
+        FlashDrum,
+        lambda self: HydraulicParticipationSpec(
+            ports={
+                "inlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("inlet_pressure"),
+                ),
+                "vapor_outlet": HydraulicPortSpec(
+                    role="fixed_pressure_anchor",
+                    pressure_state=HydraulicScalarStateRef("outlet_pressure"),
+                    fixed_value_state=HydraulicScalarStateRef("imposed_pressure"),
+                ),
+                "liquid_outlet": HydraulicPortSpec(
+                    role="fixed_pressure_anchor",
+                    pressure_state=HydraulicScalarStateRef("outlet_pressure"),
+                    fixed_value_state=HydraulicScalarStateRef("imposed_pressure"),
+                ),
+            },
+            balancing_groups=(
+                HydraulicBalancingGroupSpec(
+                    name="flash_balance",
+                    ports=("inlet", "vapor_outlet", "liquid_outlet"),
+                ),
+            ),
+        ),
+    )
+
+    flowsheet = Flowsheet(context=_make_context())
+    flowsheet.add_unit("flash", FlashDrum(n_species=2, thermal_mode="isothermal"))
+    flowsheet.add_feed_from_values("feed", T=300.0, P=130_000.0, z=(0.5, 0.5), flow=1.0)
+    flowsheet.add_sink("vapor_product")
+    flowsheet.add_sink("liquid_product")
+    flowsheet.connect("feed", "flash")
+    flowsheet.connect("flash.vapor_outlet", "vapor_product")
+    flowsheet.connect("flash.liquid_outlet", "liquid_product")
+
+    plant = flowsheet.compile()
+
+    compiled = plant._network.compiled
+    assert compiled is not None and compiled.hydraulic is not None
+    lookup = compiled.hydraulic.system.topology_lookup
+    assert (
+        lookup.node_pressure_unknown_by_endpoint["flash.vapor_outlet"]
+        == lookup.node_pressure_unknown_by_endpoint["flash.liquid_outlet"]
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -19,7 +19,6 @@ BANNED_TOKENS = [
     "tag_store",
     "setpoint_points",
     "from_legacy",
-    "pressure_rise",
     "split_fractions",
     "duty_setpoint",
     "target_temperature_setpoint",

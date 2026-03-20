@@ -197,6 +197,7 @@ class ThermoBoundaryPropagationStep:
             state = self._build_material_state(
                 edge_id=edge.edge_id,
                 source_node_id=provider_node_id,
+                source_port_name=provider_port_name,
                 target_node_id=receiver_node_id,
                 compiled_hydraulic=compiled.hydraulic,
                 hydraulic_result=hydraulic_result,
@@ -256,6 +257,10 @@ class ThermoBoundaryPropagationStep:
                 edge_id=edge.edge_id,
                 compiled_hydraulic=compiled.hydraulic,
                 hydraulic_result=hydraulic_result,
+                source_node_id=provider_node_id,
+                source_port_name=provider_port_name,
+                target_node_id=receiver_node_id,
+                target_port_name=receiver_port_name,
                 outlet_payload=outlet_payload,
             )
             target_key = f"{receiver_node_id}.{receiver_port_name}"
@@ -383,6 +388,7 @@ class ThermoBoundaryPropagationStep:
                         source_node_id=source_node_id,
                         source_port_name=source_port_name,
                         source_binding=source_binding,
+                        compiled_hydraulic=compiled.hydraulic,
                         allow_binding_payload_fallback=True,
                     )
                 except BindingError:
@@ -433,6 +439,7 @@ class ThermoBoundaryPropagationStep:
             source_node_id=source_node_id,
             source_port_name=source_port_name,
             source_binding=source_binding,
+            compiled_hydraulic=compiled_hydraulic,
         )
         if source_condition is None:
             return None
@@ -449,15 +456,36 @@ class ThermoBoundaryPropagationStep:
                 global_species_ids=global_species_ids,
             )
 
-        flow_rate = self._resolve_hydraulic_flow(
+        source_hydraulic_pressure = self._resolve_endpoint_hydraulic_pressure(
+            edge=None,
             edge_id=edge_id,
+            node_id=source_node_id,
+            port_name=source_port_name,
             compiled_hydraulic=compiled_hydraulic,
             hydraulic_result=hydraulic_result,
         )
-        if flow_rate is None:
-            flow_rate = float(source_condition.through_molar_flow_rate)
-        else:
-            flow_rate = abs(flow_rate)
+        if source_hydraulic_pressure is not None:
+            state = MaterialState(
+                pressure=source_hydraulic_pressure,
+                temperature=state.temperature,
+                mole_fractions=state.mole_fractions,
+                species_ids=state.species_ids,
+                phase=state.phase,
+                enthalpy_molar=state.enthalpy_molar,
+                entropy_molar=state.entropy_molar,
+            )
+
+        flow_rate = self._resolve_flow_rate(
+            edge_id=edge_id,
+            compiled_hydraulic=compiled_hydraulic,
+            hydraulic_result=hydraulic_result,
+            source_node_id=source_node_id,
+            source_port_name=source_port_name,
+            target_node_id=target_node_id,
+            target_port_name=target_port_name,
+            outlet_payload=None,
+            fallback_flow_rate=float(source_condition.through_molar_flow_rate),
+        )
 
         target_state = state
         hydraulic_pressure = self._resolve_endpoint_hydraulic_pressure(
@@ -509,6 +537,7 @@ class ThermoBoundaryPropagationStep:
         source_node_id: str,
         source_port_name: str,
         source_binding: object | None,
+        compiled_hydraulic: CompiledHydraulicGraph | None = None,
         allow_binding_payload_fallback: bool = False,
     ) -> PortCondition | None:
         feed_streams = self._config.feed_streams_by_boundary_id
@@ -553,8 +582,10 @@ class ThermoBoundaryPropagationStep:
                 saw_payload_binding = True
                 if allow_binding_payload_fallback:
                     payload_condition = self._resolve_binding_payload_outlet_condition(
+                        source_node_id=source_node_id,
                         binding=candidate,
                         port_name=source_port_name,
+                        compiled_hydraulic=compiled_hydraulic,
                     )
                     if payload_condition is not None:
                         return payload_condition
@@ -656,6 +687,7 @@ class ThermoBoundaryPropagationStep:
         *,
         edge_id: str,
         source_node_id: str,
+        source_port_name: str,
         target_node_id: str,
         compiled_hydraulic: CompiledHydraulicGraph | None,
         hydraulic_result: HydraulicSolveResult,
@@ -703,6 +735,8 @@ class ThermoBoundaryPropagationStep:
 
         pressure = self._resolve_pressure(
             edge_id=edge_id,
+            source_node_id=source_node_id,
+            source_port_name=source_port_name,
             compiled_hydraulic=compiled_hydraulic,
             hydraulic_result=hydraulic_result,
             outlet_payload=outlet_payload,
@@ -857,11 +891,31 @@ class ThermoBoundaryPropagationStep:
         self,
         *,
         edge_id: str,
+        source_node_id: str,
+        source_port_name: str,
         compiled_hydraulic: CompiledHydraulicGraph | None,
         hydraulic_result: HydraulicSolveResult,
         outlet_payload: Mapping[str, object] | None,
         transport_result: object,
     ) -> float:
+        if self._endpoint_requires_compiled_hydraulics(
+            node_id=source_node_id,
+            port_name=source_port_name,
+            compiled_hydraulic=compiled_hydraulic,
+        ):
+            endpoint_id = f"{source_node_id}.{source_port_name}"
+            if compiled_hydraulic is not None:
+                endpoint_pressure = compiled_hydraulic.resolve_endpoint_pressure(
+                    endpoint_id=endpoint_id,
+                    hydraulic_result=hydraulic_result,
+                )
+                if endpoint_pressure is not None and endpoint_pressure > 0.0:
+                    return endpoint_pressure
+            raise BindingError(
+                "Missing compiled hydraulic pressure mapping for pressure-coupled endpoint "
+                + f"'{source_node_id}.{source_port_name}'"
+            )
+
         hydraulic_pressure = self._resolve_hydraulic_pressure(
             edge_id=edge_id,
             compiled_hydraulic=compiled_hydraulic,
@@ -953,7 +1007,12 @@ class ThermoBoundaryPropagationStep:
         edge_id: str,
         compiled_hydraulic: CompiledHydraulicGraph | None,
         hydraulic_result: HydraulicSolveResult,
+        source_node_id: str,
+        source_port_name: str,
+        target_node_id: str,
+        target_port_name: str,
         outlet_payload: Mapping[str, object] | None,
+        fallback_flow_rate: float | None = None,
     ) -> float:
         if compiled_hydraulic is not None:
             hydraulic_flow = self._resolve_hydraulic_flow(
@@ -963,6 +1022,20 @@ class ThermoBoundaryPropagationStep:
             )
             if hydraulic_flow is not None:
                 return abs(hydraulic_flow)
+
+            if self._endpoint_requires_compiled_hydraulics(
+                node_id=source_node_id,
+                port_name=source_port_name,
+                compiled_hydraulic=compiled_hydraulic,
+            ) or self._endpoint_requires_compiled_hydraulics(
+                node_id=target_node_id,
+                port_name=target_port_name,
+                compiled_hydraulic=compiled_hydraulic,
+            ):
+                raise BindingError(
+                    "Missing compiled hydraulic flow mapping for pressure-coupled edge "
+                    + f"'{edge_id}'"
+                )
 
             topology_lookup = compiled_hydraulic.topology_lookup
             if edge_id in topology_lookup.line_flow_unknown_by_line:
@@ -974,7 +1047,10 @@ class ThermoBoundaryPropagationStep:
             hydraulic_result=hydraulic_result,
         )
         if hydraulic_flow is not None:
-            return hydraulic_flow
+            return abs(hydraulic_flow)
+
+        if fallback_flow_rate is not None:
+            return abs(float(fallback_flow_rate))
 
         if outlet_payload is None:
             return 0.0
@@ -999,39 +1075,33 @@ class ThermoBoundaryPropagationStep:
     ) -> float | None:
         if compiled_hydraulic is None:
             return None
-        endpoint_pressure = compiled_hydraulic.resolve_endpoint_pressure(
-            endpoint_id=f"{node_id}.{port_name}",
+        endpoint_id = f"{node_id}.{port_name}"
+        direct_endpoint_pressure = compiled_hydraulic.resolve_endpoint_pressure(
+            endpoint_id=endpoint_id,
             hydraulic_result=hydraulic_result,
         )
-        if endpoint_pressure is not None and endpoint_pressure > 0.0:
+        if direct_endpoint_pressure is not None and direct_endpoint_pressure > 0.0:
+            return direct_endpoint_pressure
+
+        if not self._endpoint_requires_compiled_hydraulics(
+            node_id=node_id,
+            port_name=port_name,
+            compiled_hydraulic=compiled_hydraulic,
+        ):
+            return None
+
+        endpoint_pressure = self._resolve_compiled_participating_endpoint_pressure(
+            endpoint_id=endpoint_id,
+            compiled_hydraulic=compiled_hydraulic,
+            hydraulic_result=hydraulic_result,
+        )
+        if endpoint_pressure is not None:
             return endpoint_pressure
 
-        line_source_pressure = compiled_hydraulic.resolve_line_source_pressure(
-            line_id=edge_id,
-            hydraulic_result=hydraulic_result,
+        raise BindingError(
+            "Missing compiled hydraulic pressure mapping for pressure-coupled endpoint "
+            + f"'{endpoint_id}'"
         )
-        line_target_pressure = compiled_hydraulic.resolve_line_target_pressure(
-            line_id=edge_id,
-            hydraulic_result=hydraulic_result,
-        )
-        if edge is not None:
-            if edge.source.node_id == node_id and edge.source.port_name == port_name:
-                if line_source_pressure is not None and line_source_pressure > 0.0:
-                    return line_source_pressure
-                if line_target_pressure is not None and line_target_pressure > 0.0:
-                    return line_target_pressure
-                return None
-            if edge.target.node_id == node_id and edge.target.port_name == port_name:
-                if line_target_pressure is not None and line_target_pressure > 0.0:
-                    return line_target_pressure
-                if line_source_pressure is not None and line_source_pressure > 0.0:
-                    return line_source_pressure
-                return None
-        if line_target_pressure is not None and line_target_pressure > 0.0:
-            return line_target_pressure
-        if line_source_pressure is not None and line_source_pressure > 0.0:
-            return line_source_pressure
-        return None
 
     def _resolve_outgoing_junction_state(
         self,
@@ -1050,6 +1120,7 @@ class ThermoBoundaryPropagationStep:
         local_flow = self._classify_local_node_flow(
             edge=edge,
             local_node_id=provider_node_id,
+            local_port_name=provider_port_name,
             compiled_hydraulic=compiled_hydraulic,
             hydraulic_result=hydraulic_result,
         )
@@ -1096,12 +1167,29 @@ class ThermoBoundaryPropagationStep:
             return junction_pressure
 
         endpoint_id = f"{node_id}.{port_name}"
-        endpoint_pressure = compiled_hydraulic.resolve_endpoint_pressure(
+        endpoint_pressure = self._resolve_compiled_participating_endpoint_pressure(
             endpoint_id=endpoint_id,
+            compiled_hydraulic=compiled_hydraulic,
             hydraulic_result=hydraulic_result,
         )
-        if endpoint_pressure is not None and endpoint_pressure > 0.0:
+        if endpoint_pressure is not None:
             return endpoint_pressure
+
+        if self._endpoint_requires_compiled_hydraulics(
+            node_id=node_id,
+            port_name=port_name,
+            compiled_hydraulic=compiled_hydraulic,
+        ):
+            raise BindingError(
+                "Missing compiled hydraulic pressure mapping for pressure-coupled endpoint "
+                + f"'{endpoint_id}'"
+            )
+
+        if (
+            self._endpoint_role(endpoint_id=endpoint_id, compiled_hydraulic=compiled_hydraulic)
+            == "passive"
+        ):
+            return None
 
         for candidate_edge in edge_by_id.values():
             if candidate_edge.source.node_id == node_id:
@@ -1125,6 +1213,7 @@ class ThermoBoundaryPropagationStep:
         *,
         edge: ConnectionEdge,
         local_node_id: str,
+        local_port_name: str,
         compiled_hydraulic: CompiledHydraulicGraph | None,
         hydraulic_result: HydraulicSolveResult,
     ) -> float | None:
@@ -1134,6 +1223,19 @@ class ThermoBoundaryPropagationStep:
             hydraulic_result=hydraulic_result,
         )
         if solved_line_flow is None:
+            if (
+                compiled_hydraulic is not None
+                and self._endpoint_requires_compiled_hydraulics(
+                    node_id=local_node_id,
+                    port_name=local_port_name,
+                    compiled_hydraulic=compiled_hydraulic,
+                )
+                and edge.edge_id not in compiled_hydraulic.topology_lookup.line_flow_unknown_by_line
+            ):
+                raise BindingError(
+                    "Missing compiled hydraulic flow mapping for pressure-coupled edge "
+                    + f"'{edge.edge_id}'"
+                )
             return None
         if edge.target.node_id == local_node_id:
             return solved_line_flow
@@ -1179,9 +1281,21 @@ class ThermoBoundaryPropagationStep:
     def _resolve_binding_payload_outlet_condition(
         self,
         *,
+        source_node_id: str,
         binding: object,
         port_name: str,
+        compiled_hydraulic: CompiledHydraulicGraph | None = None,
     ) -> PortCondition | None:
+        if not self._endpoint_allows_payload_fallback(
+            node_id=source_node_id,
+            port_name=port_name,
+            compiled_hydraulic=compiled_hydraulic,
+        ):
+            raise BindingError(
+                "Binding payload fallback is only allowed for passive or non-participating endpoint "
+                + f"'{source_node_id}.{port_name}'"
+            )
+
         outlet_payload = self._safe_get_outlet_payload(binding, port_name)
         if outlet_payload is None:
             return None
@@ -1238,6 +1352,67 @@ class ThermoBoundaryPropagationStep:
             through_molar_flow_rate=self._flow_from_outlet_payload(outlet_payload),
             macro_step_time_s=None,
         )
+
+    def _endpoint_role(
+        self,
+        *,
+        endpoint_id: str,
+        compiled_hydraulic: CompiledHydraulicGraph | None,
+    ) -> str | None:
+        if compiled_hydraulic is None:
+            return None
+        return compiled_hydraulic.topology_lookup.endpoint_role_by_endpoint.get(endpoint_id)
+
+    def _endpoint_balancing_group(
+        self,
+        *,
+        endpoint_id: str,
+        compiled_hydraulic: CompiledHydraulicGraph | None,
+    ) -> str | None:
+        if compiled_hydraulic is None:
+            return None
+        return compiled_hydraulic.topology_lookup.balancing_group_name_by_endpoint.get(endpoint_id)
+
+    def _endpoint_requires_compiled_hydraulics(
+        self,
+        *,
+        node_id: str,
+        port_name: str,
+        compiled_hydraulic: CompiledHydraulicGraph | None,
+    ) -> bool:
+        endpoint_id = f"{node_id}.{port_name}"
+        role = self._endpoint_role(endpoint_id=endpoint_id, compiled_hydraulic=compiled_hydraulic)
+        if role == "passive":
+            return False
+        return role is not None
+
+    def _endpoint_allows_payload_fallback(
+        self,
+        *,
+        node_id: str,
+        port_name: str,
+        compiled_hydraulic: CompiledHydraulicGraph | None,
+    ) -> bool:
+        return not self._endpoint_requires_compiled_hydraulics(
+            node_id=node_id,
+            port_name=port_name,
+            compiled_hydraulic=compiled_hydraulic,
+        )
+
+    def _resolve_compiled_participating_endpoint_pressure(
+        self,
+        *,
+        endpoint_id: str,
+        compiled_hydraulic: CompiledHydraulicGraph,
+        hydraulic_result: HydraulicSolveResult,
+    ) -> float | None:
+        endpoint_pressure = compiled_hydraulic.resolve_endpoint_pressure(
+            endpoint_id=endpoint_id,
+            hydraulic_result=hydraulic_result,
+        )
+        if endpoint_pressure is not None and endpoint_pressure > 0.0:
+            return endpoint_pressure
+        return None
 
     def _float_from_payload(
         self,

@@ -187,6 +187,31 @@ def _lookup_system() -> HydraulicSystemDefinition:
                 "product_boundary.inlet": "target_pressure",
             },
             node_pressure_unknown_by_junction={},
+            endpoint_role_by_endpoint={
+                "reactor.feed": "pressure_state",
+                "reactor.product": "pressure_state",
+            },
+            balancing_group_name_by_endpoint={
+                "reactor.feed": "reactor_group",
+                "reactor.product": "reactor_group",
+            },
+        ),
+    )
+
+
+def _lookup_system_with_passive_reactor_feed() -> HydraulicSystemDefinition:
+    base_system = _lookup_system()
+    return replace(
+        base_system,
+        topology_lookup=replace(
+            base_system.topology_lookup,
+            endpoint_role_by_endpoint={
+                "reactor.feed": "passive",
+                "reactor.product": "pressure_state",
+            },
+            balancing_group_name_by_endpoint={
+                "reactor.product": "reactor_group",
+            },
         ),
     )
 
@@ -312,13 +337,13 @@ def test_runtime_step_thermo_coupling_wires_runtime_owned_snapshot_store() -> No
 
     latest_outlet = runtime.get_latest_outlet_condition(node_id="reactor", port_name="product")
     assert latest_outlet is not None
-    assert latest_outlet.state.pressure == 180000.0
+    assert latest_outlet.state.pressure == 7.0
     assert latest_outlet.state.temperature == 345.0
     assert latest_outlet.through_molar_flow_rate == 1.75
 
     latest_outlet_stream = runtime.get_latest_outlet_stream(node_id="reactor", port_name="product")
     assert latest_outlet_stream is not None
-    assert latest_outlet_stream.pressure == 180000.0
+    assert latest_outlet_stream.pressure == 7.0
     assert latest_outlet_stream.temperature == 345.0
     assert latest_outlet_stream.molar_flow_rate == 1.75
 
@@ -536,6 +561,7 @@ def test_thermo_coupling_prefers_compiled_hydraulic_lookup_over_payload_placehol
     network.connect("feed_boundary", "reactor.feed")
     network.connect("reactor.product", "product_boundary")
     compiled = network.compile()
+    assert compiled.hydraulic is not None
 
     resolved_condition = _port_condition(pressure=180000.0, temperature=345.0, flow_rate=4.5)
     bridge = _PayloadOnlyBridge(
@@ -1036,6 +1062,369 @@ def test_thermo_coupling_preserves_solved_zero_flow_instead_of_payload_placehold
     assert latest_inlet.through_molar_flow_rate == pytest.approx(0.0)
 
 
+def test_pressure_coupled_endpoint_missing_compiled_pressure_raises_instead_of_falling_back() -> (
+    None
+):
+    def hydraulic_solve_step(
+        *,
+        network: ConnectionNetwork,
+        macro_step_time_s: float,
+    ) -> HydraulicSolveResult:
+        del network, macro_step_time_s
+        return _hydraulic_result(edge_flow=1.25)
+
+    def transport_and_mixing_step(
+        *,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+        macro_step_time_s: float,
+    ) -> TransportAndMixingUpdate:
+        del network, hydraulic_result, macro_step_time_s
+        return TransportAndMixingUpdate(
+            transport_results={
+                "edge_0001": _transport_result(),
+                "edge_0002": _transport_result(),
+            }
+        )
+
+    class _PayloadOnlyBridge(_ReactorRuntimePortBridge):
+        def get_outlet(self, port_name: str):
+            del port_name
+            return {
+                "role": "outlet",
+                "outlet_flow": 99.0,
+                "pressure": 222000.0,
+                "composition": (0.25, 0.75),
+            }
+
+    runtime = ConnectionRuntimeOrchestrator(
+        runtime_context=cast("SimulationRuntimeContext", _RuntimeContextStub()),
+        hydraulic_solve_step=hydraulic_solve_step,
+        transport_and_mixing_step=transport_and_mixing_step,
+    )
+
+    network = ConnectionNetwork(
+        compile_lifecycle=HydraulicCompileLifecycle(),
+        hydraulic_system_builder=lambda topology: _lookup_system(),
+        runtime_orchestrator=runtime,
+    )
+    network.add_process("reactor", inlet_ports=("feed",), outlet_ports=("product",))
+    network.add_boundary_source("feed_boundary")
+    network.add_boundary_sink("product_boundary")
+    network.connect("feed_boundary", "reactor.feed")
+    network.connect("reactor.product", "product_boundary")
+    compiled = network.compile()
+
+    resolved_condition = _port_condition(pressure=180000.0, temperature=345.0, flow_rate=4.5)
+    bridge = _PayloadOnlyBridge(
+        runtime=runtime,
+        resolved_condition=resolved_condition,
+        legacy_stream=StreamData.from_port_condition(resolved_condition),
+    )
+    runtime.bind_stream_port_io(node_id="reactor", stream_port_io=bridge)
+    runtime.set_feed_stream(
+        boundary_id="feed_boundary",
+        stream=StreamData.from_port_condition(
+            _port_condition(pressure=130000.0, temperature=320.0, flow_rate=3.2)
+        ),
+    )
+    assert compiled.hydraulic is not None
+    compiled_hydraulic = compiled.hydraulic
+    network._compiled = replace(
+        compiled,
+        hydraulic=replace(
+            compiled_hydraulic,
+            system=replace(
+                compiled_hydraulic.system,
+                topology_lookup=replace(
+                    compiled_hydraulic.topology_lookup,
+                    node_pressure_unknown_by_endpoint={
+                        "feed_boundary.outlet": "source_pressure",
+                        "product_boundary.inlet": "target_pressure",
+                    },
+                    balancing_group_name_by_endpoint={},
+                ),
+            ),
+        ),
+        process_bindings={
+            **compiled.process_bindings,
+            "reactor": bridge,
+        },
+    )
+
+    with pytest.raises(BindingError, match="Missing compiled hydraulic pressure mapping"):
+        _ = network.step(macro_step_time_s=1.0)
+
+
+def test_pressure_coupled_endpoint_does_not_reuse_balancing_group_pressure() -> None:
+    def hydraulic_solve_step(
+        *,
+        network: ConnectionNetwork,
+        macro_step_time_s: float,
+    ) -> HydraulicSolveResult:
+        del network, macro_step_time_s
+        return _hydraulic_result(edge_flow=1.25)
+
+    def transport_and_mixing_step(
+        *,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+        macro_step_time_s: float,
+    ) -> TransportAndMixingUpdate:
+        del network, hydraulic_result, macro_step_time_s
+        return TransportAndMixingUpdate(
+            transport_results={
+                "edge_0001": _transport_result(),
+                "edge_0002": _transport_result(),
+            }
+        )
+
+    class _PayloadOnlyBridge(_ReactorRuntimePortBridge):
+        def get_outlet(self, port_name: str):
+            del port_name
+            return {
+                "role": "outlet",
+                "outlet_flow": 99.0,
+                "pressure": 222000.0,
+                "composition": (0.25, 0.75),
+            }
+
+    runtime = ConnectionRuntimeOrchestrator(
+        runtime_context=cast("SimulationRuntimeContext", _RuntimeContextStub()),
+        hydraulic_solve_step=hydraulic_solve_step,
+        transport_and_mixing_step=transport_and_mixing_step,
+    )
+
+    network = ConnectionNetwork(
+        compile_lifecycle=HydraulicCompileLifecycle(),
+        hydraulic_system_builder=lambda topology: _lookup_system(),
+        runtime_orchestrator=runtime,
+    )
+    network.add_process("reactor", inlet_ports=("feed",), outlet_ports=("product",))
+    network.add_boundary_source("feed_boundary")
+    network.add_boundary_sink("product_boundary")
+    network.connect("feed_boundary", "reactor.feed")
+    network.connect("reactor.product", "product_boundary")
+    compiled = network.compile()
+    assert compiled.hydraulic is not None
+
+    resolved_condition = _port_condition(pressure=180000.0, temperature=345.0, flow_rate=4.5)
+    bridge = _PayloadOnlyBridge(
+        runtime=runtime,
+        resolved_condition=resolved_condition,
+        legacy_stream=StreamData.from_port_condition(resolved_condition),
+    )
+    runtime.bind_stream_port_io(node_id="reactor", stream_port_io=bridge)
+    runtime.set_feed_stream(
+        boundary_id="feed_boundary",
+        stream=StreamData.from_port_condition(
+            _port_condition(pressure=130000.0, temperature=320.0, flow_rate=3.2)
+        ),
+    )
+    network._compiled = replace(
+        compiled,
+        hydraulic=replace(
+            compiled.hydraulic,
+            system=replace(
+                compiled.hydraulic.system,
+                topology_lookup=replace(
+                    compiled.hydraulic.topology_lookup,
+                    node_pressure_unknown_by_endpoint={
+                        "feed_boundary.outlet": "source_pressure",
+                        "reactor.product": "source_pressure",
+                        "product_boundary.inlet": "target_pressure",
+                    },
+                ),
+            ),
+        ),
+        process_bindings={
+            **compiled.process_bindings,
+            "reactor": bridge,
+        },
+    )
+
+    with pytest.raises(BindingError, match="Missing compiled hydraulic pressure mapping"):
+        _ = network.step(macro_step_time_s=1.0)
+
+
+def test_passive_endpoint_allows_payload_pressure_fallback_when_compiled_pressure_missing() -> None:
+    def hydraulic_solve_step(
+        *,
+        network: ConnectionNetwork,
+        macro_step_time_s: float,
+    ) -> HydraulicSolveResult:
+        del network, macro_step_time_s
+        return _hydraulic_result(edge_flow=1.25)
+
+    def transport_and_mixing_step(
+        *,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+        macro_step_time_s: float,
+    ) -> TransportAndMixingUpdate:
+        del network, hydraulic_result, macro_step_time_s
+        return TransportAndMixingUpdate(
+            transport_results={
+                "edge_0001": _transport_result(),
+                "edge_0002": _transport_result(),
+            }
+        )
+
+    class _PayloadOnlyBridge(_ReactorRuntimePortBridge):
+        def get_outlet(self, port_name: str):
+            del port_name
+            return {
+                "role": "outlet",
+                "outlet_flow": 99.0,
+                "pressure": 222000.0,
+                "composition": (0.25, 0.75),
+            }
+
+    runtime = ConnectionRuntimeOrchestrator(
+        runtime_context=cast("SimulationRuntimeContext", _RuntimeContextStub()),
+        hydraulic_solve_step=hydraulic_solve_step,
+        transport_and_mixing_step=transport_and_mixing_step,
+    )
+
+    network = ConnectionNetwork(
+        compile_lifecycle=HydraulicCompileLifecycle(),
+        hydraulic_system_builder=lambda topology: _lookup_system_with_passive_reactor_feed(),
+        runtime_orchestrator=runtime,
+    )
+    network.add_process("reactor", inlet_ports=("feed",), outlet_ports=("product",))
+    network.add_boundary_source("feed_boundary")
+    network.add_boundary_sink("product_boundary")
+    network.connect("feed_boundary", "reactor.feed")
+    network.connect("reactor.product", "product_boundary")
+    compiled = network.compile()
+    assert compiled.hydraulic is not None
+
+    resolved_condition = _port_condition(pressure=180000.0, temperature=345.0, flow_rate=4.5)
+    bridge = _PayloadOnlyBridge(
+        runtime=runtime,
+        resolved_condition=resolved_condition,
+        legacy_stream=StreamData.from_port_condition(resolved_condition),
+    )
+    runtime.bind_stream_port_io(node_id="reactor", stream_port_io=bridge)
+    runtime.set_feed_stream(
+        boundary_id="feed_boundary",
+        stream=StreamData.from_port_condition(
+            _port_condition(pressure=130000.0, temperature=320.0, flow_rate=3.2)
+        ),
+    )
+    network._compiled = replace(
+        compiled,
+        hydraulic=replace(
+            compiled.hydraulic,
+            system=replace(
+                compiled.hydraulic.system,
+                topology_lookup=replace(
+                    compiled.hydraulic.topology_lookup,
+                    node_pressure_unknown_by_endpoint={
+                        "feed_boundary.outlet": "source_pressure",
+                        "reactor.product": "source_pressure",
+                        "product_boundary.inlet": "target_pressure",
+                    },
+                    balancing_group_name_by_endpoint={
+                        "reactor.product": "reactor_group",
+                    },
+                ),
+            ),
+        ),
+        process_bindings={
+            **compiled.process_bindings,
+            "reactor": bridge,
+        },
+    )
+
+    _ = network.step(macro_step_time_s=1.0)
+
+    latest_inlet = runtime.get_latest_inlet_condition(node_id="reactor", port_name="feed")
+    assert latest_inlet is not None
+    assert latest_inlet.state.pressure == pytest.approx(7.0)
+
+
+def test_pressure_coupled_edge_missing_solved_flow_raises_instead_of_zero_flow() -> None:
+    runtime = ConnectionRuntimeOrchestrator(
+        runtime_context=cast("SimulationRuntimeContext", _RuntimeContextStub())
+    )
+    network = ConnectionNetwork(
+        compile_lifecycle=HydraulicCompileLifecycle(),
+        hydraulic_system_builder=lambda topology: _lookup_system(),
+        runtime_orchestrator=runtime,
+    )
+    network.add_process("reactor", inlet_ports=("feed",), outlet_ports=("product",))
+    network.add_boundary_source("feed_boundary")
+    network.add_boundary_sink("product_boundary")
+    network.connect("feed_boundary", "reactor.feed")
+    network.connect("reactor.product", "product_boundary")
+    compiled = network.compile()
+    assert compiled.hydraulic is not None
+
+    class _MissingFlowCompiledHydraulic:
+        topology_lookup = compiled.hydraulic.topology_lookup
+
+        def resolve_line_flow(
+            self, *, line_id: str, hydraulic_result: HydraulicSolveResult
+        ) -> float | None:
+            del line_id, hydraulic_result
+            return None
+
+        def resolve_line_source_pressure(
+            self, *, line_id: str, hydraulic_result: HydraulicSolveResult
+        ) -> float | None:
+            key = self.topology_lookup.edge_source_pressure_unknown_by_line.get(line_id)
+            return None if key is None else float(hydraulic_result.unknowns[key])
+
+        def resolve_line_target_pressure(
+            self, *, line_id: str, hydraulic_result: HydraulicSolveResult
+        ) -> float | None:
+            key = self.topology_lookup.edge_target_pressure_unknown_by_line.get(line_id)
+            return None if key is None else float(hydraulic_result.unknowns[key])
+
+        def resolve_endpoint_pressure(
+            self, *, endpoint_id: str, hydraulic_result: HydraulicSolveResult
+        ) -> float | None:
+            key = self.topology_lookup.node_pressure_unknown_by_endpoint.get(endpoint_id)
+            return None if key is None else float(hydraulic_result.unknowns[key])
+
+        def resolve_junction_pressure(
+            self, *, junction_id: str, hydraulic_result: HydraulicSolveResult
+        ) -> float | None:
+            del junction_id, hydraulic_result
+            return None
+
+        def solve(self) -> HydraulicSolveResult:
+            raise AssertionError("not used")
+
+    runtime.set_feed_stream(
+        boundary_id="feed_boundary",
+        stream=StreamData.from_port_condition(
+            _port_condition(pressure=130000.0, temperature=320.0, flow_rate=3.2)
+        ),
+    )
+    network._compiled = replace(
+        compiled,
+        hydraulic=cast(object, _MissingFlowCompiledHydraulic()),
+    )
+
+    with pytest.raises(BindingError, match="Missing compiled hydraulic flow mapping"):
+        _ = runtime._boundary_propagation_step(
+            network=network,
+            hydraulic_result=HydraulicSolveResult(
+                converged=True,
+                iterations=2,
+                residual_norm=1.0e-10,
+                solution_vector=np.asarray([7.0, 9.0], dtype=np.float64),
+                unknowns={"source_pressure": 7.0, "target_pressure": 9.0},
+                unknown_index_map={"source_pressure": 0, "target_pressure": 1},
+                residual_index_map={"balance": 0, "ref": 1},
+            ),
+            transport_and_mixing_update=TransportAndMixingUpdate(transport_results={}),
+            macro_step_time_s=1.0,
+        )
+
+
 def test_thermo_coupling_uses_single_junction_mix_for_multiple_outgoing_edges() -> None:
     context = SimulationRuntimeContext.create(species_names=["water", "ethanol"])
     runtime = ConnectionRuntimeOrchestrator(runtime_context=context)
@@ -1230,6 +1619,154 @@ def test_thermo_coupling_uses_single_junction_mix_for_multiple_outgoing_edges() 
     assert inlet_b.state.mole_fractions == pytest.approx((0.625, 0.375))
     assert inlet_a.through_molar_flow_rate == pytest.approx(4.0)
     assert inlet_b.through_molar_flow_rate == pytest.approx(4.0)
+
+
+def test_participating_source_endpoint_missing_own_mapping_raises_even_if_line_target_pressure_exists() -> (
+    None
+):
+    """
+    Regression: _resolve_pressure() must check endpoint participation BEFORE calling
+    _resolve_hydraulic_pressure() (which returns the line's target pressure).  A participating
+    source endpoint whose OWN compiled endpoint mapping is absent must raise BindingError, not
+    silently use the line-target pressure.
+
+    Uses a purely payload-only bridge (no resolve_outlet_condition) so _build_material_state() /
+    _resolve_pressure() is actually exercised instead of the resolver-based path.
+    """
+
+    class _PurePayloadBridge:
+        """Payload-only bridge: has get_outlet() but NO resolve_outlet_condition().
+        Forces _build_material_state() / _resolve_pressure() code path."""
+
+        def apply_inlet(self, port_name: str, stream: StreamData) -> None:
+            del port_name, stream
+
+        def get_outlet(self, port_name: str) -> dict[str, object]:
+            del port_name
+            return {
+                "role": "outlet",
+                "outlet_flow": 2.0,
+                "pressure": 888000.0,
+                "composition": (0.25, 0.75),
+            }
+
+    class _ParticipatingSourceMissingOwnMapping:
+        """Compiled hydraulic where source endpoint has a participating role but NO own
+        endpoint mapping, yet resolve_line_target_pressure returns a value for the edge.
+
+        Both edges map to the same 'target_pressure' unknown, so resolve_line_target_pressure
+        returns 9.0 for the reactor.product→product_boundary edge.  The old code would silently
+        use that value as the source pressure; the correct code must raise BindingError instead.
+        """
+
+        topology_lookup = HydraulicTopologyLookup(
+            line_flow_unknown_by_line={"edge_0001": "edge_flow", "edge_0002": "edge_flow"},
+            edge_source_pressure_unknown_by_line={
+                "edge_0001": "source_pressure",
+                "edge_0002": "source_pressure",
+            },
+            edge_target_pressure_unknown_by_line={
+                "edge_0001": "target_pressure",
+                "edge_0002": "target_pressure",
+            },
+            node_pressure_unknown_by_endpoint={
+                # reactor.product is a participating source but has NO own mapping here
+                "product_boundary.inlet": "target_pressure",
+            },
+            node_pressure_unknown_by_junction={},
+            endpoint_role_by_endpoint={
+                "reactor.product": "pressure_state",  # participating, but no mapping above
+            },
+            balancing_group_name_by_endpoint={},
+        )
+
+        def resolve_line_flow(
+            self, *, line_id: str, hydraulic_result: HydraulicSolveResult
+        ) -> float | None:
+            key = self.topology_lookup.line_flow_unknown_by_line.get(line_id)
+            return None if key is None else float(hydraulic_result.unknowns[key])
+
+        def resolve_line_source_pressure(
+            self, *, line_id: str, hydraulic_result: HydraulicSolveResult
+        ) -> float | None:
+            key = self.topology_lookup.edge_source_pressure_unknown_by_line.get(line_id)
+            return None if key is None else float(hydraulic_result.unknowns[key])
+
+        def resolve_line_target_pressure(
+            self, *, line_id: str, hydraulic_result: HydraulicSolveResult
+        ) -> float | None:
+            # Both edges return a value — the bug would silently use this for the participating source
+            key = self.topology_lookup.edge_target_pressure_unknown_by_line.get(line_id)
+            return None if key is None else float(hydraulic_result.unknowns[key])
+
+        def resolve_endpoint_pressure(
+            self, *, endpoint_id: str, hydraulic_result: HydraulicSolveResult
+        ) -> float | None:
+            key = self.topology_lookup.node_pressure_unknown_by_endpoint.get(endpoint_id)
+            return None if key is None else float(hydraulic_result.unknowns[key])
+
+        def resolve_junction_pressure(
+            self, *, junction_id: str, hydraulic_result: HydraulicSolveResult
+        ) -> float | None:
+            del junction_id, hydraulic_result
+            return None
+
+        def solve(self) -> HydraulicSolveResult:
+            raise AssertionError("not used")
+
+    runtime = ConnectionRuntimeOrchestrator(
+        runtime_context=cast("SimulationRuntimeContext", _RuntimeContextStub())
+    )
+    network = ConnectionNetwork(
+        compile_lifecycle=HydraulicCompileLifecycle(),
+        hydraulic_system_builder=lambda topology: _lookup_system(),
+        runtime_orchestrator=runtime,
+    )
+    network.add_process("reactor", inlet_ports=("feed",), outlet_ports=("product",))
+    network.add_boundary_source("feed_boundary")
+    network.add_boundary_sink("product_boundary")
+    network.connect("feed_boundary", "reactor.feed")
+    network.connect("reactor.product", "product_boundary")
+    compiled = network.compile()
+
+    bridge = _PurePayloadBridge()
+    runtime.set_feed_stream(
+        boundary_id="feed_boundary",
+        stream=StreamData.from_port_condition(
+            _port_condition(pressure=130000.0, temperature=320.0, flow_rate=3.2)
+        ),
+    )
+    network._compiled = replace(
+        compiled,
+        hydraulic=cast(object, _ParticipatingSourceMissingOwnMapping()),
+        process_bindings={
+            **compiled.process_bindings,
+            "reactor": bridge,
+        },
+    )
+
+    with pytest.raises(BindingError, match="Missing compiled hydraulic pressure mapping"):
+        _ = runtime._boundary_propagation_step(
+            network=network,
+            hydraulic_result=HydraulicSolveResult(
+                converged=True,
+                iterations=2,
+                residual_norm=1.0e-10,
+                solution_vector=np.asarray([1.5, 7.0, 9.0], dtype=np.float64),
+                unknowns={"edge_flow": 1.5, "source_pressure": 7.0, "target_pressure": 9.0},
+                unknown_index_map={"edge_flow": 0, "source_pressure": 1, "target_pressure": 2},
+                residual_index_map={},
+            ),
+            transport_and_mixing_update=TransportAndMixingUpdate(
+                # edge_0002 is reactor.product→product_boundary; providing its transport result
+                # ensures _build_material_state() is reached for the participating source endpoint
+                transport_results={
+                    "edge_0001": _transport_result(),
+                    "edge_0002": _transport_result(),
+                },
+            ),
+            macro_step_time_s=1.0,
+        )
 
 
 def test_thermo_coupling_classifies_reverse_flow_from_local_node_sign() -> None:

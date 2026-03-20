@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 import numpy as np
 import pytest
 from typing import cast
@@ -8,11 +9,13 @@ from typing import cast
 from modular_simulation.connection.runtime.connection_layer import TransportAndMixingUpdate
 from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
 from modular_simulation.connection.hydraulics.hydraulic_solver import (
+    HydraulicTopologyLookup,
     HydraulicSolveResult,
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )
 from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.topology.process_binding import BindingError
 from modular_simulation.connection.runtime.runtime import (
     ConnectionRuntimeOrchestrator,
     ConnectionRuntimeStepResult,
@@ -183,6 +186,7 @@ def test_auto_propagation_two_units() -> None:
 
     compiled = network.compiled
     assert compiled is not None
+    assert compiled.hydraulic is not None
     binding_a = compiled.process_bindings["unit_a"]
     binding_a.bind_inlets({"inlet": 1.5})
     binding_a.bind_outlets(
@@ -243,9 +247,8 @@ def test_auto_propagation_two_units() -> None:
         ConnectionRuntimeStepResult, network_with_auto.step(macro_step_time_s=0.2)
     )
     assert runtime_result.bookkeeping.updated_port_keys == ("unit_b.inlet",)
-    assert compiled_with_auto.process_bindings["unit_b"]._inlet_bindings["inlet"] == pytest.approx(
-        1.5
-    )
+    unit_b_binding = cast(object, compiled_with_auto.process_bindings["unit_b"])
+    assert getattr(unit_b_binding, "_inlet_bindings")["inlet"] == pytest.approx(1.5)
 
 
 def test_manual_mode_and_hybrid_override() -> None:
@@ -255,6 +258,7 @@ def test_manual_mode_and_hybrid_override() -> None:
 
     compiled = network.compiled
     assert compiled is not None
+    assert compiled.hydraulic is not None
     binding_a = compiled.process_bindings["unit_a"]
     binding_a.bind_inlets({"inlet": 2.0})
     binding_a.bind_outlets(
@@ -343,6 +347,7 @@ def test_auto_propagation_uses_pressure_signal_and_falls_back_to_default() -> No
 
     compiled = network.compiled
     assert compiled is not None
+    assert compiled.hydraulic is not None
     binding_a = compiled.process_bindings["unit_a"]
     binding_a.bind_inlets({"inlet": 1.0})
     binding_a.bind_outlets(
@@ -384,6 +389,70 @@ def test_auto_propagation_uses_pressure_signal_and_falls_back_to_default() -> No
         macro_step_time_s=0.1,
     )
     assert no_signal_conditions["unit_b.inlet"].state.pressure == pytest.approx(123456.0)
+
+
+def test_declared_pressure_coupled_endpoint_requires_compiled_mapping_before_runtime_fallback() -> (
+    None
+):
+    context = SimulationRuntimeContext.create(species_names=["water", "ethanol"])
+    runtime = ConnectionRuntimeOrchestrator(runtime_context=context)
+    network, edge_a_to_b = _network(runtime)
+
+    compiled = network.compiled
+    assert compiled is not None
+    assert compiled.hydraulic is not None
+    compiled_hydraulic = compiled.hydraulic
+    binding_a = compiled.process_bindings["unit_a"]
+    binding_a.bind_inlets({"inlet": 1.0})
+    binding_a.bind_outlets(
+        {
+            "outlet": {
+                "role": "outlet",
+                "flow": 1.0,
+                "composition": (0.4, 0.6),
+            }
+        }
+    )
+
+    declared_lookup = HydraulicTopologyLookup(
+        line_flow_unknown_by_line={edge_a_to_b: edge_a_to_b},
+        edge_source_pressure_unknown_by_line={edge_a_to_b: "pressure__unit_a_outlet"},
+        edge_target_pressure_unknown_by_line={edge_a_to_b: "pressure__unit_b_inlet"},
+        node_pressure_unknown_by_endpoint={
+            "unit_a.outlet": "pressure__unit_a_outlet",
+            "unit_b.inlet": "pressure__unit_b_inlet",
+        },
+        node_pressure_unknown_by_junction={},
+        endpoint_role_by_endpoint={
+            "unit_a.outlet": "pressure_state",
+            "unit_b.inlet": "pressure_state",
+        },
+        balancing_group_name_by_endpoint={},
+    )
+    network._compiled = replace(
+        compiled,
+        hydraulic=replace(
+            compiled_hydraulic,
+            system=replace(compiled_hydraulic.system, topology_lookup=declared_lookup),
+        ),
+    )
+
+    step = ThermoBoundaryPropagationStep(runtime_context=context)
+    with pytest.raises(BindingError, match="Missing compiled hydraulic pressure mapping"):
+        _ = step(
+            network=network,
+            hydraulic_result=HydraulicSolveResult(
+                converged=True,
+                iterations=2,
+                residual_norm=1.0e-10,
+                solution_vector=np.asarray([1.0, 5.0], dtype=np.float64),
+                unknowns={edge_a_to_b: 1.0, "pressure": 5.0},
+                unknown_index_map={edge_a_to_b: 0, "pressure": 1},
+                residual_index_map={"balance": 0, "ref": 1},
+            ),
+            transport_and_mixing_update=_transport_update(edge_a_to_b, (0.4, 0.6), 330.0),
+            macro_step_time_s=0.1,
+        )
 
 
 def test_enthalpy_correct_mixing() -> None:

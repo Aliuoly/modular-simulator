@@ -23,6 +23,13 @@ from modular_simulation.thermodynamics.hydraulic_adapters import (
     default_pump_hydraulic_parameters,
     validate_outlet_port,
 )
+from modular_simulation.thermodynamics.hydraulic_participation import (
+    HydraulicBalancingGroupSpec,
+    HydraulicElementCouplingSpec,
+    HydraulicParticipationSpec,
+    HydraulicPortSpec,
+    HydraulicScalarStateRef,
+)
 from modular_simulation.thermodynamics.property_package import PropertyPackage
 from modular_simulation.thermodynamics.stream import PortAttributeMap, StreamData
 from modular_simulation.utils.typing import ArrayIndex, Seconds
@@ -176,6 +183,32 @@ class Pump(AlgebraicProcessModel):
     @property
     def ports(self) -> UnitProcessPorts:
         return SINGLE_IO
+
+    @property
+    @override
+    def hydraulic_participation(self) -> HydraulicParticipationSpec:
+        return HydraulicParticipationSpec(
+            ports={
+                "inlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef(state="inlet_pressure"),
+                ),
+                "outlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef(state="outlet_pressure"),
+                ),
+            },
+            balancing_groups=(
+                HydraulicBalancingGroupSpec(name="flow_balance", ports=("inlet", "outlet")),
+            ),
+            element_couplings=(
+                HydraulicElementCouplingSpec(
+                    name="hydraulic_element",
+                    port="outlet",
+                    ports=("inlet", "outlet"),
+                ),
+            ),
+        )
 
     def set_property_package(self, package: PropertyPackage | None) -> None:
         self._property_package = package

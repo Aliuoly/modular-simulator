@@ -17,6 +17,13 @@ from modular_simulation.thermodynamics.algebraic_process_model import (
     UnitProcessPorts,
 )
 from modular_simulation.thermodynamics.hydraulic_adapters import pipe_hydraulic_element_for_outlet
+from modular_simulation.thermodynamics.hydraulic_participation import (
+    HydraulicBalancingGroupSpec,
+    HydraulicParticipationSpec,
+    HydraulicPortSpec,
+    HydraulicRelationSpec,
+    HydraulicScalarStateRef,
+)
 from modular_simulation.thermodynamics.property_package import PropertyPackage
 from modular_simulation.thermodynamics.stream import PortAttributeMap, StreamData
 from modular_simulation.utils.typing import ArrayIndex, Seconds
@@ -520,6 +527,52 @@ class HeatExchanger(AlgebraicProcessModel):
     @property
     def ports(self) -> UnitProcessPorts:
         return HEAT_EXCHANGER_PORTS
+
+    @property
+    @override
+    def hydraulic_participation(self) -> HydraulicParticipationSpec:
+        return HydraulicParticipationSpec(
+            ports={
+                "hot_inlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("hot_inlet_pressure"),
+                ),
+                "hot_outlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("hot_outlet_pressure"),
+                ),
+                "cold_inlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("cold_inlet_pressure"),
+                ),
+                "cold_outlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("cold_outlet_pressure"),
+                ),
+            },
+            balancing_groups=(
+                HydraulicBalancingGroupSpec(
+                    name="hot_side_balance",
+                    ports=("hot_inlet", "hot_outlet"),
+                ),
+                HydraulicBalancingGroupSpec(
+                    name="cold_side_balance",
+                    ports=("cold_inlet", "cold_outlet"),
+                ),
+            ),
+            relations=(
+                HydraulicRelationSpec(
+                    name="hot_side_pressure_equal",
+                    kind="pressure_equal",
+                    ports=("hot_inlet", "hot_outlet"),
+                ),
+                HydraulicRelationSpec(
+                    name="cold_side_pressure_equal",
+                    kind="pressure_equal",
+                    ports=("cold_inlet", "cold_outlet"),
+                ),
+            ),
+        )
 
     def set_property_package(self, package: PropertyPackage | None) -> None:
         self._property_package = package

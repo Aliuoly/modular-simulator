@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
+from modular_simulation.thermodynamics.hydraulic_participation import HydraulicScalarStateRef
 from modular_simulation.thermodynamics.property_package import FlashResult
 from modular_simulation.unit_processes import ShortcutDistillation
 
@@ -175,3 +176,32 @@ def test_shortcut_distillation_helper_cluster_is_class_owned() -> None:
     assert hasattr(ShortcutDistillation, "_fenske_n_min")
     assert "def _solve_underwood_theta" not in class_prefix
     assert "def _fenske_n_min" not in class_prefix
+
+
+def test_shortcut_distillation_declares_explicit_hydraulic_participation_with_distinct_outlet_refs() -> (
+    None
+):
+    column = ShortcutDistillation()
+
+    participation = column.hydraulic_participation
+
+    assert participation is not None
+    assert participation.relations == ()
+    assert set(participation.ports) == {"inlet", "distillate", "bottoms"}
+    assert participation.ports["inlet"].role == "pressure_state"
+    assert participation.ports["inlet"].pressure_state == HydraulicScalarStateRef(
+        state="inlet_pressure"
+    )
+
+    distillate_port = participation.ports["distillate"]
+    bottoms_port = participation.ports["bottoms"]
+
+    assert distillate_port.role == "fixed_pressure_anchor"
+    assert distillate_port.pressure_state == HydraulicScalarStateRef(state="condenser_pressure")
+    assert distillate_port.fixed_value_state == HydraulicScalarStateRef(state="condenser_pressure")
+    assert bottoms_port.role == "fixed_pressure_anchor"
+    assert bottoms_port.pressure_state == HydraulicScalarStateRef(state="reboiler_pressure")
+    assert bottoms_port.fixed_value_state == HydraulicScalarStateRef(state="reboiler_pressure")
+    assert distillate_port.pressure_state != bottoms_port.pressure_state
+    assert len(participation.balancing_groups) == 1
+    assert participation.balancing_groups[0].ports == ("inlet", "distillate", "bottoms")

@@ -14,6 +14,14 @@ from modular_simulation.thermodynamics.algebraic_process_model import (
     UnitProcessPorts,
 )
 from modular_simulation.thermodynamics.hydraulic_adapters import pipe_hydraulic_element_for_outlet
+from modular_simulation.thermodynamics.hydraulic_participation import (
+    HydraulicBalancingGroupSpec,
+    HydraulicIndexedStateRef,
+    HydraulicParticipationSpec,
+    HydraulicPortSpec,
+    HydraulicRelationSpec,
+    HydraulicScalarStateRef,
+)
 from modular_simulation.thermodynamics.stream import (
     PortAttributeMap,
     StreamData,
@@ -176,6 +184,43 @@ class Splitter(AlgebraicProcessModel):
         return UnitProcessPorts(
             inlets=("inlet",),
             outlets=tuple(f"outlet_{index + 1}" for index in range(self.n_outlets)),
+        )
+
+    @property
+    @override
+    def hydraulic_participation(self) -> HydraulicParticipationSpec:
+        outlet_ports = self.ports.outlets
+        all_ports = ("inlet", *outlet_ports)
+        ports: dict[str, HydraulicPortSpec] = {
+            "inlet": HydraulicPortSpec(
+                role="pressure_state",
+                pressure_state=HydraulicScalarStateRef(state="inlet_pressure"),
+            )
+        }
+        ports.update(
+            {
+                port_name: HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicIndexedStateRef(
+                        state="outlet_pressures",
+                        index=outlet_index,
+                    ),
+                )
+                for outlet_index, port_name in enumerate(outlet_ports)
+            }
+        )
+        return HydraulicParticipationSpec(
+            ports=ports,
+            balancing_groups=(
+                HydraulicBalancingGroupSpec(name="split_flow_balance", ports=all_ports),
+            ),
+            relations=(
+                HydraulicRelationSpec(
+                    name="split_equal_pressure",
+                    kind="pressure_equal",
+                    ports=all_ports,
+                ),
+            ),
         )
 
     @staticmethod
