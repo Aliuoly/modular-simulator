@@ -1,5 +1,9 @@
 # PlantBackendSession User Guide
 
+`PlantBackendSession` is the **low-level runtime-editing and topology-management substrate** for user-facing applications built on this educational chemical-process backend. It is *not* the owner of gameplay progression rules, economics, or classroom orchestration logic — those concerns belong to higher-level layers that compose `PlantBackendSession` rather than live inside it.
+
+User-facing educational gameplay or classroom orchestration tools should treat `PlantBackendSession` as the physical/runtime substrate: it manages topology, sensors, controllers, and simulation stepping. Progression, economics, and scenario state are responsibilities of the gameplay layer above.
+
 This guide explains how to use `PlantBackendSession` as a user-facing backend for interactive plant editing (for example, a game-like UI where users add processes, ports, lines, sensors, and controllers at runtime).
 
 The focus is practical usage:

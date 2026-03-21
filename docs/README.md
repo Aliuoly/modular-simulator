@@ -1,8 +1,14 @@
 # Modular Simulation Framework
 
-`modular_simulation` is a lightweight framework for building closed-loop process simulations. It separates the physical model, instrumentation, and control logic into composable pieces, allowing new systems to be assembled from small, well-typed components.
+`modular_simulation` is a simulation-first backend for educational chemical-process gameplay and classroom exercises. It targets chemical engineering students and instructors who need a grounded, composable process-simulation substrate for learning and for building user-facing tools.
 
-The framework is intended to be used for learning about controller design, trying out different controller algorithms, and performing system identification.
+The framework separates the physical model, instrumentation, and control logic into composable pieces, allowing new systems to be assembled from small, well-typed components. The current phase-1 scope covers three teaching tracks:
+
+- **Topology and separation basics** — flowsheet wiring, explicit boundary feeds/sinks, and unit-process composition.
+- **Reactor dynamics, sensing, and control** — closed-loop control, PID tuning, and instrumented reactors.
+- **Recycle, purge, and process-design tradeoffs** — named junction topology, recycle loop validation, and material balance tradeoffs.
+
+See [`docs/game_backend_overview.md`](game_backend_overview.md) for the full product framing, target audience, and explicitly deferred topics.
 
 ## Key Features
 
