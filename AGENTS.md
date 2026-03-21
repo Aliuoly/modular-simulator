@@ -9,4 +9,3 @@ Use 'bd' for task tracking
 - Make OpenSpec `tasks.md` execution-ready: concrete task waves, exact files when known, explicit verification commands, and clear TDD expectations for behavior changes.
 - `hybrid-orchestrator` owns delegation and closure. It should use Beads from the project root to claim/update work, keep implementation inside a git worktree, dispatch coding agents with bounded task packets, require independent code review before completion, and only close work after evidence-backed verification.
 - If OpenSpec artifacts changed during implementation, run change verification, sync delta specs into `openspec/specs/` when appropriate, and archive only when the change is actually complete.
-- Landing workflow: file follow-up issues, run quality gates, update Beads status, then from the project root run `git pull --rebase`, `bd dolt push`, `git push`, and `git status` until the branch is up to date.
