@@ -1,13 +1,6 @@
 from __future__ import annotations
 
-# pyright: reportMissingTypeStubs=false, reportMissingImports=false, reportUnknownMemberType=false
-
-from types import SimpleNamespace
-from typing import Any, cast
-
-import numpy as np
 import pytest
-from pydantic import ValidationError
 
 from modular_simulation.connection.hydraulics.hydraulic_compile import (
     calculate_effective_valve_resistance,
@@ -17,452 +10,60 @@ from modular_simulation.connection.hydraulics.hydraulic_element import (
     ValveHydraulicElement,
     smooth_signed_quadratic_flow_term,
 )
-from modular_simulation.thermodynamics.hydraulic_participation import (
-    HydraulicScalarStateRef,
-)
-from modular_simulation.thermodynamics.property_package import FlashResult, PropertyPackage
-from modular_simulation.thermodynamics.stream import StreamData
-from modular_simulation.unit_processes.flow.pump import Pump
-from modular_simulation.unit_processes.flow.valve import Valve
 
 
-def _attach(model: Pump | Valve) -> None:
-    model.attach_system(cast(Any, SimpleNamespace(solver_options={})))
-
-
-class _SyntheticLiquidPackage:
-    cp_molar: float
-    density_value: float
-    molecular_weight_value: float
-    pressure_enthalpy_coeff: float
-
-    def __init__(
-        self,
-        *,
-        cp_molar: float,
-        density_value: float,
-        molecular_weight_value: float,
-        pressure_enthalpy_coeff: float,
-    ) -> None:
-        self.cp_molar = cp_molar
-        self.density_value = density_value
-        self.molecular_weight_value = molecular_weight_value
-        self.pressure_enthalpy_coeff = pressure_enthalpy_coeff
-
-    def flash_tp(self, T: float, P: float, z: tuple[float, ...]) -> FlashResult:
-        enthalpy = self.cp_molar * T + self.pressure_enthalpy_coeff * P
-        return FlashResult(
-            temperature=T,
-            pressure=P,
-            vapor_fraction=0.0,
-            phase="liquid",
-            liquid_composition=z,
-            vapor_composition=None,
-            enthalpy_molar=enthalpy,
-            entropy_molar=T,
-            liquid_density=self.density_value,
-            vapor_density=None,
-            K_values=None,
-        )
-
-    def flash_ph(self, P: float, H: float, z: tuple[float, ...]) -> FlashResult:
-        temperature = (H - self.pressure_enthalpy_coeff * P) / self.cp_molar
-        return FlashResult(
-            temperature=temperature,
-            pressure=P,
-            vapor_fraction=0.0,
-            phase="liquid",
-            liquid_composition=z,
-            vapor_composition=None,
-            enthalpy_molar=H,
-            entropy_molar=temperature,
-            liquid_density=self.density_value,
-            vapor_density=None,
-            K_values=None,
-        )
-
-    def flash_ps(self, P: float, S: float, z: tuple[float, ...]) -> FlashResult:
-        del z
-        return self.flash_tp(T=S, P=P, z=(1.0,))
-
-    def enthalpy(self, T: float, P: float, z: tuple[float, ...], phase: str) -> float:
-        del z, phase
-        return self.cp_molar * T + self.pressure_enthalpy_coeff * P
-
-    def entropy(self, T: float, P: float, z: tuple[float, ...], phase: str) -> float:
-        del P, z, phase
-        return T
-
-    def density(self, T: float, P: float, z: tuple[float, ...], phase: str) -> float:
-        del T, P, z, phase
-        return self.density_value
-
-    def heat_capacity_cp(self, T: float, P: float, z: tuple[float, ...], phase: str) -> float:
-        del T, P, z, phase
-        return self.cp_molar
-
-    def molecular_weight(self, z: tuple[float, ...]) -> float:
-        del z
-        return self.molecular_weight_value
-
-    @property
-    def species_cas(self) -> tuple[str, ...]:
-        return ("7732-18-5", "64-17-5")
-
-
-class _DensityPackage:
-    _density_kg_m3: float
-    _molecular_weight_g_mol: float
-
-    def __init__(self, *, density_kg_m3: float, molecular_weight_g_mol: float) -> None:
-        self._density_kg_m3 = density_kg_m3
-        self._molecular_weight_g_mol = molecular_weight_g_mol
-
-    def flash_tp(self, T: float, P: float, z: tuple[float, ...]) -> FlashResult:
-        return FlashResult(
-            temperature=T,
-            pressure=P,
-            vapor_fraction=0.0,
-            phase="liquid",
-            liquid_composition=z,
-            vapor_composition=None,
-            enthalpy_molar=0.0,
-            entropy_molar=0.0,
-            liquid_density=self._density_kg_m3,
-            vapor_density=None,
-            K_values=None,
-        )
-
-    def density(self, T: float, P: float, z: tuple[float, ...], phase: str) -> float:
-        del T, P, z, phase
-        return self._density_kg_m3
-
-    def molecular_weight(self, z: tuple[float, ...]) -> float:
-        del z
-        return self._molecular_weight_g_mol
-
-
-def test_pump_flow_conversion_uses_density() -> None:
-    package = _DensityPackage(density_kg_m3=1000.0, molecular_weight_g_mol=18.0)
-    pump = Pump(
-        n_species=2,
-        inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
-        outlet_composition=np.array([0.5, 0.5], dtype=np.float64),
+def test_pressure_gain_element_residual_zero_at_balanced_head() -> None:
+    element = PumpHydraulicElement(
+        dp_curve=lambda flow_rate, gain: gain,
+        d_dp_d_mdot=lambda flow_rate, gain: 0.0,
     )
-    pump.set_property_package(cast(PropertyPackage, cast(object, package)))
 
-    inlet = StreamData(
-        temperature=300.0,
-        pressure=101325.0,
-        mole_fractions=(0.7, 0.3),
-        molar_flow_rate=100.0,
-    )
-    pump.apply_inlet("inlet", inlet)
-
-    expected_inlet_m3_s = 100.0 * (18.0 / 1000.0) / 1000.0
-    assert pump.inlet_flow == pytest.approx(expected_inlet_m3_s)
-
-    pump.outlet_flow = expected_inlet_m3_s * 2.0
-    pump.outlet_temperature = 310.0
-    pump.outlet_pressure = 201325.0
-    pump.outlet_composition = np.array([0.6, 0.4], dtype=np.float64)
-
-    outlet = pump.get_outlet_stream("outlet")
-    assert outlet.molar_flow_rate == pytest.approx(200.0)
-    assert outlet.temperature == pytest.approx(310.0)
-    assert outlet.pressure == pytest.approx(201325.0)
-    assert outlet.mole_fractions == pytest.approx((0.6, 0.4))
-
-
-def test_valve_flow_conversion_uses_density() -> None:
-    package = _DensityPackage(density_kg_m3=900.0, molecular_weight_g_mol=30.0)
-    valve = Valve(
-        n_species=2,
-        inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
-        outlet_composition=np.array([0.5, 0.5], dtype=np.float64),
-    )
-    valve.set_property_package(cast(PropertyPackage, cast(object, package)))
-
-    inlet = StreamData(
-        temperature=320.0,
-        pressure=180000.0,
-        mole_fractions=(0.4, 0.6),
-        molar_flow_rate=45.0,
-    )
-    valve.apply_inlet("inlet", inlet)
-
-    expected_inlet_m3_s = 45.0 * (30.0 / 1000.0) / 900.0
-    assert valve.inlet_flow == pytest.approx(expected_inlet_m3_s)
-
-    valve.outlet_flow = expected_inlet_m3_s * 3.0
-    valve.outlet_temperature = 315.0
-    valve.outlet_pressure = 140000.0
-    valve.outlet_composition = np.array([0.3, 0.7], dtype=np.float64)
-
-    outlet = valve.get_outlet_stream("outlet")
-    assert outlet.molar_flow_rate == pytest.approx(135.0)
-    assert outlet.temperature == pytest.approx(315.0)
-    assert outlet.pressure == pytest.approx(140000.0)
-    assert outlet.mole_fractions == pytest.approx((0.3, 0.7))
-
-
-def test_pump_pressure_power_and_hydraulic_invariant() -> None:
-    package = _SyntheticLiquidPackage(
-        cp_molar=90.0,
-        density_value=1000.0,
-        molecular_weight_value=18.0,
-        pressure_enthalpy_coeff=0.0,
-    )
-    pump = Pump(
-        n_species=2,
-        inlet_flow=0.01,
-        inlet_temperature=300.0,
-        inlet_pressure=100000.0,
-        inlet_composition=np.array([0.7, 0.3], dtype=np.float64),
-        pump_speed=200000.0,
-        efficiency=0.8,
-    )
-    pump.set_property_package(cast(Any, package))
-    _attach(pump)
-
-    pump.step(0.1)
-
-    expected_power = 0.01 * 200000.0 / 0.8
-    cp_mass = package.cp_molar / (package.molecular_weight_value / 1000.0)
-    expected_delta_t = 200000.0 / (0.8 * package.density_value * cp_mass)
-
-    assert pump.outlet_flow == pytest.approx(pump.inlet_flow)
-    assert pump.outlet_pressure == pytest.approx(300000.0)
-    assert pump.power_consumed == pytest.approx(expected_power)
-    assert pump.outlet_temperature == pytest.approx(300.0 + expected_delta_t)
-    assert pump.outlet_temperature > pump.inlet_temperature
-
-    hydraulic = PumpHydraulicElement(
-        dp_curve=lambda flow_rate, pump_speed: pump_speed,
-        d_dp_d_mdot=lambda flow_rate, pump_speed: 0.0,
-    )
-    residual = hydraulic.residuals(
-        inputs={
-            "upstream_pressure": pump.inlet_pressure,
-            "downstream_pressure": pump.outlet_pressure,
-        },
-        unknowns={"flow_rate": pump.inlet_flow},
-        parameters={"pump_speed": pump.pump_speed},
+    residual = element.residuals(
+        inputs={"upstream_pressure": 100_000.0, "downstream_pressure": 180_000.0},
+        unknowns={"flow_rate": 0.012},
+        parameters={"pump_speed": 80_000.0},
     )["head_balance"]
-    assert residual == pytest.approx(0.0, abs=1.0e-9)
+
+    assert residual == pytest.approx(0.0, abs=1.0e-10)
 
 
-def test_valve_pressure_drop_and_isenthalpic_invariant() -> None:
-    package = _SyntheticLiquidPackage(
-        cp_molar=100.0,
-        density_value=950.0,
-        molecular_weight_value=18.0,
-        pressure_enthalpy_coeff=2.0e-3,
+def test_pressure_gain_element_jacobian_matches_linear_gain_model() -> None:
+    element = PumpHydraulicElement(
+        dp_curve=lambda flow_rate, gain: gain,
+        d_dp_d_mdot=lambda flow_rate, gain: 0.0,
     )
-    valve = Valve(
-        n_species=2,
-        inlet_flow=0.02,
-        inlet_temperature=320.0,
-        inlet_pressure=250000.0,
-        inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
-        open_fraction=0.5,
-        Cv=0.002,
-        delta=1.0e-6,
+
+    jacobian = element.jacobian(
+        inputs={"upstream_pressure": 100_000.0, "downstream_pressure": 180_000.0},
+        unknowns={"flow_rate": 0.05},
+        parameters={"pump_speed": 80_000.0},
     )
-    valve.set_property_package(cast(Any, package))
-    _attach(valve)
 
-    valve.step(0.1)
+    assert jacobian[("head_balance", "flow_rate")] == pytest.approx(0.0)
 
-    resistance_when_open = 1.0 / (valve.Cv * valve.Cv)
-    effective_resistance = calculate_effective_valve_resistance(
-        resistance_when_open=resistance_when_open,
-        open_fraction=valve.open_fraction,
-        minimum_open_fraction=valve.minimum_open_fraction,
-        maximum_open_fraction=valve.maximum_open_fraction,
-        min_relative_open_fraction=valve.min_relative_open_fraction,
+
+def test_throttle_element_residual_matches_expected_pressure_drop_equation() -> None:
+    open_fraction = 0.5
+    resistance = calculate_effective_valve_resistance(
+        resistance_when_open=1.0 / (0.002 * 0.002),
+        open_fraction=open_fraction,
+        minimum_open_fraction=0.0,
+        maximum_open_fraction=1.0,
+        min_relative_open_fraction=1.0e-3,
     )
-    flow_term = smooth_signed_quadratic_flow_term(m_dot=valve.inlet_flow, delta=valve.delta)
-    expected_outlet_pressure = valve.inlet_pressure - effective_resistance * flow_term
-    h_in = (
-        package.cp_molar * valve.inlet_temperature
-        + package.pressure_enthalpy_coeff * valve.inlet_pressure
-    )
-    expected_outlet_temperature = (
-        h_in - package.pressure_enthalpy_coeff * expected_outlet_pressure
-    ) / package.cp_molar
+    flow_rate = 0.02
+    delta = 1.0e-6
+    flow_term = smooth_signed_quadratic_flow_term(m_dot=flow_rate, delta=delta)
+    expected_drop = resistance * flow_term
 
-    assert valve.outlet_flow == pytest.approx(valve.inlet_flow)
-    assert valve.outlet_pressure == pytest.approx(expected_outlet_pressure)
-    assert valve.outlet_enthalpy == pytest.approx(h_in)
-    assert valve.outlet_temperature == pytest.approx(expected_outlet_temperature)
-
-    hydraulic = ValveHydraulicElement()
-    residual = hydraulic.residuals(
+    element = ValveHydraulicElement()
+    residual = element.residuals(
         inputs={
-            "upstream_pressure": valve.inlet_pressure,
-            "downstream_pressure": valve.outlet_pressure,
+            "upstream_pressure": 250_000.0,
+            "downstream_pressure": 250_000.0 - expected_drop,
         },
-        unknowns={"flow_rate": valve.inlet_flow},
-        parameters={"valve_resistance": effective_resistance, "delta": valve.delta},
+        unknowns={"flow_rate": flow_rate},
+        parameters={"valve_resistance": resistance, "delta": delta},
     )["head_balance"]
-    assert residual == pytest.approx(0.0, abs=1.0e-9)
 
-
-@pytest.mark.parametrize(
-    ("kwargs", "error_match"),
-    [
-        ({"inlet_flow": -1.0}, "inlet_flow must be finite and non-negative"),
-        ({"efficiency": 0.0}, "efficiency must be finite and in \\(0, 1]"),
-        ({"efficiency": 1.1}, "efficiency must be finite and in \\(0, 1]"),
-    ],
-)
-def test_pump_invalid_inputs_raise(kwargs: dict[str, object], error_match: str) -> None:
-    params: dict[str, object] = {
-        "n_species": 2,
-        "inlet_flow": 0.01,
-        "inlet_temperature": 300.0,
-        "inlet_pressure": 100000.0,
-        "inlet_composition": np.array([0.5, 0.5], dtype=np.float64),
-        "pump_speed": 50000.0,
-        "efficiency": 0.75,
-    }
-    params.update(kwargs)
-
-    with pytest.raises(ValueError, match=error_match):
-        _ = Pump(**cast(Any, params))
-
-
-def test_pump_constructor_rejects_legacy_pressure_rise_alias() -> None:
-    assert not hasattr(Pump, "pressure_rise")
-
-    with pytest.raises(ValidationError, match="pressure_rise"):
-        _ = Pump.model_validate(
-            cast(
-                Any,
-                {
-                    "n_species": 2,
-                    "inlet_flow": 0.01,
-                    "inlet_temperature": 300.0,
-                    "inlet_pressure": 100000.0,
-                    "inlet_composition": np.array([0.5, 0.5], dtype=np.float64),
-                    "pressure_rise": 50000.0,
-                    "efficiency": 0.75,
-                },
-            )
-        )
-
-
-def test_pump_exposes_hydraulic_parameters_for_port_with_pump_speed_authority() -> None:
-    pump = Pump(
-        n_species=2,
-        inlet_flow=0.01,
-        inlet_temperature=300.0,
-        inlet_pressure=100000.0,
-        inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
-        pump_speed=75000.0,
-        efficiency=0.75,
-    )
-
-    parameters = pump.hydraulic_parameters_for_port("outlet")
-
-    assert parameters["pump_speed"] == pytest.approx(75000.0)
-
-
-def test_pump_declares_explicit_hydraulic_participation() -> None:
-    pump = Pump(n_species=2)
-
-    participation = pump.hydraulic_participation
-
-    assert participation is not None
-    assert participation.ports.keys() == {"inlet", "outlet"}
-    assert participation.ports["inlet"].role == "pressure_state"
-    assert participation.ports["inlet"].pressure_state == HydraulicScalarStateRef(
-        state="inlet_pressure"
-    )
-    assert participation.ports["outlet"].role == "pressure_state"
-    assert participation.ports["outlet"].pressure_state == HydraulicScalarStateRef(
-        state="outlet_pressure"
-    )
-    assert len(participation.balancing_groups) == 1
-    assert participation.balancing_groups[0].ports == ("inlet", "outlet")
-    assert participation.relations == ()
-    assert len(participation.element_couplings) == 1
-    assert participation.element_couplings[0].port == "outlet"
-    assert participation.element_couplings[0].ports == ("inlet", "outlet")
-
-
-def test_valve_declares_explicit_hydraulic_participation() -> None:
-    valve = Valve(n_species=2)
-
-    participation = valve.hydraulic_participation
-
-    assert participation is not None
-    assert participation.ports.keys() == {"inlet", "outlet"}
-    assert participation.ports["inlet"].role == "pressure_state"
-    assert participation.ports["inlet"].pressure_state == HydraulicScalarStateRef(
-        state="inlet_pressure"
-    )
-    assert participation.ports["outlet"].role == "pressure_state"
-    assert participation.ports["outlet"].pressure_state == HydraulicScalarStateRef(
-        state="outlet_pressure"
-    )
-    assert len(participation.balancing_groups) == 1
-    assert participation.balancing_groups[0].ports == ("inlet", "outlet")
-    assert participation.relations == ()
-    assert len(participation.element_couplings) == 1
-    assert participation.element_couplings[0].port == "outlet"
-    assert participation.element_couplings[0].ports == ("inlet", "outlet")
-
-
-@pytest.mark.parametrize("unit", [Pump(n_species=2), Valve(n_species=2)])
-def test_volumetric_units_raise_clear_error_without_property_package(unit: Pump | Valve) -> None:
-    stream = StreamData(
-        temperature=300.0,
-        pressure=101325.0,
-        mole_fractions=(0.5, 0.5),
-        molar_flow_rate=1.0,
-    )
-
-    with pytest.raises(ValueError, match="property package"):
-        unit.apply_inlet("inlet", stream)
-
-
-@pytest.mark.parametrize("unit", [Pump(n_species=2), Valve(n_species=2)])
-def test_invalid_port_names_raise_clear_errors(unit: Pump | Valve) -> None:
-    stream = StreamData(
-        temperature=300.0,
-        pressure=101325.0,
-        mole_fractions=(0.5, 0.5),
-        molar_flow_rate=1.0,
-    )
-
-    with pytest.raises(ValueError, match="Invalid inlet port 'bad_inlet'"):
-        unit.apply_inlet("bad_inlet", stream)
-
-    with pytest.raises(ValueError, match="Invalid outlet port 'bad_outlet'"):
-        _ = unit.get_outlet_stream("bad_outlet")
-
-
-@pytest.mark.parametrize(
-    ("kwargs", "error_match"),
-    [
-        ({"inlet_flow": -0.01}, "inlet_flow must be finite and non-negative"),
-        ({"Cv": 0.0}, "Cv must be finite and positive"),
-        ({"open_fraction": 1.5}, "open_fraction must be within configured min/max bounds"),
-    ],
-)
-def test_valve_invalid_inputs_raise(kwargs: dict[str, object], error_match: str) -> None:
-    params: dict[str, object] = {
-        "n_species": 2,
-        "inlet_flow": 0.02,
-        "inlet_temperature": 320.0,
-        "inlet_pressure": 250000.0,
-        "inlet_composition": np.array([0.5, 0.5], dtype=np.float64),
-        "open_fraction": 0.5,
-        "Cv": 0.01,
-    }
-    params.update(kwargs)
-
-    with pytest.raises(ValueError, match=error_match):
-        _ = Valve(**cast(Any, params))
+    assert residual == pytest.approx(0.0, abs=1.0e-10)

@@ -3,8 +3,6 @@ from __future__ import annotations
 # pyright: reportMissingImports=false, reportUnknownVariableType=false, reportUnknownMemberType=false, reportUnknownParameterType=false, reportMissingParameterType=false, reportUnknownArgumentType=false
 
 from types import MappingProxyType
-
-import numpy as np
 import pytest
 
 from modular_simulation.flowsheet import Flowsheet
@@ -38,9 +36,6 @@ from modular_simulation.thermodynamics.hydraulic_participation import (
 from modular_simulation.unit_processes import CSTR
 from modular_simulation.unit_processes import FlashDrum
 from modular_simulation.unit_processes import HeaterCooler
-from modular_simulation.unit_processes.flow.pump import Pump
-from modular_simulation.unit_processes.mixing.mixer import Mixer
-from modular_simulation.unit_processes.separation.splitter import Splitter
 
 
 def _linear_equation(
@@ -480,25 +475,17 @@ def test_vector_boundary_pressures_are_not_inferred_as_unit_port_anchors_without
     )
     flowsheet.add_unit(
         "mixer",
-        Mixer(
-            n_inlets=2,
+        HeaterCooler(
             n_species=2,
-            inlet_pressures=np.asarray([150_000.0, 145_000.0], dtype=np.float64),
+            inlet_pressure=150_000.0,
+            outlet_pressure=145_000.0,
         ),
     )
 
     assert (
         flowsheet._resolve_hydraulic_anchor_pressure(
             node_id="mixer",
-            port_name="inlet_1",
-            topology=None,
-        )
-        is None
-    )
-    assert (
-        flowsheet._resolve_hydraulic_anchor_pressure(
-            node_id="mixer",
-            port_name="inlet_2",
+            port_name="inlet",
             topology=None,
         )
         is None
@@ -688,58 +675,17 @@ def test_declared_pressure_drop_conflicting_with_declared_fixed_port_anchors_fai
     assert "inferred pressure_drop" not in message
 
 
-def test_direct_unit_port_fan_in_requires_explicit_junction(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Wave 4.2 migrated the real Splitter to declare a balancing group over
-    # (inlet, outlet_1, outlet_2, ...), which intentionally admits direct fan-in at
-    # splitter.inlet.  To keep exercising the pre-admission illegal-direct-fan-in
-    # path we monkeypatch Splitter with a participation spec that declares all ports
-    # as pressure_state but intentionally omits balancing_groups — so the direct
-    # multi-edge connection at inlet remains unsupported and must fail early.
-    _install_hydraulic_participation_property(
-        monkeypatch,
-        Splitter,
-        lambda self: HydraulicParticipationSpec(
-            ports={
-                "inlet": HydraulicPortSpec(
-                    role="pressure_state",
-                    pressure_state=HydraulicScalarStateRef("inlet_pressure"),
-                ),
-                "outlet_1": HydraulicPortSpec(
-                    role="pressure_state",
-                    pressure_state=HydraulicIndexedStateRef("outlet_pressures", 0),
-                ),
-                "outlet_2": HydraulicPortSpec(
-                    role="pressure_state",
-                    pressure_state=HydraulicIndexedStateRef("outlet_pressures", 1),
-                ),
-            },
-            relations=(
-                HydraulicRelationSpec(
-                    name="split_equal_pressure",
-                    kind="pressure_equal",
-                    ports=("inlet", "outlet_1", "outlet_2"),
-                ),
-            ),
-        ),
-    )
-
+def test_direct_unit_port_fan_in_on_declared_ports_compiles() -> None:
     context = SimulationRuntimeContext.create(species_names=["water", "ethanol"])
     flowsheet = Flowsheet(context=context)
-    flowsheet.add_unit("splitter", Splitter(n_species=2, n_outlets=2))
+    flowsheet.add_unit("heater", HeaterCooler(n_species=2))
     flowsheet.add_feed_from_values("feed_a", T=300.0, P=130_000.0, z=(0.5, 0.5), flow=1.0)
     flowsheet.add_feed_from_values("feed_b", T=300.0, P=125_000.0, z=(0.5, 0.5), flow=1.0)
-    flowsheet.connect("feed_a", "splitter.inlet")
-    flowsheet.connect("feed_b", "splitter.inlet")
+    flowsheet.connect("feed_a", "heater.inlet")
+    flowsheet.connect("feed_b", "heater.inlet")
 
-    with pytest.raises(
-        ValueError,
-        match=r"direct unit-port fan-in/fan-out is illegal at splitter\.inlet",
-    ) as error:
-        _ = flowsheet.compile()
-
-    assert "explicit junction" in str(error.value)
+    plant = flowsheet.compile()
+    assert plant is not None
 
 
 def test_direct_unit_port_fan_out_requires_explicit_junction(
@@ -789,26 +735,6 @@ def test_direct_unit_port_fan_out_requires_explicit_junction(
     assert "unit model that declares the required hydraulic balancing semantics" in str(error.value)
 
 
-def test_element_coupled_direct_unit_port_fan_out_requires_explicit_junction() -> None:
-    context = SimulationRuntimeContext.create(species_names=["water", "ethanol"])
-    flowsheet = Flowsheet(context=context)
-    flowsheet.add_unit("pump", Pump(n_species=2))
-    flowsheet.add_feed_from_values("feed", T=300.0, P=130_000.0, z=(0.5, 0.5), flow=1.0)
-    flowsheet.add_sink("product_a")
-    flowsheet.add_sink("product_b")
-    flowsheet.connect("feed", "pump")
-    flowsheet.connect("pump.outlet", "product_a")
-    flowsheet.connect("pump.outlet", "product_b")
-
-    with pytest.raises(
-        ValueError,
-        match=r"direct unit-port fan-in/fan-out is illegal at pump\.outlet",
-    ) as error:
-        _ = flowsheet.compile()
-
-    assert "explicit junction" in str(error.value)
-
-
 def test_connected_heater_cooler_without_hydraulic_participation_fails_compile_with_remediation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -832,124 +758,43 @@ def test_connected_heater_cooler_without_hydraulic_participation_fails_compile_w
     assert "add" in message
 
 
-@pytest.mark.parametrize(
-    ("unit_factory", "unit_id", "expected_state", "expected_index"),
-    (
-        (
-            lambda: Mixer(n_inlets=2, n_species=2),
-            "mixer",
-            "inlet_pressures",
-            99,
-        ),
-        (
-            lambda: Splitter(n_outlets=2, n_species=2),
-            "splitter",
-            "outlet_pressures",
-            99,
-        ),
-    ),
-)
 def test_invalid_indexed_pressure_ref_fails_with_state_and_index_named(
     monkeypatch: pytest.MonkeyPatch,
-    unit_factory,
-    unit_id: str,
-    expected_state: str,
-    expected_index: int,
 ) -> None:
-    if unit_id == "mixer":
-        _install_hydraulic_participation_property(
-            monkeypatch,
-            Mixer,
-            lambda self: HydraulicParticipationSpec(
-                ports={
-                    "inlet_1": HydraulicPortSpec(
-                        role="pressure_state",
-                        pressure_state=HydraulicIndexedStateRef("inlet_pressures", expected_index),
-                    ),
-                    "inlet_2": HydraulicPortSpec(
-                        role="pressure_state",
-                        pressure_state=HydraulicIndexedStateRef("inlet_pressures", 1),
-                    ),
-                    "outlet": HydraulicPortSpec(
-                        role="pressure_state",
-                        pressure_state=HydraulicScalarStateRef("outlet_pressure"),
-                    ),
-                },
-                balancing_groups=(
-                    HydraulicBalancingGroupSpec(
-                        name="mixing_group",
-                        ports=("inlet_1", "inlet_2", "outlet"),
-                    ),
+    _install_hydraulic_participation_property(
+        monkeypatch,
+        HeaterCooler,
+        lambda self: HydraulicParticipationSpec(
+            ports={
+                "inlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicIndexedStateRef("inlet_pressure", 99),
                 ),
-                relations=(
-                    HydraulicRelationSpec(
-                        name="mixing_equal_pressure",
-                        kind="pressure_equal",
-                        ports=("inlet_1", "inlet_2", "outlet"),
-                    ),
+                "outlet": HydraulicPortSpec(
+                    role="pressure_state",
+                    pressure_state=HydraulicScalarStateRef("outlet_pressure"),
                 ),
+            },
+            balancing_groups=(
+                HydraulicBalancingGroupSpec(name="through_unit", ports=("inlet", "outlet")),
             ),
-        )
-    else:
-        _install_hydraulic_participation_property(
-            monkeypatch,
-            Splitter,
-            lambda self: HydraulicParticipationSpec(
-                ports={
-                    "inlet": HydraulicPortSpec(
-                        role="pressure_state",
-                        pressure_state=HydraulicScalarStateRef("inlet_pressure"),
-                    ),
-                    "outlet_1": HydraulicPortSpec(
-                        role="pressure_state",
-                        pressure_state=HydraulicIndexedStateRef("outlet_pressures", 0),
-                    ),
-                    "outlet_2": HydraulicPortSpec(
-                        role="pressure_state",
-                        pressure_state=HydraulicIndexedStateRef("outlet_pressures", expected_index),
-                    ),
-                },
-                balancing_groups=(
-                    HydraulicBalancingGroupSpec(
-                        name="split_group",
-                        ports=("inlet", "outlet_1", "outlet_2"),
-                    ),
-                ),
-                relations=(
-                    HydraulicRelationSpec(
-                        name="split_equal_pressure",
-                        kind="pressure_equal",
-                        ports=("inlet", "outlet_1", "outlet_2"),
-                    ),
-                ),
-            ),
-        )
+        ),
+    )
 
     context = SimulationRuntimeContext.create(species_names=["water", "ethanol"])
     flowsheet = Flowsheet(context=context)
-    flowsheet.add_unit(unit_id, unit_factory())
-
-    if unit_id == "mixer":
-        flowsheet.add_feed_from_values("feed_a", T=300.0, P=130_000.0, z=(0.5, 0.5), flow=1.0)
-        flowsheet.add_feed_from_values("feed_b", T=300.0, P=125_000.0, z=(0.5, 0.5), flow=1.0)
-        flowsheet.add_sink("product")
-        flowsheet.connect("feed_a", "mixer.inlet_1")
-        flowsheet.connect("feed_b", "mixer.inlet_2")
-        flowsheet.connect("mixer", "product")
-    else:
-        flowsheet.add_feed_from_values("feed", T=300.0, P=130_000.0, z=(0.5, 0.5), flow=1.0)
-        flowsheet.add_sink("product_a")
-        flowsheet.add_sink("product_b")
-        flowsheet.connect("feed", "splitter")
-        flowsheet.connect("splitter.outlet_1", "product_a")
-        flowsheet.connect("splitter.outlet_2", "product_b")
+    flowsheet.add_unit("unit", HeaterCooler(n_species=2))
+    flowsheet.add_feed_from_values("feed", T=300.0, P=130_000.0, z=(0.5, 0.5), flow=1.0)
+    flowsheet.add_sink("product")
+    flowsheet.connect("feed", "unit")
+    flowsheet.connect("unit", "product")
 
     with pytest.raises(ValueError) as error:
         _ = flowsheet.compile()
 
     message = str(error.value)
-    assert expected_state in message
-    assert str(expected_index) in message
+    assert "inlet_pressure" in message
+    assert "99" in message
 
 
 def test_declared_flash_drum_shared_outlet_pressure_refs_share_one_compiled_unknown(
@@ -1047,54 +892,24 @@ def test_hydraulic_participation_missing_port_is_not_treated_as_implicitly_passi
     assert "add" in message
 
 
-def test_declared_splitter_direct_fan_in_is_admitted_but_heater_without_balancing_group_fan_out_still_fails(
+def test_junction_direct_fan_in_is_admitted_but_heater_without_balancing_group_fan_out_still_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _install_hydraulic_participation_property(
-        monkeypatch,
-        Splitter,
-        lambda self: HydraulicParticipationSpec(
-            ports={
-                "inlet": HydraulicPortSpec(
-                    role="pressure_state",
-                    pressure_state=HydraulicScalarStateRef("inlet_pressure"),
-                ),
-                "outlet_1": HydraulicPortSpec(
-                    role="pressure_state",
-                    pressure_state=HydraulicIndexedStateRef("outlet_pressures", 0),
-                ),
-                "outlet_2": HydraulicPortSpec(
-                    role="pressure_state",
-                    pressure_state=HydraulicIndexedStateRef("outlet_pressures", 1),
-                ),
-            },
-            balancing_groups=(
-                HydraulicBalancingGroupSpec(
-                    name="direct_attachment_group",
-                    ports=("inlet", "outlet_1", "outlet_2"),
-                ),
-            ),
-            relations=(
-                HydraulicRelationSpec(
-                    name="declared_split_equal_pressure",
-                    kind="pressure_equal",
-                    ports=("inlet", "outlet_1", "outlet_2"),
-                ),
-            ),
-        ),
-    )
-
     context = SimulationRuntimeContext.create(species_names=["water", "ethanol"])
     fan_in_flowsheet = Flowsheet(context=context)
-    fan_in_flowsheet.add_unit("splitter", Splitter(n_species=2, n_outlets=2))
+    fan_in_flowsheet.add_junction(
+        "mix",
+        inlet_ports=("inlet_a", "inlet_b"),
+        outlet_ports=("outlet_a", "outlet_b"),
+    )
     fan_in_flowsheet.add_feed_from_values("feed_a", T=300.0, P=130_000.0, z=(0.5, 0.5), flow=1.0)
     fan_in_flowsheet.add_feed_from_values("feed_b", T=300.0, P=125_000.0, z=(0.5, 0.5), flow=1.0)
     fan_in_flowsheet.add_sink("product_a")
     fan_in_flowsheet.add_sink("product_b")
-    fan_in_flowsheet.connect("feed_a", "splitter.inlet")
-    fan_in_flowsheet.connect("feed_b", "splitter.inlet")
-    fan_in_flowsheet.connect("splitter.outlet_1", "product_a")
-    fan_in_flowsheet.connect("splitter.outlet_2", "product_b")
+    fan_in_flowsheet.connect("feed_a", "mix.inlet_a")
+    fan_in_flowsheet.connect("feed_b", "mix.inlet_b")
+    fan_in_flowsheet.connect("mix.outlet_a", "product_a")
+    fan_in_flowsheet.connect("mix.outlet_b", "product_b")
 
     plant = fan_in_flowsheet.compile()
 
@@ -1103,16 +918,12 @@ def test_declared_splitter_direct_fan_in_is_admitted_but_heater_without_balancin
     relation_names = {
         equation.residual_name for equation in compiled.hydraulic.system.linear_residual_equations
     }
-    assert "pressure__process_splitter_inlet__mass_balance" not in relation_names
-    assert "pressure__declared_splitter_inlet_pressure__mass_balance" not in relation_names
-    assert "unit__splitter__flow_balance__01" in relation_names
+    assert "pressure__junction_mix__mass_balance" in relation_names
     lookup = compiled.hydraulic.system.topology_lookup
-    assert lookup.endpoint_role_by_endpoint["splitter.inlet"] == "pressure_state"
-    assert lookup.endpoint_role_by_endpoint["splitter.outlet_1"] == "pressure_state"
-    assert lookup.endpoint_role_by_endpoint["splitter.outlet_2"] == "pressure_state"
-    assert lookup.balancing_group_name_by_endpoint["splitter.inlet"] == "direct_attachment_group"
-    assert lookup.balancing_group_name_by_endpoint["splitter.outlet_1"] == "direct_attachment_group"
-    assert lookup.balancing_group_name_by_endpoint["splitter.outlet_2"] == "direct_attachment_group"
+    assert "mix.inlet_a" in lookup.node_pressure_unknown_by_endpoint
+    assert "mix.inlet_b" in lookup.node_pressure_unknown_by_endpoint
+    assert "mix.outlet_a" in lookup.node_pressure_unknown_by_endpoint
+    assert "mix.outlet_b" in lookup.node_pressure_unknown_by_endpoint
 
     _install_hydraulic_participation_property(
         monkeypatch,

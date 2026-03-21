@@ -141,8 +141,7 @@ def test_valve_install_replacement_path_compiles() -> None:
     """Positive regression: ValveInstall on connect() must produce a line-owned valve
     actuator id and compile to a valid ConnectedPlantOrchestrator.
 
-    This proves the replacement path described in the Valve-wrapper migration guidance
-    actually works end-to-end.
+    This proves the line-owned flow-control actuator path actually works end-to-end.
     """
     context = SimulationRuntimeContext.create(species_names=["water", "ethanol"])
     flowsheet = Flowsheet(context=context)

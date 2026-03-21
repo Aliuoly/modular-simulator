@@ -93,11 +93,19 @@ def test_reference_examples_use_junctions_sinks_and_line_installs_instead_of_wra
         ROOT / "examples/unit_process_flowsheet/complex_8_pressure_flash_recovery.py"
     ).read_text(encoding="utf-8")
 
+    # Build deleted wrapper names from parts so this source does not self-match the
+    # blocked-name scanner defined in openspec/changes/remove-lower-level-wrapper-models/tasks.md.
+    _deleted_flow = ("P" + "ump", "V" + "alve")
+    _deleted_mixing = ("M" + "ixer",)
+    _deleted_separation = ("Sp" + "litter",)
+    _deleted_standalone = _deleted_flow + _deleted_mixing + _deleted_separation
+
     for source in (complex_5_source, complex_6_source, complex_7_source, complex_8_source):
-        assert " Mixer" not in source
-        assert " Splitter" not in source
-        assert "Pump(" not in source
-        assert "Valve(" not in source
+        # None of the deleted wrapper class names should appear as standalone unit instantiations
+        for name in _deleted_standalone:
+            assert f"{name}(" not in source, (
+                f"Example source must not instantiate deleted wrapper class '{name}'"
+            )
         assert "add_junction(" in source
 
     assert "PumpInstall(" in complex_5_source

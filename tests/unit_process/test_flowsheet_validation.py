@@ -27,9 +27,6 @@ from modular_simulation.thermodynamics.hydraulic_participation import (
 )
 from modular_simulation.thermodynamics.stream import StreamData
 from modular_simulation.unit_processes import ComponentSeparator, FlashDrum, HeaterCooler
-from modular_simulation.unit_processes.flow.pump import Pump
-from modular_simulation.unit_processes.flow.valve import Valve
-from modular_simulation.unit_processes.thermal.heater_cooler import HeaterCooler
 from modular_simulation.unit_processes.thermal.heat_exchanger import HeatExchanger
 from modular_simulation.unit_processes.reactors.cstr import CSTR
 from modular_simulation.unit_processes.reactors.pfr import PFR
@@ -456,13 +453,25 @@ def test_declared_affine_pressure_relation_emits_pressure_drop_equation(
 def test_declared_element_coupling_uses_unit_owned_hydraulic_element(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    for unit_cls, unit_id, unit_instance, expected_element_type in (
-        (Pump, "pump", Pump(n_species=2), PumpHydraulicElement),
-        (Valve, "valve", Valve(n_species=2), ValveHydraulicElement),
+    def _pressure_gain_curve(flow_rate: float, gain: float) -> float:
+        del flow_rate
+        return gain
+
+    def _d_pressure_gain_curve(flow_rate: float, gain: float) -> float:
+        del flow_rate, gain
+        return 0.0
+
+    for unit_id, expected_element_type, element_parameters in (
+        ("gain_like", PumpHydraulicElement, {"pump_speed": 80_000.0}),
+        (
+            "throttle_like",
+            ValveHydraulicElement,
+            {"valve_resistance": 1.0e3, "delta": 1.0e-6},
+        ),
     ):
         _install_hydraulic_participation_property(
             monkeypatch,
-            unit_cls,
+            HeaterCooler,
             lambda self: HydraulicParticipationSpec(
                 ports={
                     "inlet": HydraulicPortSpec(
@@ -487,8 +496,32 @@ def test_declared_element_coupling_uses_unit_owned_hydraulic_element(
             ),
         )
 
+        if expected_element_type is PumpHydraulicElement:
+            monkeypatch.setattr(
+                HeaterCooler,
+                "to_hydraulic_element",
+                lambda self, port_name: PumpHydraulicElement(
+                    dp_curve=_pressure_gain_curve,
+                    d_dp_d_mdot=_d_pressure_gain_curve,
+                ),
+                raising=False,
+            )
+        else:
+            monkeypatch.setattr(
+                HeaterCooler,
+                "to_hydraulic_element",
+                lambda self, port_name: ValveHydraulicElement(),
+                raising=False,
+            )
+        monkeypatch.setattr(
+            HeaterCooler,
+            "hydraulic_parameters_for_port",
+            lambda self, port_name: element_parameters,
+            raising=False,
+        )
+
         flowsheet = Flowsheet(context=_make_context())
-        flowsheet.add_unit(unit_id, unit_instance)
+        flowsheet.add_unit(unit_id, HeaterCooler(n_species=2))
         flowsheet.add_feed_from_values("feed", T=300.0, P=130_000.0, z=(0.5, 0.5), flow=1.0)
         flowsheet.add_sink("product")
         flowsheet.connect("feed", unit_id)

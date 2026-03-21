@@ -33,7 +33,6 @@ from modular_simulation.measurables.process_model import (
     StateMetadata as M,
     StateType as T,
 )
-from modular_simulation.unit_processes.flow.pump import Pump
 from modular_simulation.utils.typing import ArrayIndex
 from modular_simulation.utils.typing import StateValue
 
@@ -278,15 +277,7 @@ def build_canonical_pressure_pump_system() -> System:
     )
     return System(
         dt=1.0,
-        process_model=Pump(
-            n_species=2,
-            inlet_flow=0.01,
-            inlet_temperature=300.0,
-            inlet_pressure=101325.0,
-            inlet_composition=np.array([0.5, 0.5], dtype=np.float64),
-            pump_speed=20000.0,
-            efficiency=0.75,
-        ),
+        process_model=PressureActuatorFixture(),
         sensors=[pressure_sensor, actuator_sensor],
         calculations=[],
         control_elements=[pump_speed_element],
@@ -337,6 +328,50 @@ class ScalarCvVectorMvProcessModel(ProcessModel):
         del t, u, k, algebraic, u_map, k_map, algebraic_map
         dy = np.zeros_like(y)
         dy[cast(int, y_map["temperature"])] = 0.0
+        return dy
+
+
+class PressureActuatorFixture(ProcessModel):
+    outlet_pressure: Annotated[
+        float, M(type=T.DIFFERENTIAL, unit="Pa", description="pressure-like controlled output")
+    ] = 101325.0
+    recycle_pump: Annotated[
+        float, M(type=T.BOUNDARY, unit="Pa", description="canonical pump actuator target")
+    ] = 20000.0
+
+    @override
+    @staticmethod
+    def calculate_algebraic_values(
+        y: NDArray[np.float64],
+        u: NDArray[np.float64],
+        k: NDArray[np.float64],
+        y_map: dict[str, ArrayIndex],
+        u_map: dict[str, ArrayIndex],
+        k_map: dict[str, ArrayIndex],
+        algebraic_map: dict[str, ArrayIndex],
+        algebraic_size: int,
+    ) -> NDArray[np.float64]:
+        del y, u, k, y_map, u_map, k_map, algebraic_map
+        return np.zeros(algebraic_size, dtype=np.float64)
+
+    @override
+    @staticmethod
+    def differential_rhs(
+        t: float,
+        y: NDArray[np.float64],
+        u: NDArray[np.float64],
+        k: NDArray[np.float64],
+        algebraic: NDArray[np.float64],
+        y_map: dict[str, ArrayIndex],
+        u_map: dict[str, ArrayIndex],
+        k_map: dict[str, ArrayIndex],
+        algebraic_map: dict[str, ArrayIndex],
+    ) -> NDArray[np.float64]:
+        del t, k, algebraic, k_map, algebraic_map
+        dy = np.zeros_like(y)
+        pressure_index = cast(int, y_map["outlet_pressure"])
+        actuator_index = cast(int, u_map["recycle_pump"])
+        dy[pressure_index] = float(u[actuator_index]) - float(y[pressure_index])
         return dy
 
 

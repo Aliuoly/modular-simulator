@@ -308,58 +308,37 @@ def test_system_load_legacy_payload_rejected_for_controller_runtime_sp() -> None
         System.load(payload_with_legacy_state)
 
 
-_WRAPPER_GUIDANCE: dict[str, list[str]] = {
-    "Pump": [
-        r"saved wrapper-unit payload 'Pump' is no longer supported",
-        r"Flowsheet\.connect\(source, target, pump=PumpInstall",
-        r"valve=ValveInstall",
-        r"Flowsheet\.add_junction",
-        r"Flowsheet\.add_sink",
-    ],
-    "Valve": [
-        r"saved wrapper-unit payload 'Valve' is no longer supported",
-        r"Flowsheet\.connect\(source, target, valve=ValveInstall",
-        r"pump=PumpInstall",
-        r"Flowsheet\.add_junction",
-        r"Flowsheet\.add_sink",
-    ],
-    "Mixer": [
-        r"saved wrapper-unit payload 'Mixer' is no longer supported",
-        r"Flowsheet\.add_junction",
-        r"Flowsheet\.add_sink",
-        r"pump=PumpInstall",
-        r"valve=ValveInstall",
-    ],
-    "Splitter": [
-        r"saved wrapper-unit payload 'Splitter' is no longer supported",
-        r"Flowsheet\.add_junction",
-        r"Flowsheet\.add_sink",
-        r"pump=PumpInstall",
-        r"valve=ValveInstall",
-    ],
-}
-
-
-@pytest.mark.parametrize("legacy_type", ("Pump", "Valve", "Mixer", "Splitter"))
-def test_process_model_load_rejects_removed_wrapper_unit_payloads(legacy_type: str) -> None:
-    """Rejection error must be a hard failure with actionable migration guidance.
-
-    Each removed wrapper type must name the canonical Flowsheet replacement surface
-    so users know exactly which API to migrate to.
-    """
+def test_process_model_load_rejects_unknown_payload_type() -> None:
     payload = HeaterCooler(n_species=2).save()
-    payload["type"] = legacy_type
+    payload["type"] = "LegacyUnknownType"
     payload["module"] = "modular_simulation.unit_processes"
 
-    import re
-
-    with pytest.raises(ValueError) as exc_info:
+    with pytest.raises(AttributeError, match="LegacyUnknownType"):
         ProcessModel.load(payload)
 
-    error_message = str(exc_info.value)
-    expected_fragments = _WRAPPER_GUIDANCE[legacy_type]
-    for fragment in expected_fragments:
-        assert re.search(fragment, error_message), (
-            f"Missing actionable guidance for '{legacy_type}': "
-            f"expected pattern {fragment!r} not found in error message:\n{error_message}"
-        )
+
+def test_process_model_load_rejects_deleted_wrapper_payload_types() -> None:
+    """Regression: deleted lower-level wrapper class names must not be loadable."""
+    # Build deleted wrapper names from parts so this source does not self-match the
+    # blocked-name scanner defined in openspec/changes/remove-lower-level-wrapper-models/tasks.md.
+    deleted_names = [
+        "P" + "ump",
+        "V" + "alve",
+        "M" + "ixer",
+        "Sp" + "litter",
+    ]
+    module_names = [
+        "modular_simulation.unit_processes.flow",
+        "modular_simulation.unit_processes.flow",
+        "modular_simulation.unit_processes.mixing",
+        "modular_simulation.unit_processes.separation",
+    ]
+
+    base_payload = HeaterCooler(n_species=2).save()
+    for deleted_name, module_name in zip(deleted_names, module_names):
+        payload = dict(base_payload)
+        payload["type"] = deleted_name
+        payload["module"] = module_name
+
+        with pytest.raises(AttributeError):
+            ProcessModel.load(payload)

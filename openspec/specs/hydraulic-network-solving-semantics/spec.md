@@ -24,8 +24,8 @@ Each canonical connection line SHALL contribute a head-balance relation based on
 - **WHEN** a line has only its base hydraulic resistance configuration
 - **THEN** the canonical hydraulic residual for that line is evaluated as a resistance-based head-balance relation between the solved upstream and downstream hydraulic node pressures and the solved signed line flow
 
-#### Scenario: Pump or valve overlay augments the line head balance
-- **WHEN** a line installs a pump or valve overlay
+#### Scenario: Hydraulic overlay augments the line head balance
+- **WHEN** a line installs a pressure-boost or flow-control overlay
 - **THEN** the canonical line residual remains a head-balance equation for that line with the active overlay contribution applied through line-owned hydraulic metadata rather than a standalone unit-process flow equation
 
 #### Scenario: Heat overlay does not change hydraulic ownership
@@ -54,8 +54,8 @@ The connection network SHALL be the canonical source of solved physical line flo
 - **WHEN** runtime coupling has both a solved hydraulic result and unit-level flow-like values available for the same connection line
 - **THEN** the canonical line flow used for connection transport and downstream branch allocation comes from the hydraulic result
 
-#### Scenario: Splitter placeholders do not define physical branch flow
-- **WHEN** a flowsheet contains behavior historically represented by `Splitter` state such as `split_ratios` or `outlet_flows`
+#### Scenario: Removed topology-wrapper placeholders do not define physical branch flow
+- **WHEN** a flowsheet contains behavior historically represented by deleted topology-wrapper state such as `split_ratios` or `outlet_flows`
 - **THEN** those placeholders are not treated as the canonical source of physical branch allocation for the connected lines
 
 #### Scenario: Solved near-zero hydraulic flow is not silently replaced by unit payload flow
@@ -111,8 +111,8 @@ The canonical declaration surface SHALL name every hydraulically relevant `UnitP
 - **WHEN** two or more ports in one unit declare the same scalar, indexed, or property-backed pressure-state reference
 - **THEN** compile maps those ports to the same hydraulic pressure unknown instead of inventing an extra equality relation for that shared state
 
-#### Scenario: Pump and valve participation preserve unit-owned hydraulic-element behavior
-- **WHEN** a pump or valve participates hydraulically through its existing `to_hydraulic_element(...)` surface
+#### Scenario: Line-overlay hydraulic elements preserve unit-owned hydraulic-element behavior
+- **WHEN** a pressure-boost or flow-control overlay participates hydraulically through its existing `to_hydraulic_element(...)` surface
 - **THEN** the declaration records that participation as an explicit unit-owned hydraulic-element coupling instead of pretending the model is a simple affine compile-time pressure-offset relation
 
 #### Scenario: Passive unit port is declared explicitly
