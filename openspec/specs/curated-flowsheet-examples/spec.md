@@ -30,7 +30,7 @@ Every retained curated example SHALL define boundary feed streams that connect t
 
 #### Scenario: Recycle examples use explicit return edges and line-installed boost
 - **WHEN** a curated example is described as a recycle loop
-- **THEN** the recycle leg is represented as an explicit return connection in the topology rather than a second external feed boundary, and any required pressure boost is installed on that recycle line rather than modeled as a `Pump` unit
+- **THEN** the recycle leg is represented as an explicit return connection in the topology rather than a second external feed boundary, and any required pressure boost is installed on that recycle line rather than modeled as a pressure-boost wrapper unit
 
 #### Scenario: Recycle examples remain physically viable
 - **WHEN** a curated example is described as a recycle loop
@@ -46,10 +46,10 @@ Curated examples SHALL place control elements only on required connection edges 
 
 #### Scenario: Control elements are attached to required edges
 - **WHEN** a curated example includes control behavior
-- **THEN** each control element is bound to a specific required connection edge through the canonical high-level line-element API instead of through `Pump` or `Valve` wrapper units
+- **THEN** each control element is bound to a specific required connection edge through the canonical high-level line-element API instead of through deleted flow-control or topology wrapper units
 
 ### Requirement: Internal-Only Unit Process States
-Curated examples SHALL reserve unit-process models for intrinsic process behavior only and SHALL NOT use `Pump`, `Valve`, `Mixer`, or `Splitter` wrapper units.
+Curated examples SHALL reserve unit-process models for intrinsic process behavior only and SHALL NOT use deleted topology-wrapper or flow-control-wrapper unit models.
 
 #### Scenario: Unit process model excludes flow-control and topology wrappers
 - **WHEN** a curated example unit definition is reviewed

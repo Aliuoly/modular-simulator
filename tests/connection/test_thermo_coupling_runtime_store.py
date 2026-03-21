@@ -35,7 +35,6 @@ from modular_simulation.flowsheet import Flowsheet
 from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 from modular_simulation.thermodynamics.stream import StreamData
 from modular_simulation.unit_processes import HeaterCooler
-from modular_simulation.unit_processes.separation.splitter import Splitter
 
 
 def _port_condition(*, pressure: float, temperature: float, flow_rate: float) -> PortCondition:
@@ -138,6 +137,81 @@ class _SimpleRuntimeBridge:
     def resolve_outlet_condition(self, port_name: str) -> PortCondition:
         del port_name
         return self._resolved_condition
+
+
+class _SyntheticSplitFixture:
+    def __init__(
+        self,
+        *,
+        split_fraction: float,
+        branch_placeholder_flows: tuple[float, float],
+    ) -> None:
+        self.split_fraction = float(split_fraction)
+        self.branch_placeholder_flows = branch_placeholder_flows
+        self.inlet: StreamData | None = None
+
+    def apply_inlet(self, port_name: str, stream: StreamData) -> None:
+        del port_name
+        self.inlet = stream
+
+    def get_inlet(self, port_name: str):
+        del port_name
+        if self.inlet is None:
+            return None
+        return {
+            "role": "inlet",
+            "inlet_flow": float(self.inlet.molar_flow_rate),
+            "temperature": float(self.inlet.temperature),
+            "pressure": float(self.inlet.pressure),
+            "composition": tuple(float(value) for value in self.inlet.mole_fractions),
+        }
+
+    def get_outlet_stream(self, port_name: str) -> StreamData:
+        if self.inlet is None:
+            raise RuntimeError("split fixture inlet not initialized")
+
+        if port_name == "outlet_1":
+            flow = self.branch_placeholder_flows[0]
+        elif port_name == "outlet_2":
+            flow = self.branch_placeholder_flows[1]
+        else:
+            raise ValueError(f"invalid outlet port '{port_name}'")
+
+        return StreamData(
+            temperature=self.inlet.temperature,
+            pressure=self.inlet.pressure,
+            mole_fractions=self.inlet.mole_fractions,
+            molar_flow_rate=float(flow),
+        )
+
+    def resolve_outlet_condition(self, port_name: str) -> PortCondition:
+        return self.get_outlet_stream(port_name).to_port_condition()
+
+
+class _SyntheticMixFixture:
+    def __init__(self) -> None:
+        self._inlets: dict[str, StreamData] = {}
+
+    def apply_inlet(self, port_name: str, stream: StreamData) -> None:
+        self._inlets[port_name] = stream
+
+    def get_outlet_stream(self, port_name: str) -> StreamData:
+        if not self._inlets:
+            raise RuntimeError("mix fixture inlet not initialized")
+        total = sum(stream.molar_flow_rate for stream in self._inlets.values())
+        reference = next(iter(self._inlets.values()))
+        return StreamData(
+            temperature=reference.temperature,
+            pressure=reference.pressure,
+            mole_fractions=reference.mole_fractions,
+            molar_flow_rate=float(total),
+        )
+
+    def resolve_outlet_condition(self, port_name: str) -> PortCondition:
+        return self.get_outlet_stream(port_name).to_port_condition()
+
+    def seed_inlet(self, stream: StreamData) -> None:
+        self._inlets["inlet"] = stream
 
 
 def _linear_equation(
@@ -592,7 +666,7 @@ def test_thermo_coupling_prefers_compiled_hydraulic_lookup_over_payload_placehol
     assert latest_inlet.state.pressure == pytest.approx(9.0)
 
 
-def test_thermo_coupling_ignores_splitter_placeholders_for_canonical_branch_flows() -> None:
+def test_thermo_coupling_ignores_branch_fixture_placeholders_for_canonical_branch_flows() -> None:
     context = SimulationRuntimeContext.create(species_names=["water", "ethanol"])
     runtime = ConnectionRuntimeOrchestrator(runtime_context=context)
     network = ConnectionNetwork(
@@ -601,12 +675,12 @@ def test_thermo_coupling_ignores_splitter_placeholders_for_canonical_branch_flow
         runtime_orchestrator=runtime,
     )
     network.add_boundary_source("feed")
-    network.add_process("splitter", inlet_ports=("inlet",), outlet_ports=("outlet_1", "outlet_2"))
+    network.add_process("junction", inlet_ports=("inlet",), outlet_ports=("outlet_1", "outlet_2"))
     network.add_process("unit_a", inlet_ports=("feed",), outlet_ports=("product",))
     network.add_process("unit_b", inlet_ports=("feed",), outlet_ports=("product",))
-    network.connect("feed", "splitter.inlet")
-    network.connect("splitter.outlet_1", "unit_a.feed")
-    network.connect("splitter.outlet_2", "unit_b.feed")
+    network.connect("feed", "junction.inlet")
+    network.connect("junction.outlet_1", "unit_a.feed")
+    network.connect("junction.outlet_2", "unit_b.feed")
     compiled = network.compile()
 
     class _ManualSplitterCompiledHydraulic:
@@ -618,19 +692,19 @@ def test_thermo_coupling_ignores_splitter_placeholders_for_canonical_branch_flow
             },
             edge_source_pressure_unknown_by_line={
                 "edge_0001": "p_feed",
-                "edge_0002": "p_splitter_out_a",
-                "edge_0003": "p_splitter_out_b",
+                "edge_0002": "p_junction_out_a",
+                "edge_0003": "p_junction_out_b",
             },
             edge_target_pressure_unknown_by_line={
-                "edge_0001": "p_splitter_in",
+                "edge_0001": "p_junction_in",
                 "edge_0002": "p_unit_a",
                 "edge_0003": "p_unit_b",
             },
             node_pressure_unknown_by_endpoint={
                 "feed.outlet": "p_feed",
-                "splitter.inlet": "p_splitter_in",
-                "splitter.outlet_1": "p_splitter_out_a",
-                "splitter.outlet_2": "p_splitter_out_b",
+                "junction.inlet": "p_junction_in",
+                "junction.outlet_1": "p_junction_out_a",
+                "junction.outlet_2": "p_junction_out_b",
                 "unit_a.feed": "p_unit_a",
                 "unit_b.feed": "p_unit_b",
             },
@@ -670,11 +744,11 @@ def test_thermo_coupling_ignores_splitter_placeholders_for_canonical_branch_flow
         def solve(self) -> HydraulicSolveResult:
             raise AssertionError("not used")
 
-    splitter = Splitter(
-        n_species=2,
-        n_outlets=2,
-        split_ratios=np.asarray([0.99], dtype=np.float64),
-        outlet_flows=np.asarray([99.0, 88.0], dtype=np.float64),
+    split_fixture = _SyntheticMixFixture()
+    split_fixture.seed_inlet(
+        StreamData.from_port_condition(
+            _port_condition(pressure=138000.0, temperature=320.0, flow_rate=2.0)
+        )
     )
     unit_a_bridge = _SimpleRuntimeBridge(
         _port_condition(pressure=101000.0, temperature=300.0, flow_rate=1.0)
@@ -682,7 +756,7 @@ def test_thermo_coupling_ignores_splitter_placeholders_for_canonical_branch_flow
     unit_b_bridge = _SimpleRuntimeBridge(
         _port_condition(pressure=101000.0, temperature=300.0, flow_rate=1.0)
     )
-    runtime.bind_stream_port_io(node_id="splitter", stream_port_io=splitter)
+    runtime.bind_stream_port_io(node_id="junction", stream_port_io=split_fixture)
     runtime.bind_stream_port_io(node_id="unit_a", stream_port_io=unit_a_bridge)
     runtime.bind_stream_port_io(node_id="unit_b", stream_port_io=unit_b_bridge)
     runtime.set_feed_stream(
@@ -706,7 +780,7 @@ def test_thermo_coupling_ignores_splitter_placeholders_for_canonical_branch_flow
         hydraulic=cast(object, _ManualSplitterCompiledHydraulic()),
         process_bindings={
             **compiled.process_bindings,
-            "splitter": splitter,
+            "junction": split_fixture,
             "unit_a": unit_a_bridge,
             "unit_b": unit_b_bridge,
         },
@@ -725,9 +799,9 @@ def test_thermo_coupling_ignores_splitter_placeholders_for_canonical_branch_flow
             "flow_out_a": 1.25,
             "flow_out_b": 0.75,
             "p_feed": 140000.0,
-            "p_splitter_in": 138000.0,
-            "p_splitter_out_a": 130000.0,
-            "p_splitter_out_b": 129000.0,
+            "p_junction_in": 138000.0,
+            "p_junction_out_a": 130000.0,
+            "p_junction_out_b": 129000.0,
             "p_unit_a": 120000.0,
             "p_unit_b": 118000.0,
         },
@@ -735,34 +809,25 @@ def test_thermo_coupling_ignores_splitter_placeholders_for_canonical_branch_flow
         residual_index_map={},
     )
 
-    def _resolve_outlet_condition(self: Splitter, port_name: str) -> PortCondition:
-        return self.get_outlet_stream(port_name).to_port_condition()
-
-    with patch.object(
-        Splitter,
-        "resolve_outlet_condition",
-        new=_resolve_outlet_condition,
-        create=True,
-    ):
-        _ = runtime._boundary_propagation_step(
-            network=network,
-            hydraulic_result=hydraulic_result,
-            transport_and_mixing_update=TransportAndMixingUpdate(
-                transport_results={
-                    "edge_0001": _transport_result(),
-                    "edge_0002": _transport_result(),
-                    "edge_0003": _transport_result(),
-                }
-            ),
-            macro_step_time_s=1.0,
-        )
+    _ = runtime._boundary_propagation_step(
+        network=network,
+        hydraulic_result=hydraulic_result,
+        transport_and_mixing_update=TransportAndMixingUpdate(
+            transport_results={
+                "edge_0001": _transport_result(),
+                "edge_0002": _transport_result(),
+                "edge_0003": _transport_result(),
+            }
+        ),
+        macro_step_time_s=1.0,
+    )
 
     splitter_outlet_1 = runtime.get_latest_outlet_condition(
-        node_id="splitter",
+        node_id="junction",
         port_name="outlet_1",
     )
     splitter_outlet_2 = runtime.get_latest_outlet_condition(
-        node_id="splitter",
+        node_id="junction",
         port_name="outlet_2",
     )
     unit_a_inlet = runtime.get_latest_inlet_condition(node_id="unit_a", port_name="feed")

@@ -18,8 +18,6 @@ _PIPE_RESISTANCE_BY_UNIT_NAME: dict[str, float] = {
     "ShortcutDistillation": 2.0e4,
     "ComponentSeparator": 5.0e3,
     "HeatExchanger": 5.0e3,
-    "Mixer": 1.0e3,
-    "Splitter": 1.0e3,
 }
 
 

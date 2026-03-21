@@ -30,7 +30,7 @@ This plan owns:
 This plan does **not** own:
 
 - new hydraulic API design work
-- compatibility shims for removed `Pump`, `Valve`, `Mixer`, or `Splitter` wrapper units
+- compatibility shims for removed deleted-wrapper unit classes (topology wrappers and flow-control wrappers)
 - unrelated example cleanup outside the curated flowsheet and regression surface listed below
 
 ## File Structure
@@ -59,7 +59,7 @@ This plan does **not** own:
 ## Implementation Rules
 
 - Do not add compatibility shims for removed wrapper units.
-- If `Pump`, `Valve`, `Mixer`, or `Splitter` are still mentioned on canonical public surfaces, replace them with actionable migration guidance that points to `Flowsheet.connect(..., pump=PumpInstall(...), valve=ValveInstall(...), heat=HeatInstall(...))`, `Flowsheet.add_junction(...)`, and `Flowsheet.add_sink(...)`.
+- If any deleted flow-control or topology wrapper class names are still mentioned on canonical public surfaces, replace them with actionable migration guidance that points to `Flowsheet.connect(..., pump=PumpInstall(...), valve=ValveInstall(...), heat=HeatInstall(...))`, `Flowsheet.add_junction(...)`, and `Flowsheet.add_sink(...)`.
 - Keep the canonical example set limited to the already-curated files; do not promote new examples in this change.
 - If a listed file already matches the landed API and tests, leave it unchanged and record that verification in the implementation notes rather than expanding scope.
 
@@ -150,13 +150,13 @@ Expected: PASS; all selected curated example and doc-alignment regressions succe
 
 - [ ] **Step 1: Re-verify the removed-wrapper import contract in `src/modular_simulation/unit_processes/__init__.py`**
 
-Keep removed wrapper imports as hard failures with actionable `ImportError` messages. Do not add aliases, compatibility exports, or delayed runtime shims.
+Removed wrapper symbols must not be importable or accessible. Do not add aliases, compatibility exports, or delayed runtime shims.
 
 - [ ] **Step 2: Reconcile migration tests with the desired failure behavior**
 
-`tests/unit_process/test_canonical_wrapper_removal.py` and `tests/test_save_load_minimal.py` should cover both public import failures and saved-payload rejection for `Pump`, `Valve`, `Mixer`, and `Splitter`.
+`tests/unit_process/test_canonical_wrapper_removal.py` and `tests/test_save_load_minimal.py` should cover both public import failures and saved-payload rejection for the deleted wrapper model classes (the four removed topology-wrapper and flow-control-wrapper unit types).
 
-Saved-payload rejection should stay a hard failure and the message should remain actionable, pointing users back to the canonical `Flowsheet` surface rather than silently accepting legacy wrapper payloads.
+Saved-payload rejection must be a hard failure. Live rejection paths may fail generically for removed or unsupported legacy process-model payloads; live source must not carry wrapper-name dispatch tables or wrapper-specific migration strings.
 
 - [ ] **Step 3: Reconcile builder/runtime contract tests with the same migration direction**
 

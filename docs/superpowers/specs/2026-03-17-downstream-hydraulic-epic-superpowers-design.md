@@ -121,7 +121,7 @@ Before writing step-level execution tasks, the plan author should re-verify the 
 ### Migration Compatibility Expectations
 
 - This plan owns canonical example rewrites, public documentation refresh, and final smoke/integration alignment after `szt.2` and `szt.3` land.
-- This plan also owns final wrapper-unit migration behavior decisions for canonical/public surfaces, including whether stale `Pump`, `Valve`, `Mixer`, and `Splitter` imports hard-fail, provide actionable migration messages, or preserve limited compatibility shims.
+- This plan also owns final wrapper-unit migration behavior decisions for canonical/public surfaces, including whether stale deleted-wrapper class imports hard-fail, provide actionable migration messages, or preserve limited compatibility shims.
 - The blocked scaffold should require the eventual execution agent to make these behaviors explicit in tests before implementation edits proceed.
 
 ## Shared Constraints

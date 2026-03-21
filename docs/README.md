@@ -107,7 +107,7 @@ uv run python examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py
 What it covers:
 
 - Fresh-feed plus an explicit recycle return edge through a named junction topology
-- Recycle pressure boost represented as a line-installed `PumpInstall(...)` instead of a `Pump` unit
+- Recycle pressure boost represented as a line-installed `PumpInstall(...)` rather than a dedicated flow wrapper unit
 - Downstream separation, purge, and liquid product recovery through explicit boundary sinks
 
 ## Grounded Process Examples

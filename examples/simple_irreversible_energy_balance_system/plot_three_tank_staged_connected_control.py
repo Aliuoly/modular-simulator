@@ -139,7 +139,7 @@ def plot_control_objectives(
     if step_time_h is not None:
         axes[0, 0].axvline(step_time_h, color="black", linestyle=":", linewidth=1.4)
 
-    axes[0, 1].plot(time_h, open_1_to_2, label="MV: Valve tank1->tank2", linewidth=2.0)
+    axes[0, 1].plot(time_h, open_1_to_2, label="MV: Flow actuator tank1->tank2", linewidth=2.0)
     axes[0, 1].set_ylabel("Open fraction [-]")
     axes[0, 1].set_title("Tank 1 manipulated variable")
     axes[0, 1].set_ylim(0.0, 1.05)
@@ -157,7 +157,7 @@ def plot_control_objectives(
     if step_time_h is not None:
         axes[1, 0].axvline(step_time_h, color="black", linestyle=":", linewidth=1.4)
 
-    axes[1, 1].plot(time_h, open_2_to_3, label="MV: Valve tank2->tank3", linewidth=2.0)
+    axes[1, 1].plot(time_h, open_2_to_3, label="MV: Flow actuator tank2->tank3", linewidth=2.0)
     axes[1, 1].plot(time_h, open_feed_2, label="MV: Tank 2 makeup valve", linewidth=1.8)
     axes[1, 1].set_ylabel("Open fraction [-]")
     axes[1, 1].set_title("Tank 2 manipulated variables")

@@ -375,7 +375,7 @@ class PipeHydraulicElement(_SmoothHydraulicResistanceElement):
 
 @dataclass(frozen=True)
 class ValveHydraulicElement(_SmoothHydraulicResistanceElement):
-    """Valve-family element owning valve defaults and actuator bootstrap policy."""
+    """Flow-control line-attachment element owning actuator defaults and bootstrap policy."""
 
     resistance_parameter_name: str = "valve_resistance"
 
@@ -420,7 +420,7 @@ class ValveHydraulicElement(_SmoothHydraulicResistanceElement):
 
 @dataclass(frozen=True)
 class PumpHydraulicElement(HydraulicElement):
-    """Pump-family element owning callback math plus pump bootstrap/default policy."""
+    """Pressure-boost line-attachment element owning callback math plus actuator bootstrap policy."""
 
     dp_curve: Callable[[float, float], float] | None = None
     d_dp_d_mdot: Callable[[float, float], float] | None = None
