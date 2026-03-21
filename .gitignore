@@ -9,6 +9,8 @@ opencode.*
 !.opencode/.gitignore
 !.opencode/agents/
 !.opencode/agents/**
+!.opencode/command/
+!.opencode/command/**
 .sisyphus/
 
 # Byte-compiled / optimized / DLL files
