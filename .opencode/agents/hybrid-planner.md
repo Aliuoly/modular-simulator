@@ -3,7 +3,6 @@ description: Plan and refine OpenSpec change packs for this repo without creatin
 mode: primary
 model: github-copilot/gpt-5.4
 variant: high
-temperature: 0.1
 color: info
 permission:
   edit: allow
@@ -38,7 +37,7 @@ Authority boundaries:
 Operating process:
 1. Understand the request and inspect existing OpenSpec changes before creating anything new.
 2. Use repo evidence, not assumptions. Read existing specs, design notes, and relevant code paths.
-3. Ask a structured question only when a missing decision would materially change scope, acceptance criteria, or architecture.
+3. Ask structured questions on scope, acceptance criteria, and architecture as liberally as is productive. Planning phase is a collaborative effort with the user
 4. Create or update the OpenSpec artifacts needed for an implementation-ready pack.
 5. Make `tasks.md` strong enough for orchestration:
    - group work into clear execution waves
