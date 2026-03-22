@@ -1,20 +1,15 @@
 schema: spec-driven
+context: |
+  ModularSimulator is a chemical-process simulation project being built to support a serious process-optimization game while also standing on its own as a reasonably high-fidelity simulation substrate.
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+  The project is not just a generic simulator and not just a frontend game client. It combines a reusable simulation core with higher-level gameplay, service, and client layers.
 
-# Per-artifact rules (optional)
-# Add custom rules for specific artifacts.
-# Example:
-#   rules:
-#     proposal:
-#       - Keep proposals under 500 words
-#       - Always include a "Non-goals" section
-#     tasks:
-#       - Break tasks into chunks of max 2 hours
+  The long-term product should be both educationally valuable and fun in its own right. The core gameplay loop is to accumulate capital, improve an existing plant through control and process optimization, increase profitability, and repeat.
+
+  Player guidance should keep people from feeling lost without replacing the optimization game with a rigid script. Progress is expected to be driven primarily by gradual unlocks tied to production and economic milestones, with guided tutorial scenarios available as an optional onboarding layer.
+
+  The architecture separates low-level simulation and plant-runtime concerns—such as flowsheet topology and hydraulic/runtime behavior—from higher-level gameplay, economy, and client concerns.
+
+  The primary implementation stack is Python with Pydantic, FastAPI/Uvicorn, SciPy, Astropy, and thermo/chemicals, with a Godot client layer on top.
+
+  OpenSpec is the source of truth for requirements and acceptance criteria. Beads tracks execution work.
