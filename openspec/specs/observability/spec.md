@@ -1,8 +1,8 @@
-# Observability Snapshot API
+# Observability
 
 ## Purpose
 
-This capability defines the stable substrate-owned observability snapshot exposed by `ConnectionNetwork` and forwarded by `PlantBackendSession` for policy-free runtime and physical-state reads.
+This capability defines the stable observability snapshot owned by `ConnectionNetwork` and forwarded by `PlantBackendSession`, covering runtime state and physical simulation outputs without gameplay or economics fields.
 
 ## Requirements
 
@@ -46,7 +46,7 @@ The public observability snapshot SHALL expose plant-calculation outputs alongsi
 - **WHEN** plant calculations have produced outputs during runtime execution
 - **THEN** the public observability snapshot includes those outputs in `observables.plant_calculation_outputs` as a stable numeric mapping
 
-### Requirement: The Snapshot Surface Is Policy-Free And Additive
+### Requirement: The Snapshot Exposes Only Substrate State And Stays Additive
 The first-slice observability snapshot SHALL remain limited to substrate-owned physical/runtime state and SHALL not introduce gameplay or economics policy fields.
 
 #### Scenario: Economics and gameplay semantics stay out of the substrate snapshot

@@ -1,7 +1,7 @@
-# phase1-realtime-godot-vertical-slice Specification
+# Client Godot
 
 ## Purpose
-This capability defines the first playable local Godot vertical slice that consumes the existing educational backend through a realtime gameplay service and fixed HTTP session API, while keeping `PlantBackendSession` as substrate and limiting player-facing scope to the sandbox and heater/flash tutorial modes.
+This capability defines the Godot client behavior and the fixed HTTP bridge it uses for the first playable local slice.
 ## Requirements
 ### Requirement: The Playable Slice Uses A Thin Game Service Above Existing Backend Layers
 The first playable slice SHALL compose the existing sandbox-session, economics-ledger, and substrate layers through a higher-level game service rather than exposing those low-level seams directly to the client.
@@ -11,10 +11,10 @@ The first playable slice SHALL compose the existing sandbox-session, economics-l
 - **THEN** it talks to a higher-level game service that orchestrates any required receipt or withdrawal handoffs internally instead of sending raw receipt ids or talking directly to `PlantBackendSession`
 
 ### Requirement: The First Playable Scope Is Narrow And Explicit
-The first playable slice SHALL support exactly the free-play sandbox `phase1_process_sandbox_v1` and the guided tutorial `heater_flash_guided_build_v1`, and SHALL surface exactly these client-build items in this pack: `place_heater_cooler`, `place_flash_drum`, and `build_process_line`.
+The first playable slice SHALL support exactly the free-play sandbox `phase1_process_sandbox_v1` and the guided tutorial `heater_flash_guided_build_v1`, and SHALL surface exactly these client-build items: `place_heater_cooler`, `place_flash_drum`, and `build_process_line`.
 
 #### Scenario: Reactor and recycle client flows stay deferred
-- **WHEN** a contributor inspects the playable client scope for this pack
+- **WHEN** a contributor inspects the playable client scope for the first slice
 - **THEN** the reactor-control and recycle/purge tutorials are not treated as required client flows for the first slice
 
 ### Requirement: Sessions Run Continuously Without Pause
@@ -33,7 +33,7 @@ The first playable slice SHALL expose exactly these HTTP endpoints for the Godot
 
 #### Scenario: HTTP surface is fixed for the first slice
 - **WHEN** a contributor inspects the backend-facing client bridge for the playable slice
-- **THEN** those exact routes exist and no `pause`, `resume`, or `step-on-demand` route is required for this pack
+- **THEN** those exact routes exist and no `pause`, `resume`, or `step-on-demand` route is required for the playable slice
 
 ### Requirement: The Slice Advertises Granular Simulation Step Presets
 The playable slice SHALL let the session start with an optional `simulation_dt_s`, SHALL advertise the presets `1/60`, `1/30`, and `1/20` seconds, and SHALL use `1/60` when the client omits `simulation_dt_s`.
@@ -125,7 +125,7 @@ The first playable slice SHALL support session start and restart locally, and SH
 
 #### Scenario: Restart is available but persistence is deferred
 - **WHEN** a player restarts the active slice session
-- **THEN** the session returns to its initial state for that mode, and the pack does not claim that cross-process save/load is already part of the player-facing game loop
+- **THEN** the session returns to its initial state for that mode, and the playable slice does not claim that cross-process save/load is already part of the player-facing game loop
 
 #### Scenario: Restart preserves session identity
 - **WHEN** a player restarts the active slice session

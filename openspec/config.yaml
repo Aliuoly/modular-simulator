@@ -13,3 +13,8 @@ context: |
   The primary implementation stack is Python with Pydantic, FastAPI/Uvicorn, SciPy, Astropy, and thermo/chemicals, with a Godot client layer on top.
 
   OpenSpec is the source of truth for requirements and acceptance criteria. Beads tracks execution work.
+
+rules:
+  - Use plain language in all OpenSpec artifacts. Prefer direct, concrete wording over jargon, abstract labels, or vague framework terms.
+  - Domain specs under openspec/specs/ should be organized by durable capability domains, not by work items or release milestones.
+  - Requirements and scenarios must describe observable behavior, not implementation internals.

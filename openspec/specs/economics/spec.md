@@ -1,8 +1,8 @@
-# Sandbox Session And Heuristic Economics
+# Economics
 
 ## Purpose
 
-This capability defines the phase-1 gameplay split between the simulation session and the separate economics ledger, including stable APIs, stable handoff contracts, frozen engineering-economics heuristics, and tutorial timing semantics.
+This capability defines economics-ledger behavior for phase-1 gameplay, including stable ledger APIs, stable request errors, contract shapes, frozen pricing heuristics, and explicit handoffs with the simulation session.
 
 ## Requirements
 
@@ -12,65 +12,6 @@ Phase-1 gameplay SHALL keep the simulation session separate from the economics l
 #### Scenario: Simulation layer does not own prices
 - **WHEN** a contributor inspects the phase-1 gameplay APIs
 - **THEN** buy/sell/quote/cash behavior belongs to the economics ledger and the simulation session owns only starts, installs, inventory loading, advancing, withdrawal, and state reads
-
-### Requirement: Simulation Session API Is Stable
-The simulation layer SHALL expose exactly `start_sandbox()`, `start_tutorial(tutorial_id)`, `install_catalog_item(...)`, `load_feed_inventory(...)`, `advance(dt_s)`, `withdraw_product_inventory(...)`, and `get_simulation_state()`.
-
-#### Scenario: Sandbox startup uses the one frozen sandbox start
-- **WHEN** a caller requests `start_sandbox()`
-- **THEN** the session starts `phase1_process_sandbox_v1`
-
-#### Scenario: Tutorial startup uses the tutorial’s bound start
-- **WHEN** a caller requests `start_tutorial("heater_flash_guided_build_v1")`
-- **THEN** the session starts `heater_flash_tutorial_start_v1` and not the free-play sandbox
-
-### Requirement: Simulation Errors Use Stable Request Codes
-Invalid non-purchase simulation requests SHALL raise `SandboxRequestError` with stable `error_code` values.
-
-#### Scenario: Invalid install requests are rejected
-- **WHEN** a caller requests `install_catalog_item(...)` without an active session, with an unknown item id, with an unsupported start, with invalid config, or without an equipment receipt while a ledger is active
-- **THEN** the session raises `SandboxRequestError` with `error_code` in `{"no_active_session", "unknown_item", "unsupported_on_start", "invalid_config", "missing_equipment_receipt"}`
-
-#### Scenario: Invalid feed loads are rejected
-- **WHEN** a caller requests `load_feed_inventory(...)` with an unknown material, invalid quantity, missing procurement receipt while a ledger is active, or during a tutorial that disables feed loading
-- **THEN** the session raises `SandboxRequestError` with `error_code` in `{"no_active_session", "unknown_material", "invalid_quantity", "missing_procurement_receipt", "tutorial_feed_loading_disabled"}`
-
-#### Scenario: Invalid step sizes are rejected
-- **WHEN** a caller requests `advance(dt_s)` with `dt_s <= 0.0`, `NaN`, or infinity
-- **THEN** the session raises `SandboxRequestError(error_code="invalid_dt_s", ...)`
-
-#### Scenario: Unknown tutorials are rejected
-- **WHEN** a caller requests `start_tutorial("unknown_tutorial")`
-- **THEN** the session raises `SandboxRequestError(error_code="unknown_tutorial", ...)`
-
-#### Scenario: Insufficient feed inventory is rejected on advance
-- **WHEN** a caller requests `advance(dt_s)` without enough loaded feed inventory for the required simulation step
-- **THEN** the session raises `SandboxRequestError(error_code="insufficient_feed_inventory", ...)`
-
-#### Scenario: Invalid product withdrawals are rejected
-- **WHEN** a caller requests `withdraw_product_inventory(...)` without an active session, with an unknown product id, with invalid quantity, or with insufficient product inventory
-- **THEN** the session raises `SandboxRequestError` with `error_code` in `{"no_active_session", "unknown_product", "invalid_quantity", "insufficient_product_inventory"}`
-
-### Requirement: Simulation Session Tracks Inventory And Tutorial Time, Not Score
-The simulation session SHALL track feed inventory, product inventory, tutorial goal status, and elapsed time, and SHALL not expose any score field.
-
-#### Scenario: Tutorial completion reports elapsed time only
-- **WHEN** a tutorial reaches all of its frozen goals
-- **THEN** completion is reported from goal status plus `tutorial_completion_time_s` on the simulation snapshot and no score/points field is introduced
-
-### Requirement: The Simulation Contracts Are Stable
-`SimulationSessionSnapshot`, `TutorialGoalStatus`, `BuildApplyResult`, `InventoryLoadResult`, `InventoryWithdrawalResult`, `SimulationAdvanceResult`, and `SandboxRequestError` SHALL expose these exact fields and types:
-- `SimulationSessionSnapshot`: `session_kind: Literal["sandbox", "tutorial"]`, `active_start_id: str`, `active_tutorial_id: str | None`, `elapsed_time_s: float`, `tutorial_completion_time_s: float | None`, `installed_item_instance_ids: tuple[str, ...]`, `feed_inventory_by_material_id: Mapping[str, float]`, `product_inventory_by_product_id: Mapping[str, float]`, `tutorial_goal_status_by_id: Mapping[str, TutorialGoalStatus]`
-- `TutorialGoalStatus`: `goal_id: str`, `completed: bool`, `completed_at_time_s: float | None`
-- `BuildApplyResult`: `success: bool`, `reason_code: str | None`, `snapshot: SimulationSessionSnapshot`
-- `InventoryLoadResult`: `success: bool`, `reason_code: str | None`, `snapshot: SimulationSessionSnapshot`
-- `InventoryWithdrawalResult`: `withdrawal_id: str`, `success: bool`, `reason_code: str | None`, `withdrawn_quantity_mol: float`, `snapshot: SimulationSessionSnapshot`
-- `SimulationAdvanceResult`: `snapshot: SimulationSessionSnapshot`, `feed_consumption_by_material_id: Mapping[str, float]`, `product_production_by_product_id: Mapping[str, float]`, `published_signal_values_by_id: Mapping[str, float]`
-- `SandboxRequestError`: `error_code: str`, `message: str`
-
-#### Scenario: Simulation contract shapes are fixed
-- **WHEN** a contributor inspects the pack-2 contracts
-- **THEN** those types expose exactly those fields and no pricing fields appear on the simulation-side result types
 
 ### Requirement: Economics Ledger API Is Stable
 The economics layer SHALL expose exactly `open_cash_ledger(...)`, `quote_equipment_purchase(...)`, `record_equipment_purchase(...)`, `quote_feed_purchase(...)`, `record_feed_purchase(...)`, `quote_product_sale(...)`, `record_product_sale(withdrawal_id)`, `record_operating_costs(...)`, and `get_cash_ledger()`.
@@ -168,24 +109,3 @@ The simulation and economics layers SHALL interact only through explicit receipt
 #### Scenario: Product-sale withdrawal tokens are single-use
 - **WHEN** a caller records a product sale with a valid `withdrawal_id` and then attempts to reuse the same token
 - **THEN** the first sale succeeds once and the replay is rejected with `SandboxRequestError(error_code="unknown_withdrawal_id", ...)`
-
-### Requirement: Dependency-Owned Catalog And Starts Remain Read-Only
-The sandbox-session and economics layer SHALL consume the sandbox catalog, start catalog, tutorial catalog, and start builders from the dependency pack rather than redefining item ids, start ids, published signals, or tutorial goals.
-
-#### Scenario: Ownership remains consistent across packs
-- **WHEN** a contributor inspects the build-catalog pack and the pack-2 implementation
-- **THEN** item ids, start ids, tutorial bindings, and published signal ids originate in the dependency pack and pack 2 uses them as read-only inputs
-
-### Requirement: PlantBackendSession Remains Free Of Gameplay Policy
-Any changes to `PlantBackendSession` made to support sandbox composition SHALL remain generic substrate hooks and SHALL not own sandbox pricing, tutorial timing, or economics policy.
-
-#### Scenario: Sandbox integration preserves substrate ownership boundaries
-- **WHEN** the sandbox session implementation requires backend-session support
-- **THEN** any added substrate helpers remain generic and all gameplay policy continues to live under `src/modular_simulation/gameplay/`
-
-### Requirement: Higher Layers Consume Substrate-Owned Observability Reads
-The sandbox session and economics ledger SHALL consume substrate-owned observability snapshot surfaces for physical-state reads rather than reconstructing those reads from low-level runtime internals.
-
-#### Scenario: Economics-facing observability stays separated from policy
-- **WHEN** higher-layer code needs runtime observability for educational signals or future economics rollups
-- **THEN** those reads come from the substrate-owned snapshot API and not from pricing, tutorial, or ledger logic being pushed down into `PlantBackendSession` or other substrate internals
