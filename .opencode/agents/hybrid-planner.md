@@ -7,6 +7,7 @@ color: info
 permission:
   edit: allow
   bash: allow
+  question: allow
   webfetch: allow
   task:
     "*": deny
