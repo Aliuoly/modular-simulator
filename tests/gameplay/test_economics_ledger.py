@@ -16,8 +16,10 @@ REQUIRED_ECONOMICS_METHODS = (
     "record_feed_purchase",
     "quote_product_sale",
     "record_product_sale",
+    "register_product_withdrawal_handoff",
     "record_operating_costs",
     "get_cash_ledger",
+    "is_cash_ledger_open",
 )
 
 
@@ -36,11 +38,21 @@ class EconomicsApi(Protocol):
 
     def record_product_sale(self, withdrawal_id: str) -> Any: ...
 
+    def register_product_withdrawal_handoff(
+        self,
+        withdrawal_id: str,
+        *,
+        product_id: str,
+        quantity_mol: float,
+    ) -> None: ...
+
     def record_operating_costs(
         self, *, dt_s: float, published_signal_values_by_id: dict[str, float]
     ) -> Any: ...
 
     def get_cash_ledger(self) -> Any: ...
+
+    def is_cash_ledger_open(self) -> bool: ...
 
 
 def _has_required_methods(candidate: object) -> bool:
@@ -118,6 +130,34 @@ def test_default_cash_ledger_open_balance_is_frozen() -> None:
     api = _economics_api()
     ledger = api.open_cash_ledger()
     assert ledger.cash_balance == 900.0
+
+
+def test_public_cash_ledger_runtime_is_instance_backed() -> None:
+    economics = import_module("modular_simulation.gameplay.economics")
+    runtime_type = getattr(economics, "CashLedgerRuntime")
+
+    runtime_a = runtime_type()
+    runtime_b = runtime_type()
+
+    assert runtime_a.is_cash_ledger_open() is False
+    assert runtime_b.is_cash_ledger_open() is False
+
+    runtime_a.open_cash_ledger(initial_cash=50.0)
+    assert runtime_a.get_cash_ledger().cash_balance == pytest.approx(50.0)
+    assert runtime_b.is_cash_ledger_open() is False
+
+
+def test_module_level_api_remains_compatible_with_handoff_registration() -> None:
+    api = _economics_api()
+    api.open_cash_ledger(initial_cash=100.0)
+    api.register_product_withdrawal_handoff(
+        "w1",
+        product_id="product_a",
+        quantity_mol=2.0,
+    )
+
+    sale = api.record_product_sale("w1")
+    assert sale.gross_revenue == pytest.approx(16.0)
 
 
 @pytest.mark.parametrize(

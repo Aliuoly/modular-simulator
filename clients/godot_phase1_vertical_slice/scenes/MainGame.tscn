@@ -1,0 +1,137 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/world_renderer.gd" id="1_d2txv"]
+[ext_resource type="Script" path="res://scripts/hud_controller.gd" id="2_0gqrk"]
+[ext_resource type="Script" path="res://scripts/build_command_panel.gd" id="3_7jv6p"]
+
+[sub_resource type="Environment" id="Environment_6mqkg"]
+background_mode = 2
+background_color = Color(0.05, 0.06, 0.08, 1)
+
+[node name="MainGame" type="Node"]
+
+[node name="World" type="Node3D" parent="."]
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="World"]
+transform = Transform3D(0.723109, 0.424097, 0.544639, 0, 0.789406, -0.613871, -0.690734, 0.443572, 0.570729, 0, 6, 0)
+light_energy = 2.0
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="World"]
+environment = SubResource("Environment_6mqkg")
+
+[node name="FixedCamera" type="Camera3D" parent="World"]
+transform = Transform3D(1, 0, 0, 0, 0.838671, -0.544639, 0, 0.544639, 0.838671, 0, 12, 14)
+name = "FixedCamera"
+current = true
+projection = 1
+size = 12.0
+
+[node name="WorldRenderer" type="Node3D" parent="World"]
+script = ExtResource("1_d2txv")
+session_store_path = NodePath("/root/Bootstrap/SessionStore")
+
+[node name="CanvasLayer" type="CanvasLayer" parent="."]
+
+[node name="HUD" type="Control" parent="CanvasLayer"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("2_0gqrk")
+session_store_path = NodePath("/root/Bootstrap/SessionStore")
+
+[node name="VBox" type="VBoxContainer" parent="CanvasLayer/HUD"]
+layout_mode = 1
+offset_left = 12.0
+offset_top = 12.0
+offset_right = 560.0
+offset_bottom = 280.0
+theme_override_constants/separation = 4
+
+[node name="ModeLabel" type="Label" parent="CanvasLayer/HUD/VBox"]
+layout_mode = 2
+text = "Mode: --"
+
+[node name="CashLabel" type="Label" parent="CanvasLayer/HUD/VBox"]
+layout_mode = 2
+text = "Cash: --"
+
+[node name="FeedLabel" type="Label" parent="CanvasLayer/HUD/VBox"]
+layout_mode = 2
+text = "Feed: --"
+
+[node name="ProductLabel" type="Label" parent="CanvasLayer/HUD/VBox"]
+layout_mode = 2
+text = "Product: --"
+
+[node name="SignalsLabel" type="Label" parent="CanvasLayer/HUD/VBox"]
+layout_mode = 2
+text = "Signals: --"
+
+[node name="GoalsLabel" type="Label" parent="CanvasLayer/HUD/VBox"]
+layout_mode = 2
+text = "Tutorial Goals: --"
+
+[node name="LagLabel" type="Label" parent="CanvasLayer/HUD/VBox"]
+layout_mode = 2
+text = "Lag: --"
+
+[node name="ErrorLabel" type="Label" parent="CanvasLayer/HUD/VBox"]
+layout_mode = 2
+text = ""
+
+[node name="BuildPanel" type="VBoxContainer" parent="CanvasLayer/HUD"]
+layout_mode = 1
+offset_left = 1200.0
+offset_top = 12.0
+offset_right = 1580.0
+offset_bottom = 340.0
+theme_override_constants/separation = 6
+script = ExtResource("3_7jv6p")
+session_store_path = NodePath("/root/Bootstrap/SessionStore")
+
+[node name="StatusLabel" type="Label" parent="CanvasLayer/HUD/BuildPanel"]
+layout_mode = 2
+text = "Ready"
+
+[node name="BuildHeaterButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
+layout_mode = 2
+text = "Build Heater"
+
+[node name="BuildFlashButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
+layout_mode = 2
+text = "Build Flash"
+
+[node name="BuildLineButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
+layout_mode = 2
+text = "Build Line"
+
+[node name="LineSourceLabel" type="Label" parent="CanvasLayer/HUD/BuildPanel"]
+layout_mode = 2
+text = "Line source: n/a"
+
+[node name="LineSourceNextButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
+layout_mode = 2
+text = "Next Source"
+
+[node name="LineTargetLabel" type="Label" parent="CanvasLayer/HUD/BuildPanel"]
+layout_mode = 2
+text = "Line target: n/a"
+
+[node name="LineTargetNextButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
+layout_mode = 2
+text = "Next Target"
+
+[node name="BuyFeedButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
+layout_mode = 2
+text = "Buy Feed"
+
+[node name="SellProductButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
+layout_mode = 2
+text = "Sell Product"
+
+[node name="RestartButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
+layout_mode = 2
+text = "Restart"

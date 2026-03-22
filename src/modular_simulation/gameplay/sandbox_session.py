@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import os
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import Mapping, Protocol
 
 from modular_simulation.gameplay import economics
 from modular_simulation.gameplay.contracts import (
@@ -42,11 +42,28 @@ class _RuntimeSessionState:
     next_withdrawal_index: int = 1
 
 
-class _SandboxSessionApi:
-    def __init__(self) -> None:
+class _EconomicsApi(Protocol):
+    def is_cash_ledger_open(self) -> bool: ...
+
+    def register_product_withdrawal_handoff(
+        self,
+        withdrawal_id: str,
+        *,
+        product_id: str,
+        quantity_mol: float,
+    ) -> None: ...
+
+
+class SandboxSessionRuntime:
+    """Instance-backed runtime for sandbox/tutorial session state."""
+
+    def __init__(self, *, economics_api: _EconomicsApi | None = None) -> None:
         self._start_catalog = build_start_catalog()
         self._tutorial_catalog = build_tutorial_catalog()
         self._sandbox_catalog = build_sandbox_catalog()
+        self._economics_api = (
+            economics.CashLedgerRuntime() if economics_api is None else economics_api
+        )
         self._state: _RuntimeSessionState | None = None
 
     def start_sandbox(self) -> SimulationSessionSnapshot:
@@ -84,7 +101,7 @@ class _SandboxSessionApi:
                 error_code="unsupported_on_start",
                 message=f"Item {item_id!r} is unsupported on start {state.active_start_id!r}",
             )
-        if economics.is_cash_ledger_open() and not equipment_receipt_id:
+        if self._economics_api.is_cash_ledger_open() and not equipment_receipt_id:
             raise SandboxRequestError(
                 error_code="missing_equipment_receipt",
                 message="equipment_receipt_id is required when cash ledger is open.",
@@ -122,7 +139,7 @@ class _SandboxSessionApi:
                 error_code="unknown_material",
                 message=f"Unknown material id for this start: {material_id!r}",
             )
-        if economics.is_cash_ledger_open() and not procurement_receipt_id:
+        if self._economics_api.is_cash_ledger_open() and not procurement_receipt_id:
             raise SandboxRequestError(
                 error_code="missing_procurement_receipt",
                 message="procurement_receipt_id is required when cash ledger is open.",
@@ -222,8 +239,8 @@ class _SandboxSessionApi:
         state.product_inventory_by_product_id[product_id] = available - quantity_mol
         withdrawal_id = f"wd-{state.next_withdrawal_index}"
         state.next_withdrawal_index += 1
-        if economics.is_cash_ledger_open():
-            economics.register_product_withdrawal_handoff(
+        if self._economics_api.is_cash_ledger_open():
+            self._economics_api.register_product_withdrawal_handoff(
                 withdrawal_id,
                 product_id=product_id,
                 quantity_mol=float(quantity_mol),
@@ -396,19 +413,19 @@ class _SandboxSessionApi:
         return signal_values
 
 
-_API_BY_SCOPE: dict[str, _SandboxSessionApi] = {}
+_API_BY_SCOPE: dict[str, SandboxSessionRuntime] = {}
 
 
 def _session_scope_key() -> str:
     return os.environ.get("PYTEST_CURRENT_TEST", "global")
 
 
-def _api() -> _SandboxSessionApi:
+def _api() -> SandboxSessionRuntime:
     scope = _session_scope_key()
     existing = _API_BY_SCOPE.get(scope)
     if existing is not None:
         return existing
-    created = _SandboxSessionApi()
+    created = SandboxSessionRuntime(economics_api=economics)
     _API_BY_SCOPE[scope] = created
     return created
 

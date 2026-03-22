@@ -418,3 +418,240 @@ def get_cash_ledger() -> CashLedgerSnapshot:
 
 def is_cash_ledger_open() -> bool:
     return _ledger_scope_key() in _runtime_state_by_scope
+
+
+class CashLedgerRuntime:
+    """Instance-backed ledger runtime.
+
+    Each instance owns its own ledger state independently of the module-level
+    scope-keyed state and of every other instance.
+    """
+
+    def __init__(self) -> None:
+        self._state: _LedgerRuntimeState | None = None
+
+    def _require_state(self) -> _LedgerRuntimeState:
+        if self._state is None:
+            raise SandboxRequestError(
+                error_code="ledger_not_open",
+                message="Cash ledger has not been opened.",
+            )
+        return self._state
+
+    def open_cash_ledger(self, *, initial_cash: float | None = None) -> CashLedgerSnapshot:
+        starting_cash = (
+            _DEFAULT_SANDBOX_STARTING_CASH if initial_cash is None else float(initial_cash)
+        )
+        ledger = CashLedgerSnapshot(
+            cash_balance=starting_cash,
+            equipment_capex_spent=0.0,
+            feed_procurement_spent=0.0,
+            product_sales_received=0.0,
+            operating_costs_paid=0.0,
+        )
+        self._state = _LedgerRuntimeState(ledger=ledger)
+        return ledger
+
+    def quote_equipment_purchase(
+        self, item_id: str, *, config: Mapping[str, object]
+    ) -> EconomicQuote:
+        state = self._require_state()
+        amount, applied_rule_ids = _quote_equipment_amount(item_id, config=config)
+        return EconomicQuote(
+            subject_id=item_id,
+            subject_kind="equipment",
+            quoted_amount=amount,
+            applied_rule_ids=applied_rule_ids,
+            affordable=state.ledger.cash_balance >= amount,
+        )
+
+    def record_equipment_purchase(
+        self, item_id: str, *, config: Mapping[str, object]
+    ) -> EquipmentPurchaseReceipt:
+        state = self._require_state()
+        quote = self.quote_equipment_purchase(item_id, config=config)
+        if not quote.affordable:
+            raise SandboxRequestError(
+                error_code="insufficient_cash",
+                message="Insufficient cash balance for equipment purchase.",
+            )
+        ledger = state.ledger
+        _set_cash_ledger(
+            state,
+            cash_balance=ledger.cash_balance - quote.quoted_amount,
+            equipment_capex_spent=ledger.equipment_capex_spent + quote.quoted_amount,
+        )
+        return EquipmentPurchaseReceipt(
+            receipt_id=_next_receipt_id(state, prefix="eqp"),
+            item_id=item_id,
+            amount_paid=quote.quoted_amount,
+        )
+
+    def quote_feed_purchase(self, material_id: str, *, quantity_mol: float) -> EconomicQuote:
+        state = self._require_state()
+        quantity = _require_positive_quantity(quantity_mol=quantity_mol)
+        unit_price = _FEED_PRICE_BY_MATERIAL_ID.get(material_id)
+        if unit_price is None:
+            raise SandboxRequestError(
+                error_code="unknown_material",
+                message=f"Unknown feed material id: {material_id!r}",
+            )
+        amount = unit_price * quantity
+        return EconomicQuote(
+            subject_id=material_id,
+            subject_kind="feed",
+            quoted_amount=amount,
+            applied_rule_ids=("feed_purchase_price_table",),
+            affordable=state.ledger.cash_balance >= amount,
+        )
+
+    def record_feed_purchase(self, material_id: str, *, quantity_mol: float) -> FeedPurchaseReceipt:
+        state = self._require_state()
+        quote = self.quote_feed_purchase(material_id, quantity_mol=quantity_mol)
+        if not quote.affordable:
+            raise SandboxRequestError(
+                error_code="insufficient_cash",
+                message="Insufficient cash balance for feed purchase.",
+            )
+        ledger = state.ledger
+        _set_cash_ledger(
+            state,
+            cash_balance=ledger.cash_balance - quote.quoted_amount,
+            feed_procurement_spent=ledger.feed_procurement_spent + quote.quoted_amount,
+        )
+        return FeedPurchaseReceipt(
+            receipt_id=_next_receipt_id(state, prefix="feed"),
+            material_id=material_id,
+            quantity_mol=float(quantity_mol),
+            amount_paid=quote.quoted_amount,
+        )
+
+    def quote_product_sale(self, product_id: str, *, quantity_mol: float) -> EconomicQuote:
+        self._require_state()
+        quantity = _require_positive_quantity(quantity_mol=quantity_mol)
+        unit_price = _PRODUCT_SALE_PRICE_BY_PRODUCT_ID.get(product_id)
+        if unit_price is None:
+            raise SandboxRequestError(
+                error_code="unknown_product",
+                message=f"Unknown product id: {product_id!r}",
+            )
+        amount = unit_price * quantity
+        return EconomicQuote(
+            subject_id=product_id,
+            subject_kind="product_sale",
+            quoted_amount=amount,
+            applied_rule_ids=("product_sale_price_table",),
+            affordable=True,
+        )
+
+    def record_product_sale(self, withdrawal_id: str) -> SaleReceipt:
+        state = self._require_state()
+        if not withdrawal_id:
+            raise SandboxRequestError(
+                error_code="missing_withdrawal_id",
+                message="withdrawal_id is required.",
+            )
+        withdrawal = state.sale_handoffs_by_withdrawal_id.pop(withdrawal_id, None)
+        if withdrawal is None:
+            raise SandboxRequestError(
+                error_code="unknown_withdrawal_id",
+                message=f"Unknown withdrawal id: {withdrawal_id!r}",
+            )
+        product_id, quantity_mol = withdrawal
+        quote = self.quote_product_sale(product_id, quantity_mol=quantity_mol)
+        ledger = state.ledger
+        _set_cash_ledger(
+            state,
+            cash_balance=ledger.cash_balance + quote.quoted_amount,
+            product_sales_received=ledger.product_sales_received + quote.quoted_amount,
+        )
+        return SaleReceipt(
+            receipt_id=_next_receipt_id(state, prefix="sale"),
+            withdrawal_id=withdrawal_id,
+            product_id=product_id,
+            quantity_mol=quantity_mol,
+            gross_revenue=quote.quoted_amount,
+        )
+
+    def register_product_withdrawal_handoff(
+        self,
+        withdrawal_id: str,
+        *,
+        product_id: str,
+        quantity_mol: float,
+    ) -> None:
+        state = self._require_state()
+        quantity = _require_positive_quantity(quantity_mol=quantity_mol)
+        if not withdrawal_id:
+            raise SandboxRequestError(
+                error_code="missing_withdrawal_id",
+                message="withdrawal_id is required.",
+            )
+        state.sale_handoffs_by_withdrawal_id[withdrawal_id] = (product_id, quantity)
+
+    def record_operating_costs(
+        self,
+        *,
+        dt_s: float,
+        published_signal_values_by_id: Mapping[str, float],
+    ) -> OperatingCostResult:
+        state = self._require_state()
+        dt_value = float(dt_s)
+        if not isfinite(dt_value) or dt_value <= 0.0:
+            raise SandboxRequestError(
+                error_code="invalid_dt_s",
+                message="dt_s must be finite and > 0.",
+            )
+        applications: list[HeuristicRuleApplication] = []
+        if "heating_steam_duty_W" in published_signal_values_by_id:
+            heating_duty = float(published_signal_values_by_id["heating_steam_duty_W"])
+            heating_cost = heating_duty * dt_value * 0.02 / 1_000_000
+            applications.append(
+                HeuristicRuleApplication(
+                    rule_id="heating_steam_cost_heuristic",
+                    rule_name="Heating steam cost heuristic",
+                    subject_id="heating_steam_duty_W",
+                    computed_value=heating_cost,
+                    basis_snapshot={"heating_steam_duty_W": heating_duty, "dt_s": dt_value},
+                )
+            )
+        if "total_normalized_pump_load" in published_signal_values_by_id:
+            normalized_pump_load = float(
+                published_signal_values_by_id["total_normalized_pump_load"]
+            )
+            pump_cost = normalized_pump_load * dt_value * 0.004
+            applications.append(
+                HeuristicRuleApplication(
+                    rule_id="pump_electricity_cost_heuristic",
+                    rule_name="Pump electricity cost heuristic",
+                    subject_id="total_normalized_pump_load",
+                    computed_value=pump_cost,
+                    basis_snapshot={
+                        "total_normalized_pump_load": normalized_pump_load,
+                        "dt_s": dt_value,
+                    },
+                )
+            )
+        operating_cost_paid = float(sum(application.computed_value for application in applications))
+        ledger = state.ledger
+        if operating_cost_paid > ledger.cash_balance:
+            raise SandboxRequestError(
+                error_code="insufficient_cash",
+                message="Insufficient cash balance for operating costs.",
+            )
+        updated_ledger = _set_cash_ledger(
+            state,
+            cash_balance=ledger.cash_balance - operating_cost_paid,
+            operating_costs_paid=ledger.operating_costs_paid + operating_cost_paid,
+        )
+        return OperatingCostResult(
+            operating_cost_paid=operating_cost_paid,
+            rule_applications=tuple(applications),
+            cash_ledger=updated_ledger,
+        )
+
+    def get_cash_ledger(self) -> CashLedgerSnapshot:
+        return self._require_state().ledger
+
+    def is_cash_ledger_open(self) -> bool:
+        return self._state is not None

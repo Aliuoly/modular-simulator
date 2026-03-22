@@ -92,6 +92,24 @@ def test_simulation_api_surface_is_frozen() -> None:
     )
 
 
+def test_public_runtime_class_is_instance_backed_and_isolated() -> None:
+    module = import_module("modular_simulation.gameplay.sandbox_session")
+    runtime_cls = getattr(module, "SandboxSessionRuntime", None)
+
+    assert runtime_cls is not None
+    runtime_a = runtime_cls()
+    runtime_b = runtime_cls()
+    assert _has_required_session_methods(runtime_a)
+    assert _has_required_session_methods(runtime_b)
+
+    runtime_a.start_sandbox()
+
+    error_type = _sandbox_error_type()
+    with pytest.raises(error_type) as no_active:
+        runtime_b.get_simulation_state()
+    assert no_active.value.error_code == "no_active_session"
+
+
 def test_start_sandbox_uses_frozen_start_id() -> None:
     api = _session_api()
     snapshot = api.start_sandbox()
@@ -324,6 +342,81 @@ def test_withdrawal_handoff_token_can_be_sold_once_via_economics() -> None:
     with pytest.raises(error_type) as replay_error:
         economics.record_product_sale(withdrawal.withdrawal_id)
     assert replay_error.value.error_code == "unknown_withdrawal_id"
+
+
+def test_runtime_composition_requires_receipts_with_open_cash_ledger_runtime() -> None:
+    sandbox = import_module("modular_simulation.gameplay.sandbox_session")
+    economics = import_module("modular_simulation.gameplay.economics")
+    error_type = _sandbox_error_type()
+
+    ledger = economics.CashLedgerRuntime()
+    ledger.open_cash_ledger(initial_cash=500.0)
+    api = sandbox.SandboxSessionRuntime(economics_api=ledger)
+    api.start_sandbox()
+
+    with pytest.raises(error_type) as missing_equipment:
+        api.install_catalog_item("place_heater_cooler", config={})
+    assert missing_equipment.value.error_code == "missing_equipment_receipt"
+
+    with pytest.raises(error_type) as missing_feed:
+        api.load_feed_inventory("feed_a", 1.0)
+    assert missing_feed.value.error_code == "missing_procurement_receipt"
+
+
+def test_runtime_withdrawals_register_handoff_on_injected_cash_ledger_runtime() -> None:
+    sandbox = import_module("modular_simulation.gameplay.sandbox_session")
+    economics = import_module("modular_simulation.gameplay.economics")
+    error_type = _sandbox_error_type()
+
+    ledger = economics.CashLedgerRuntime()
+    ledger.open_cash_ledger(initial_cash=5_000.0)
+    api = sandbox.SandboxSessionRuntime(economics_api=ledger)
+    api.start_sandbox()
+
+    equipment_receipt = ledger.record_equipment_purchase(
+        "build_process_line",
+        config={"length_m": 3.0, "radius_m": 0.05},
+    )
+    api.install_catalog_item(
+        "build_process_line",
+        config={"length_m": 3.0, "radius_m": 0.05},
+        equipment_receipt_id=equipment_receipt.receipt_id,
+    )
+
+    feed_receipt = ledger.record_feed_purchase("feed_a", quantity_mol=2.0)
+    api.load_feed_inventory(
+        "feed_a",
+        2.0,
+        procurement_receipt_id=feed_receipt.receipt_id,
+    )
+
+    api.advance(1.0)
+    withdrawal = api.withdraw_product_inventory("product_a", 0.1)
+
+    sale = ledger.record_product_sale(withdrawal.withdrawal_id)
+    assert sale.withdrawal_id == withdrawal.withdrawal_id
+    assert sale.product_id == "product_a"
+    assert sale.quantity_mol == pytest.approx(0.1)
+    assert sale.gross_revenue == pytest.approx(0.8)
+
+    with pytest.raises(error_type) as replay_error:
+        ledger.record_product_sale(withdrawal.withdrawal_id)
+    assert replay_error.value.error_code == "unknown_withdrawal_id"
+
+
+def test_module_open_ledger_does_not_affect_fresh_isolated_runtime() -> None:
+    sandbox = import_module("modular_simulation.gameplay.sandbox_session")
+    economics = import_module("modular_simulation.gameplay.economics")
+
+    economics.open_cash_ledger(initial_cash=5_000.0)
+    api = sandbox.SandboxSessionRuntime()
+    api.start_sandbox()
+
+    install_result = api.install_catalog_item("place_heater_cooler", config={})
+    assert install_result.success is True
+
+    load_result = api.load_feed_inventory("feed_a", 1.0)
+    assert load_result.success is True
 
 
 def test_snapshot_exposes_tutorial_completion_time_and_not_score() -> None:

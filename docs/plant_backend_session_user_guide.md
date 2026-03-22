@@ -6,6 +6,8 @@ User-facing educational gameplay or classroom orchestration tools should treat `
 
 In this repository, that higher-level split now exists in `src/modular_simulation/gameplay/` as a separate sandbox simulation session and economics ledger layer. For a minimal end-to-end example of that split, see `examples/dynamic_api_cli/sandbox_backend_minimal.py`.
 
+For the playable phase-1 Godot slice, game-client implementers should use the higher-level realtime service and HTTP game API (`src/modular_simulation/gameplay/realtime_service.py` and `src/modular_simulation/app/game_api.py`) instead of binding a client directly to `PlantBackendSession`. `PlantBackendSession` remains substrate-only in that architecture: the service composes it and exposes client-safe command/snapshot contracts.
+
 This guide explains how to use `PlantBackendSession` as a user-facing backend for interactive plant editing (for example, a game-like UI where users add processes, ports, lines, sensors, and controllers at runtime).
 
 The focus is practical usage:

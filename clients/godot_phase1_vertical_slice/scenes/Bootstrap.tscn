@@ -1,0 +1,22 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/bootstrap_controller.gd" id="1_k5ybb"]
+[ext_resource type="Script" path="res://scripts/backend_client.gd" id="2_rhm0x"]
+[ext_resource type="Script" path="res://scripts/session_store.gd" id="3_pwn2j"]
+
+[node name="Bootstrap" type="Node"]
+script = ExtResource("1_k5ybb")
+
+[node name="BackendClient" type="Node" parent="."]
+script = ExtResource("2_rhm0x")
+
+[node name="SessionStore" type="Node" parent="."]
+script = ExtResource("3_pwn2j")
+
+[node name="ScreenRoot" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2

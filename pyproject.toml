@@ -50,6 +50,8 @@ dependencies = [
   "scipy",
   "tqdm",
   "pydantic",
+  "fastapi",
+  "uvicorn",
   "matplotlib",
   "astropy",
   "nicegui",

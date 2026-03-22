@@ -30,6 +30,16 @@ The physical simulation and runtime-editing layer consists of:
 
 `PlantBackendSession` is the canonical substrate entry point. The gameplay layers, progression systems, and economics rules in this repository compose these substrate layers rather than replacing them.
 
+## Consumer Layers Above the Substrate
+
+For the phase-1 playable vertical slice, the repository now includes consumer layers above the substrate:
+
+- **Instance-backed gameplay runtime layer** (`src/modular_simulation/gameplay/`) — session/economics/board-layout runtimes that orchestrate gameplay state by composing substrate objects.
+- **Realtime service + HTTP bridge** (`src/modular_simulation/gameplay/realtime_service.py` and `src/modular_simulation/app/game_api.py`) — the Godot-facing transport seam exposing `GET /game/bootstrap`, session creation, snapshots, build/feed/sell commands, and restart.
+- **Godot vertical-slice client** (`clients/godot_phase1_vertical_slice/`) — fixed-camera, 2.5D client consuming the game API for the first playable local slice.
+
+These layers are explicitly consumers of the educational simulation backend/substrate. They are not a replacement for `PlantBackendSession`, `Flowsheet`, or the underlying simulation model contracts.
+
 ## Canonical Examples as Substrate Learning Path
 
 The canonical examples are the best starting points for the underlying simulation substrate:
@@ -62,5 +72,7 @@ This repository now includes the simulation substrate plus the first higher-leve
 
 - Phase-1 sandbox build catalog and tutorial challenges (one sandbox start, build/buy primitives, and guided challenge starts layered on canonical and reference-backed examples).
 - Sandbox session and heuristic economics layer (inventory-backed simulation session, separate economics ledger, and named engineering-economics rulebook APIs).
+- Realtime service and HTTP game API transport seam for client-facing commands/snapshots.
+- Godot phase-1 vertical-slice client that consumes those APIs.
 
 Those layers compose the simulation substrate described here. They do not rewrite it.

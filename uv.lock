@@ -558,12 +558,14 @@ source = { editable = "." }
 dependencies = [
     { name = "astropy" },
     { name = "chemicals" },
+    { name = "fastapi" },
     { name = "matplotlib" },
     { name = "nicegui" },
     { name = "pydantic" },
     { name = "scipy" },
     { name = "thermo" },
     { name = "tqdm" },
+    { name = "uvicorn" },
 ]
 
 [package.dev-dependencies]
@@ -577,12 +579,14 @@ dev = [
 requires-dist = [
     { name = "astropy" },
     { name = "chemicals", specifier = ">=1.2.0" },
+    { name = "fastapi" },
     { name = "matplotlib" },
     { name = "nicegui" },
     { name = "pydantic" },
     { name = "scipy" },
     { name = "thermo", specifier = ">=0.3.0" },
     { name = "tqdm" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata.requires-dev]
