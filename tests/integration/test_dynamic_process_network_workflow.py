@@ -3,6 +3,7 @@ from __future__ import annotations
 # pyright: reportMissingTypeStubs=false
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 from typing import cast
 
@@ -35,6 +36,10 @@ from modular_simulation.connection.runtime.runtime import (
     ConnectionRuntimeOrchestrator,
     ConnectionRuntimeStepResult,
 )
+from modular_simulation.connection.runtime.connected_plant_orchestrator import (
+    ConnectedPlantOrchestrator,
+)
+from modular_simulation.connection.runtime.connection_layer import TransportAndMixingUpdate
 from modular_simulation.connection.runtime.runtime_persistence import (
     restore_runtime_snapshot_contract,
     runtime_replay_state_hash,
@@ -42,6 +47,7 @@ from modular_simulation.connection.runtime.runtime_persistence import (
 )
 from modular_simulation.framework.system import System
 from modular_simulation.measurables.process_model import ProcessModel
+from modular_simulation.connection.topology.subsystem_descriptor import SubsystemRuntimeDescriptor
 
 
 def _valve_system() -> HydraulicSystemDefinition:
@@ -396,3 +402,231 @@ def test_dynamic_process_network_workflow_valve_actuation_end_to_end(
     )
     assert replay_second_continue_result.barrier_reconfiguration.applied_request_ids == ("rq_0016",)
     assert network.list_heat_actuator_rates() == (("purge_line", 7.5),)
+
+
+# ---------------------------------------------------------------------------
+# Observability snapshot integration tests (task 1.3 red boundary)
+# ---------------------------------------------------------------------------
+
+
+def test_observability_snapshot_exposes_substrate_state_after_workflow_step(
+    thermal_process_model: ProcessModel,
+) -> None:
+    """The substrate observability snapshot is readable after a live workflow step and
+    exposes the first-slice contract shape including runtime state, queue state, and
+    an observables section ready for published measurements and plant-calculation outputs."""
+    system = _build_system(thermal_process_model)
+    runtime = _runtime_with_dispatchers(system)
+    network = _network(runtime)
+
+    # Queue one reconfiguration so the queue is non-empty
+    request_id = network.queue_reconfiguration(
+        {"operation": "add_boundary_sink", "boundary_id": "extra_sink"}
+    )
+
+    snapshot = network.get_observability_snapshot()
+
+    from collections.abc import Mapping as MappingABC
+
+    assert isinstance(snapshot, MappingABC)
+    # Schema section
+    assert isinstance(snapshot["schema"], str)
+    assert snapshot["schema"]
+    # Graph revision section
+    assert snapshot["graph_revision"] == "graph_rev_0001"
+    # Runtime section
+    runtime_section = snapshot["runtime"]
+    assert isinstance(runtime_section["simulation_time_s"], float)
+    assert isinstance(runtime_section["macro_step_index"], int)
+    assert isinstance(runtime_section["macro_step_active"], bool)
+    # Queue section
+    queue_section = snapshot["queue"]
+    assert request_id in queue_section["queued_request_ids"]
+    assert queue_section["queued_request_count"] == 1
+    # Observables section shape
+    observables = snapshot["observables"]
+    assert "published_measurements" in observables
+    assert "plant_calculation_outputs" in observables
+
+
+def test_observability_snapshot_queue_state_updates_after_step(
+    thermal_process_model: ProcessModel,
+) -> None:
+    """After a step that applies queued requests, the observability snapshot reflects
+    the updated queue state (committed keys, cleared queued_request_ids)."""
+    system = _build_system(thermal_process_model)
+    runtime = _runtime_with_dispatchers(system)
+    network = _network(runtime)
+
+    # Queue a reconfiguration and apply it via a step
+    request_id = network.queue_reconfiguration(
+        {"operation": "add_boundary_sink", "boundary_id": "extra_sink"}
+    )
+    snapshot_before = network.get_observability_snapshot()
+    assert request_id in snapshot_before["queue"]["queued_request_ids"]
+
+    # Apply the step — this should clear the queue
+    step_result = cast(ConnectionRuntimeStepResult, network.step(macro_step_time_s=0.25))
+    assert request_id in step_result.barrier_reconfiguration.applied_request_ids
+
+    snapshot_after = network.get_observability_snapshot()
+    # After the step the queue should be empty
+    assert snapshot_after["queue"]["queued_request_count"] == 0
+    assert request_id not in snapshot_after["queue"]["queued_request_ids"]
+
+
+def test_observability_snapshot_graph_revision_updates_after_reconfiguration(
+    thermal_process_model: ProcessModel,
+) -> None:
+    """After a topology reconfiguration step, the observability snapshot reflects the
+    new graph_revision returned by the barrier."""
+    system = _build_system(thermal_process_model)
+    runtime = _runtime_with_dispatchers(system)
+    network = _network(runtime)
+
+    initial_snapshot = network.get_observability_snapshot()
+    assert initial_snapshot["graph_revision"] == "graph_rev_0001"
+
+    _ = network.queue_reconfiguration(
+        {"operation": "add_boundary_sink", "boundary_id": "extra_sink2"}
+    )
+    _ = network.step(macro_step_time_s=0.25)
+
+    updated_snapshot = network.get_observability_snapshot()
+    # Graph revision must advance after barrier applies topology mutation
+    assert updated_snapshot["graph_revision"] != "graph_rev_0001"
+
+
+def test_observability_snapshot_runtime_time_advances_after_step(
+    thermal_process_model: ProcessModel,
+) -> None:
+    """After one or more simulation steps, runtime.simulation_time_s advances in the
+    observability snapshot."""
+    system = _build_system(thermal_process_model)
+    runtime = _runtime_with_dispatchers(system)
+    network = _network(runtime)
+
+    snapshot_before = network.get_observability_snapshot()
+    time_before = snapshot_before["runtime"]["simulation_time_s"]
+
+    _ = network.step(macro_step_time_s=0.5)
+
+    snapshot_after = network.get_observability_snapshot()
+    time_after = snapshot_after["runtime"]["simulation_time_s"]
+
+    assert time_after > time_before
+
+
+def test_observability_snapshot_distinct_from_save_runtime_snapshot_payload(
+    thermal_process_model: ProcessModel,
+) -> None:
+    """The observability snapshot is a distinct read model from save_runtime_snapshot().
+    The persistence payload must not be the same object and must not appear as
+    the observability snapshot directly (no replay/checksum fields)."""
+    from modular_simulation.connection.runtime.runtime_persistence import (
+        save_runtime_snapshot_contract,
+    )
+
+    system = _build_system(thermal_process_model)
+    runtime = _runtime_with_dispatchers(system)
+    network = _network(runtime)
+
+    process_runtime_state: dict[str, object] = {
+        "reactor": {
+            "temperature": _require_float_attribute(thermal_process_model, "temperature"),
+        }
+    }
+    checkpoint = save_runtime_snapshot_contract(
+        runtime=runtime,
+        network=network,
+        process_runtime_state=process_runtime_state,
+    )
+    observability = network.get_observability_snapshot()
+
+    # Observability snapshot has its consumer-facing contract sections
+    assert "schema" in observability
+    assert "runtime" in observability
+    assert "queue" in observability
+    assert "observables" in observability
+
+    # Persistence-specific replay fields must NOT appear in the observability snapshot
+    assert "pending_command_journal" not in observability
+    # The two are separate objects
+    assert observability is not checkpoint
+
+
+@dataclass
+class _SnapshotSubsystem:
+    descriptor: SubsystemRuntimeDescriptor
+
+    def run_sensor_phase(self) -> None:
+        return
+
+    def run_calculation_phase(self) -> None:
+        return
+
+    def run_controller_phase(self) -> None:
+        return
+
+    def run_process_phase(self, duration: float) -> None:
+        del duration
+
+    def snapshot_published_measurements(self) -> dict[str, float]:
+        return {"temperature": 311.5}
+
+
+def test_observability_snapshot_exposes_connected_plant_observables() -> None:
+    runtime = ConnectionRuntimeOrchestrator(
+        hydraulic_solve_step=(
+            lambda *, network, macro_step_time_s: network.compiled.hydraulic.solve()  # type: ignore[union-attr]
+        ),
+        transport_and_mixing_step=(
+            lambda *, network, hydraulic_result, macro_step_time_s: TransportAndMixingUpdate(
+                transport_results={}
+            )
+        ),
+        boundary_propagation_step=(
+            lambda *, network, hydraulic_result, transport_and_mixing_update, macro_step_time_s: {}
+        ),
+    )
+    network = _network(runtime)
+    subsystem = _SnapshotSubsystem(
+        descriptor=SubsystemRuntimeDescriptor(
+            descriptor_id="reactor_subsystem",
+            process_id="reactor",
+            inlet_ports=("feed",),
+            outlet_ports=("product",),
+            publication_map={"temperature": 300.0},
+        )
+    )
+    orchestrator = ConnectedPlantOrchestrator(
+        subsystems=(subsystem,),
+        network=network,
+        runtime_orchestrator=runtime,
+    )
+    orchestrator.add_calculation(
+        calculation_id="fahrenheit_projection",
+        input_tags=("reactor_subsystem/temperature",),
+        output_tags=("plant/temperature_f",),
+        evaluate=lambda inputs: {
+            "plant/temperature_f": (inputs["reactor_subsystem/temperature"] * 9.0 / 5.0) + 32.0
+        },
+    )
+
+    _ = orchestrator.step(macro_step_time_s=0.25)
+
+    snapshot = network.get_observability_snapshot()
+    observables = snapshot["observables"]
+    assert observables["published_measurements"] == {"reactor_subsystem/temperature": 311.5}
+    assert observables["plant_calculation_outputs"] == {"plant/temperature_f": 592.7}
+
+    # Returned maps must be copy-safe and not mutate owner state.
+    observables["published_measurements"]["reactor_subsystem/temperature"] = -1.0
+    observables["plant_calculation_outputs"]["plant/temperature_f"] = -1.0
+    fresh_snapshot = network.get_observability_snapshot()
+    assert fresh_snapshot["observables"]["published_measurements"] == {
+        "reactor_subsystem/temperature": 311.5
+    }
+    assert fresh_snapshot["observables"]["plant_calculation_outputs"] == {
+        "plant/temperature_f": 592.7
+    }

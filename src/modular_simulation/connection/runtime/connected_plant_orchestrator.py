@@ -90,6 +90,7 @@ class ConnectedPlantOrchestrator:
             else self._runtime_orchestrator.runtime_context
         )
         self._runtime_orchestrator.set_runtime_context(self._runtime_context)
+        self._runtime_orchestrator.set_observability_provider(self)
         self._phase_hooks: ConnectedPlantPhaseHooks = (
             phase_hooks if phase_hooks is not None else ConnectedPlantPhaseHooks()
         )
@@ -113,6 +114,12 @@ class ConnectedPlantOrchestrator:
     @property
     def plant_calculation_outputs(self) -> Mapping[str, float]:
         return dict(self._plant_calculation_outputs)
+
+    def get_observability_observables(self) -> Mapping[str, Mapping[str, float]]:
+        return {
+            "published_measurements": self._snapshot_published_measurement_map(),
+            "plant_calculation_outputs": dict(self._plant_calculation_outputs),
+        }
 
     @property
     def runtime_context(self) -> SimulationRuntimeContext | None:
@@ -510,6 +517,12 @@ class ConnectedPlantOrchestrator:
                 f"plant calculation '{calculation.calculation_id}' returned an invalid output map; "
                 + "; ".join(details)
             )
+        for output_tag in calculation.output_tags:
+            output_value = calculated_outputs[output_tag]
+            if not isinstance(output_value, Real):
+                raise ValueError(
+                    f"plant calculation '{calculation.calculation_id}' output '{output_tag}' must be numeric"
+                )
 
     def _normalize_tag_sequence(self, tags: Sequence[str], *, field_name: str) -> tuple[str, ...]:
         normalized_tags = tuple(tag.strip() for tag in tags)

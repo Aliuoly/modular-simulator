@@ -858,6 +858,16 @@ class PlantBackendSession:
         """
         self._network.resume_from_snapshot(snapshot=checkpoint)
 
+    def get_observability_snapshot(self) -> Mapping[str, object]:
+        """Return the substrate observability snapshot for this session.
+
+        Forwards the snapshot assembled by the underlying
+        :class:`~modular_simulation.connection.topology.network.ConnectionNetwork`.
+        This is a policy-free read model; it does not add any pricing,
+        scoring, or ledger fields.
+        """
+        return self._network.get_observability_snapshot()
+
     # -- compile ------------------------------------------------------------
 
     def compile(self) -> CompiledConnectionNetwork:

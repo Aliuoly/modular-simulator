@@ -123,6 +123,29 @@ class _FakeNetwork:
     def resume_from_snapshot(self, *, snapshot: object) -> None:
         self._snapshot = snapshot  # type: ignore[assignment]
 
+    def get_observability_snapshot(self) -> Mapping[str, object]:
+        compiled = self._compiled
+        graph_revision = compiled.graph_revision if compiled is not None else None
+        queued_ids = tuple(f"rq_{i + 1:04d}" for i in range(len(self.queued)))
+        return {
+            "schema": "observability/v1",
+            "graph_revision": graph_revision,
+            "runtime": {
+                "simulation_time_s": 0.0,
+                "macro_step_index": 0,
+                "macro_step_active": False,
+            },
+            "queue": {
+                "queued_request_ids": queued_ids,
+                "queued_request_count": len(queued_ids),
+                "committed_idempotency_keys": (),
+            },
+            "observables": {
+                "published_measurements": {},
+                "plant_calculation_outputs": {},
+            },
+        }
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -754,3 +777,149 @@ class TestTypedApiAccessors:
 
     def test_controller_api_exposed(self, session: PlantBackendSession) -> None:
         assert session.controller_api is not None
+
+
+# ---------------------------------------------------------------------------
+# PlantBackendSession — observability snapshot forwarding (task 1.2 red tests)
+# ---------------------------------------------------------------------------
+
+
+class TestObservabilitySnapshot:
+    def test_get_observability_snapshot_method_exists(
+        self,
+        session: PlantBackendSession,
+    ) -> None:
+        """PlantBackendSession must expose get_observability_snapshot as a callable."""
+        assert callable(session.get_observability_snapshot)
+
+    def test_get_observability_snapshot_returns_mapping(
+        self,
+        session: PlantBackendSession,
+    ) -> None:
+        """get_observability_snapshot returns a Mapping."""
+        from collections.abc import Mapping as MappingABC
+
+        snapshot = session.get_observability_snapshot()
+        assert isinstance(snapshot, MappingABC)
+
+    def test_get_observability_snapshot_top_level_keys_are_frozen(
+        self,
+        session: PlantBackendSession,
+    ) -> None:
+        """Snapshot must contain exactly the first-slice top-level keys."""
+        snapshot = session.get_observability_snapshot()
+
+        assert set(snapshot.keys()) == {
+            "schema",
+            "graph_revision",
+            "runtime",
+            "queue",
+            "observables",
+        }
+
+    def test_get_observability_snapshot_forwards_from_network(
+        self,
+        session: PlantBackendSession,
+        fake_network: _FakeNetwork,
+    ) -> None:
+        """PlantBackendSession.get_observability_snapshot() forwards the substrate
+        snapshot without adding or removing fields — it must NOT own policy."""
+        # Call through the session facade
+        session_snapshot = session.get_observability_snapshot()
+        # Call the network directly to get the ground-truth
+        network_snapshot = fake_network.get_observability_snapshot()
+
+        # The session must forward the same snapshot shape
+        assert session_snapshot["schema"] == network_snapshot["schema"]
+        assert session_snapshot["graph_revision"] == network_snapshot["graph_revision"]
+        assert "runtime" in session_snapshot
+        assert "queue" in session_snapshot
+        assert "observables" in session_snapshot
+
+    def test_get_observability_snapshot_schema_is_non_empty_string(
+        self,
+        session: PlantBackendSession,
+    ) -> None:
+        """schema field is a non-empty string contract marker."""
+        snapshot = session.get_observability_snapshot()
+
+        assert isinstance(snapshot["schema"], str)
+        assert snapshot["schema"]
+
+    def test_get_observability_snapshot_runtime_section_shape(
+        self,
+        session: PlantBackendSession,
+    ) -> None:
+        """runtime section has simulation_time_s, macro_step_index, macro_step_active."""
+        from collections.abc import Mapping as MappingABC
+
+        snapshot = session.get_observability_snapshot()
+        runtime = snapshot["runtime"]
+
+        assert isinstance(runtime, MappingABC)
+        assert "simulation_time_s" in runtime
+        assert "macro_step_index" in runtime
+        assert "macro_step_active" in runtime
+
+    def test_get_observability_snapshot_queue_section_shape(
+        self,
+        session: PlantBackendSession,
+    ) -> None:
+        """queue section has queued_request_ids, queued_request_count,
+        committed_idempotency_keys."""
+        from collections.abc import Mapping as MappingABC
+
+        snapshot = session.get_observability_snapshot()
+        queue = snapshot["queue"]
+
+        assert isinstance(queue, MappingABC)
+        assert "queued_request_ids" in queue
+        assert "queued_request_count" in queue
+        assert "committed_idempotency_keys" in queue
+
+    def test_get_observability_snapshot_observables_section_shape(
+        self,
+        session: PlantBackendSession,
+    ) -> None:
+        """observables section has published_measurements and plant_calculation_outputs."""
+        from collections.abc import Mapping as MappingABC
+
+        snapshot = session.get_observability_snapshot()
+        observables = snapshot["observables"]
+
+        assert isinstance(observables, MappingABC)
+        assert "published_measurements" in observables
+        assert "plant_calculation_outputs" in observables
+
+    def test_get_observability_snapshot_distinct_from_save_checkpoint(
+        self,
+        session: PlantBackendSession,
+    ) -> None:
+        """Observability snapshot is a distinct read model — not the persistence checkpoint.
+        The checkpoint payload must not appear as the observability snapshot fields."""
+        observability = session.get_observability_snapshot()
+        checkpoint = session.save_checkpoint()
+
+        # Observability snapshot has its own distinct structure
+        assert "schema" in observability
+        assert "runtime" in observability
+        assert "queue" in observability
+        assert "observables" in observability
+
+        # Checkpoint does not drive the observability contract
+        assert "pending_command_journal" not in observability
+        # Checkpoint and observability are separate read models
+        assert observability is not checkpoint
+
+    def test_get_observability_snapshot_does_not_contain_policy_fields(
+        self,
+        session: PlantBackendSession,
+    ) -> None:
+        """First-slice snapshot must not include pricing, scoring, ledger, or tutorial fields."""
+        snapshot = session.get_observability_snapshot()
+
+        forbidden_keys = {"price", "score", "ledger", "tutorial", "economics", "cash", "inventory"}
+        assert not (set(snapshot.keys()) & forbidden_keys), (
+            f"Policy fields found in session observability snapshot: "
+            f"{set(snapshot.keys()) & forbidden_keys}"
+        )

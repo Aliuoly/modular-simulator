@@ -505,3 +505,45 @@ def test_connected_plant_publication_adapter_and_collision_policy_is_fail_fast()
                 / 2.0
             },
         )
+
+
+def test_connected_plant_calculation_outputs_must_be_numeric() -> None:
+    runtime = ConnectionRuntimeOrchestrator(
+        hydraulic_solve_step=lambda *, network, macro_step_time_s: _hydraulic_result(),
+        transport_and_mixing_step=(
+            lambda *, network, hydraulic_result, macro_step_time_s: TransportAndMixingUpdate(
+                transport_results={}
+            )
+        ),
+        boundary_propagation_step=(
+            lambda *, network, hydraulic_result, transport_and_mixing_update, macro_step_time_s: {}
+        ),
+    )
+    network = _network(runtime, process_ids=("reactor",))
+
+    subsystem = _subsystem_with_publication_map(
+        descriptor_id="subsystem_runtime",
+        process_id="reactor",
+        calls=[],
+        publication_map={"subsystem_runtime/temperature": 300.0},
+    )
+
+    orchestrator = ConnectedPlantOrchestrator(
+        subsystems=(subsystem,),
+        network=network,
+        runtime_orchestrator=runtime,
+    )
+
+    orchestrator.add_calculation(
+        calculation_id="non_numeric_output",
+        input_tags=("subsystem_runtime/temperature",),
+        output_tags=("plant/not_numeric",),
+        evaluate=lambda inputs: {"plant/not_numeric": "bad-output"},
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        _ = orchestrator.step(macro_step_time_s=1.0)
+
+    assert str(excinfo.value) == (
+        "plant calculation 'non_numeric_output' output 'plant/not_numeric' must be numeric"
+    )

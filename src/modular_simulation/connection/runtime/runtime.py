@@ -244,6 +244,10 @@ class RuntimeHeatActuatorCommandProvider(Protocol):
     def __call__(self) -> Mapping[str, float]: ...
 
 
+class RuntimeObservabilityProvider(Protocol):
+    def get_observability_observables(self) -> Mapping[str, Mapping[str, float]]: ...
+
+
 class _DestructiveEditPlanLike(Protocol):
     edge_ids_to_detach: tuple[str, ...]
 
@@ -365,6 +369,7 @@ class ConnectionRuntimeOrchestrator:
         )
         processor_factory = cast(Any, getattr(processor_module, "ReconfigurationBarrierProcessor"))
         self._reconfiguration_barrier_processor: Any = processor_factory(runtime_owner=self)
+        self._observability_provider: RuntimeObservabilityProvider | None = None
 
     @property
     def simulation_time_s(self) -> float:
@@ -756,6 +761,41 @@ class ConnectionRuntimeOrchestrator:
                 graph_revision=current_graph_revision,
             ),
         )
+
+    def get_observability_state(self) -> Mapping[str, object]:
+        """Return a serialisable copy of the runtime observability state.
+
+        Returns a frozen view of simulation time, macro-step index,
+        macro-step active flag, and committed idempotency keys — no
+        mutable runtime structures, no persistence-specific fields.
+        """
+        return {
+            "simulation_time_s": self._simulation_time_s,
+            "macro_step_index": self._macro_step_index,
+            "macro_step_active": self._macro_step_active,
+            "committed_idempotency_keys": tuple(sorted(self._committed_idempotency_keys)),
+        }
+
+    def set_observability_provider(
+        self,
+        provider: RuntimeObservabilityProvider | None,
+    ) -> None:
+        self._observability_provider = provider
+
+    def get_observability_observables(self) -> Mapping[str, Mapping[str, float]]:
+        if self._observability_provider is None:
+            return {
+                "published_measurements": {},
+                "plant_calculation_outputs": {},
+            }
+
+        observables = self._observability_provider.get_observability_observables()
+        published_measurements = dict(observables.get("published_measurements", {}))
+        plant_calculation_outputs = dict(observables.get("plant_calculation_outputs", {}))
+        return {
+            "published_measurements": published_measurements,
+            "plant_calculation_outputs": plant_calculation_outputs,
+        }
 
     def save_runtime_snapshot(self, *, network: ConnectionNetwork) -> Mapping[str, object]:
         if self._macro_step_active:

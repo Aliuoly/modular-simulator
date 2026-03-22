@@ -155,6 +155,205 @@ def test_connect_duplicate_edge_has_actionable_error() -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Observability snapshot contract tests (task 1.1 — red boundary)
+# ---------------------------------------------------------------------------
+
+
+def test_observability_snapshot_method_exists_on_connection_network() -> None:
+    """ConnectionNetwork must expose get_observability_snapshot as a callable."""
+    network = ConnectionNetwork()
+    assert callable(network.get_observability_snapshot)
+
+
+def test_observability_snapshot_returns_mapping_without_runtime() -> None:
+    """get_observability_snapshot returns a Mapping even without a runtime orchestrator."""
+    network = ConnectionNetwork()
+
+    snapshot = network.get_observability_snapshot()
+
+    from collections.abc import Mapping as MappingABC
+
+    assert isinstance(snapshot, MappingABC)
+
+
+def test_observability_snapshot_top_level_keys_are_frozen() -> None:
+    """Snapshot contains exactly the first-slice top-level keys: schema, graph_revision,
+    runtime, queue, observables."""
+    network = ConnectionNetwork()
+
+    snapshot = network.get_observability_snapshot()
+
+    assert set(snapshot.keys()) == {
+        "schema",
+        "graph_revision",
+        "runtime",
+        "queue",
+        "observables",
+    }
+
+
+def test_observability_snapshot_schema_is_non_empty_string() -> None:
+    """snapshot['schema'] is a non-empty string contract marker."""
+    network = ConnectionNetwork()
+
+    snapshot = network.get_observability_snapshot()
+
+    assert isinstance(snapshot["schema"], str)
+    assert snapshot["schema"]
+
+
+def test_observability_snapshot_graph_revision_is_none_before_compile() -> None:
+    """graph_revision is None when the network has not been compiled."""
+    network = ConnectionNetwork()
+
+    snapshot = network.get_observability_snapshot()
+
+    assert snapshot["graph_revision"] is None
+
+
+def test_observability_snapshot_graph_revision_reflects_compiled_state() -> None:
+    """graph_revision matches the compiled network's graph_revision after compile."""
+    network = _network()
+    network.compile()
+
+    snapshot = network.get_observability_snapshot()
+
+    assert snapshot["graph_revision"] == "graph_rev_0001"
+
+
+def test_observability_snapshot_runtime_section_shape() -> None:
+    """runtime section contains simulation_time_s (float), macro_step_index (int),
+    macro_step_active (bool)."""
+    network = ConnectionNetwork()
+
+    snapshot = network.get_observability_snapshot()
+    runtime = snapshot["runtime"]
+
+    from collections.abc import Mapping as MappingABC
+
+    assert isinstance(runtime, MappingABC)
+    assert "simulation_time_s" in runtime
+    assert "macro_step_index" in runtime
+    assert "macro_step_active" in runtime
+    assert isinstance(runtime["simulation_time_s"], float)
+    assert isinstance(runtime["macro_step_index"], int)
+    assert isinstance(runtime["macro_step_active"], bool)
+
+
+def test_observability_snapshot_queue_section_shape() -> None:
+    """queue section contains queued_request_ids, queued_request_count (int),
+    and committed_idempotency_keys."""
+    network = ConnectionNetwork()
+
+    snapshot = network.get_observability_snapshot()
+    queue = snapshot["queue"]
+
+    from collections.abc import Mapping as MappingABC
+
+    assert isinstance(queue, MappingABC)
+    assert "queued_request_ids" in queue
+    assert "queued_request_count" in queue
+    assert "committed_idempotency_keys" in queue
+    assert isinstance(queue["queued_request_count"], int)
+
+
+def test_observability_snapshot_queue_count_matches_queued_ids_length() -> None:
+    """queued_request_count equals len(queued_request_ids) at all times."""
+    network = ConnectionNetwork()
+    _ = network.queue_reconfiguration({"operation": "add_boundary_source"})
+    _ = network.queue_reconfiguration({"operation": "add_boundary_sink"})
+
+    snapshot = network.get_observability_snapshot()
+    queue = snapshot["queue"]
+
+    assert queue["queued_request_count"] == len(queue["queued_request_ids"])
+    assert queue["queued_request_count"] == 2
+
+
+def test_observability_snapshot_observables_section_shape() -> None:
+    """observables section contains published_measurements and plant_calculation_outputs
+    as numeric mappings."""
+    network = ConnectionNetwork()
+
+    snapshot = network.get_observability_snapshot()
+    observables = snapshot["observables"]
+
+    from collections.abc import Mapping as MappingABC
+
+    assert isinstance(observables, MappingABC)
+    assert "published_measurements" in observables
+    assert "plant_calculation_outputs" in observables
+    assert isinstance(observables["published_measurements"], MappingABC)
+    assert isinstance(observables["plant_calculation_outputs"], MappingABC)
+
+
+def test_observability_snapshot_is_distinct_from_save_runtime_snapshot() -> None:
+    """get_observability_snapshot() result is a distinct read model from
+    save_runtime_snapshot() — does NOT expose persistence/checksum fields."""
+    from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
+
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network()
+    # Attach runtime so save_runtime_snapshot works
+    network2 = ConnectionNetwork(
+        compile_lifecycle=HydraulicCompileLifecycle(),
+        hydraulic_system_builder=lambda topology: _valid_system(),
+        runtime_orchestrator=runtime,
+    )
+    network2.add_process("reactor", inlet_ports=("feed",), outlet_ports=("product",))
+    network2.add_boundary_source("feed_boundary")
+    network2.add_boundary_sink("product_boundary")
+    _ = network2.connect("feed_boundary", "reactor.feed")
+    _ = network2.connect("reactor.product", "product_boundary")
+    _ = network2.compile()
+
+    observability_snapshot = network2.get_observability_snapshot()
+
+    # The observability snapshot must expose the first-slice sections
+    assert "schema" in observability_snapshot
+    assert "runtime" in observability_snapshot
+    assert "queue" in observability_snapshot
+    assert "observables" in observability_snapshot
+
+    # The observability snapshot is not a persistence payload —
+    # it does not expose replay-specific fields like 'pending_command_journal'
+    assert "pending_command_journal" not in observability_snapshot
+    assert "committed_idempotency_payloads" not in observability_snapshot
+
+
+def test_observability_snapshot_does_not_leak_mutable_runtime_structures() -> None:
+    """Mutating returned sequences/mappings does not affect the network state."""
+    network = ConnectionNetwork()
+    _ = network.queue_reconfiguration({"operation": "add_boundary_source"})
+
+    snapshot = network.get_observability_snapshot()
+    queue = snapshot["queue"]
+
+    # queued_request_ids should be a safe copy (tuple or list), not a direct
+    # reference to internal state.  Verify re-reading produces the same data.
+    ids_first_read = queue["queued_request_ids"]
+    snapshot2 = network.get_observability_snapshot()
+    ids_second_read = snapshot2["queue"]["queued_request_ids"]
+
+    assert tuple(ids_first_read) == tuple(ids_second_read)
+    # Ensure the ids are actually present
+    assert len(ids_first_read) == 1
+
+
+def test_observability_snapshot_does_not_contain_policy_fields() -> None:
+    """First-slice snapshot contains only substrate-owned sections — no pricing,
+    scoring, tutorial, or ledger fields."""
+    network = ConnectionNetwork()
+
+    snapshot = network.get_observability_snapshot()
+
+    forbidden_keys = {"price", "score", "ledger", "tutorial", "economics", "cash", "inventory"}
+    assert not (set(snapshot.keys()) & forbidden_keys), (
+        f"Policy fields found in substrate snapshot: {set(snapshot.keys()) & forbidden_keys}"
+    )
+
+
 def test_queue_reconfiguration_and_runtime_placeholders_are_deterministic() -> None:
     network = ConnectionNetwork()
 

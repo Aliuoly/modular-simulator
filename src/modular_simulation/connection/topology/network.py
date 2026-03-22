@@ -157,6 +157,10 @@ class _RuntimeOrchestrator(Protocol):
         self, *, network: "ConnectionNetwork", snapshot: Mapping[str, object]
     ) -> None: ...
 
+    def get_observability_state(self) -> Mapping[str, object]: ...
+
+    def get_observability_observables(self) -> Mapping[str, Mapping[str, float]]: ...
+
 
 class ConnectionNetwork:
     """Topology and compile owner for connected process networks."""
@@ -774,6 +778,71 @@ class ConnectionNetwork:
             )
         )
         return request_id
+
+    def get_observability_snapshot(self) -> Mapping[str, object]:
+        """Return a serialisable observability snapshot for this network.
+
+        Assembles the first-slice read model from owner surfaces:
+        - ``schema``: contract version string
+        - ``graph_revision``: current compiled revision or ``None``
+        - ``runtime``: simulation time, step index, active flag
+        - ``queue``: queued request IDs and committed idempotency keys
+        - ``observables``: published measurements and plant-calculation outputs
+
+        This is a distinct read model from :meth:`save_runtime_snapshot`.
+        It does not expose persistence-specific replay fields.
+        """
+        compiled = self._compiled
+        graph_revision: str | None = None if compiled is None else str(compiled.graph_revision)
+
+        queued = tuple(self._queued_reconfigurations)
+        queued_request_ids = tuple(item.request_id for item in queued)
+
+        published_measurements: dict[str, float] = {}
+        plant_calculation_outputs: dict[str, float] = {}
+
+        if self._runtime_orchestrator is not None:
+            runtime_state = self._runtime_orchestrator.get_observability_state()
+            simulation_time_s = float(cast(float, runtime_state["simulation_time_s"]))
+            macro_step_index = int(cast(int, runtime_state["macro_step_index"]))
+            macro_step_active = bool(cast(bool, runtime_state["macro_step_active"]))
+            committed_idempotency_keys = tuple(
+                cast(Sequence[str], runtime_state["committed_idempotency_keys"])
+            )
+
+            observables_provider = getattr(
+                self._runtime_orchestrator,
+                "get_observability_observables",
+                None,
+            )
+            if callable(observables_provider):
+                observables = observables_provider()
+                published_measurements = dict(observables.get("published_measurements", {}))
+                plant_calculation_outputs = dict(observables.get("plant_calculation_outputs", {}))
+        else:
+            simulation_time_s = 0.0
+            macro_step_index = 0
+            macro_step_active = False
+            committed_idempotency_keys = ()
+
+        return {
+            "schema": "observability/v1",
+            "graph_revision": graph_revision,
+            "runtime": {
+                "simulation_time_s": simulation_time_s,
+                "macro_step_index": macro_step_index,
+                "macro_step_active": macro_step_active,
+            },
+            "queue": {
+                "queued_request_ids": queued_request_ids,
+                "queued_request_count": len(queued_request_ids),
+                "committed_idempotency_keys": committed_idempotency_keys,
+            },
+            "observables": {
+                "published_measurements": published_measurements,
+                "plant_calculation_outputs": plant_calculation_outputs,
+            },
+        }
 
     def save_runtime_snapshot(self) -> Mapping[str, object]:
         if self._runtime_orchestrator is None:
