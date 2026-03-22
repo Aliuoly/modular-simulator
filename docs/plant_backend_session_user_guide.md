@@ -4,6 +4,8 @@
 
 User-facing educational gameplay or classroom orchestration tools should treat `PlantBackendSession` as the physical/runtime substrate: it manages topology, sensors, controllers, and simulation stepping. Progression, economics, and scenario state are responsibilities of the gameplay layer above.
 
+In this repository, that higher-level split now exists in `src/modular_simulation/gameplay/` as a separate sandbox simulation session and economics ledger layer. For a minimal end-to-end example of that split, see `examples/dynamic_api_cli/sandbox_backend_minimal.py`.
+
 This guide explains how to use `PlantBackendSession` as a user-facing backend for interactive plant editing (for example, a game-like UI where users add processes, ports, lines, sensors, and controllers at runtime).
 
 The focus is practical usage:

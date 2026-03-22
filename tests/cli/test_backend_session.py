@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 from types import SimpleNamespace
-from typing import Any, Mapping
+from typing import Any, Mapping, cast
 
 import pytest
 
@@ -291,6 +291,36 @@ class TestTxMutations:
         tx.remove_sensor(sensor_id="T1")
         assert tx.pending_count == 1
 
+    def test_add_junction_queues_mutation(self, session: PlantBackendSession) -> None:
+        tx = session.begin_tx()
+        cast(Any, tx).add_junction(
+            junction_id="mix_j1",
+            inlet_ports=["feed_a", "feed_b"],
+            outlet_ports=["out"],
+        )
+        assert tx.pending_count == 1
+
+    def test_attach_line_pump_queues_mutation(self, session: PlantBackendSession) -> None:
+        tx = session.begin_tx()
+        cast(Any, tx).attach_line_pump(
+            "line_1",
+            pump_id="recycle_pump",
+            initial_pump_speed=80000.0,
+        )
+        assert tx.pending_count == 1
+
+    def test_attach_line_heat_actuator_queues_mutation(
+        self,
+        session: PlantBackendSession,
+    ) -> None:
+        tx = session.begin_tx()
+        cast(Any, tx).attach_line_heat_actuator(
+            "line_2",
+            heat_actuator_id="heater_overlay_1",
+            initial_heat_rate=0.0,
+        )
+        assert tx.pending_count == 1
+
     def test_create_controller(self, session: PlantBackendSession) -> None:
         tx = session.begin_tx()
         tx.create_controller(
@@ -406,6 +436,40 @@ class TestTxCommit:
         with pytest.raises(RuntimeError, match="already rolled back"):
             tx.commit()
 
+    def test_junction_line_pump_heat_actuator_helpers_apply_through_commit(
+        self,
+        session: PlantBackendSession,
+        fake_network: _FakeNetwork,
+    ) -> None:
+        tx = session.begin_tx()
+        cast(Any, tx).add_junction(
+            junction_id="mix_j2",
+            inlet_ports=["feed_a", "feed_b"],
+            outlet_ports=["out"],
+        )
+        cast(Any, tx).attach_line_pump(
+            "line_10",
+            pump_id="pump_10",
+            initial_pump_speed=90000.0,
+        )
+        cast(Any, tx).attach_line_heat_actuator(
+            "line_11",
+            heat_actuator_id="heat_10",
+            initial_heat_rate=0.0,
+        )
+
+        result = tx.commit()
+
+        assert result.success
+        assert len(fake_network.queued) == 1
+        envelope = cast(dict[str, object], fake_network.queued[0])
+        mutations = cast(tuple[dict[str, object], ...], envelope["mutations"])
+        assert tuple(m["operation"] for m in mutations) == (
+            "add_junction",
+            "attach_line_pump",
+            "attach_line_heat_actuator",
+        )
+
 
 # ---------------------------------------------------------------------------
 # TxHandle — rollback
@@ -455,6 +519,34 @@ class TestTxPreview:
         preview = tx.preview()
         assert preview.valid
         assert len(preview.mutations) == 1
+
+    def test_preview_includes_junction_line_pump_heat_actuator_mutations(
+        self, session: PlantBackendSession
+    ) -> None:
+        tx = session.begin_tx()
+        cast(Any, tx).add_junction(
+            junction_id="split_j1",
+            inlet_ports=["in"],
+            outlet_ports=["product", "recycle"],
+        )
+        cast(Any, tx).attach_line_pump(
+            "line_recycle",
+            pump_id="pump_1",
+            initial_pump_speed=75000.0,
+        )
+        cast(Any, tx).attach_line_heat_actuator(
+            "line_heat",
+            heat_actuator_id="heat_1",
+            initial_heat_rate=0.0,
+        )
+        preview = tx.preview()
+
+        assert preview.valid
+        assert tuple(m["operation"] for m in preview.mutations) == (
+            "add_junction",
+            "attach_line_pump",
+            "attach_line_heat_actuator",
+        )
 
     def test_preview_does_not_consume_mutations(
         self,

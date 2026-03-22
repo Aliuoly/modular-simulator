@@ -13,7 +13,7 @@ def _print_report(title: str, report: dict[str, float]) -> None:
         print(f"- {key}: {value}")
 
 
-def run_example(*, steps: int = 36, dt: float = 0.2, make_plot: bool = True) -> dict[str, float]:
+def build_example_flowsheet(*, dt: float = 0.2) -> Flowsheet:
     flowsheet = Flowsheet(
         context=SimulationRuntimeContext.create(species_names=["methane", "n-heptane"]),
         dt=dt,
@@ -29,6 +29,11 @@ def run_example(*, steps: int = 36, dt: float = 0.2, make_plot: bool = True) -> 
     flowsheet.chain("feed", "heater", "flash")
     flowsheet.connect("flash.vapor_outlet", "vapor_product")
     flowsheet.connect("flash.liquid_outlet", "liquid_product")
+    return flowsheet
+
+
+def run_example(*, steps: int = 36, dt: float = 0.2, make_plot: bool = True) -> dict[str, float]:
+    flowsheet = build_example_flowsheet(dt=dt)
 
     results = flowsheet.run(steps=steps, dt=dt)
     flash = results.get_unit("flash")

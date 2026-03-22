@@ -335,6 +335,68 @@ class TxHandle:
         self._pending.append(m)
         return self
 
+    def add_junction(
+        self,
+        *,
+        junction_id: str,
+        inlet_ports: Sequence[str] = (),
+        outlet_ports: Sequence[str] = (),
+    ) -> TxHandle:
+        """Queue an *add_junction* mutation."""
+        self._require_open()
+        self._pending.append(
+            {
+                "operation": "add_junction",
+                "junction_id": junction_id,
+                "inlet_ports": list(inlet_ports),
+                "outlet_ports": list(outlet_ports),
+            }
+        )
+        return self
+
+    def attach_line_pump(
+        self,
+        line_id: str,
+        *,
+        pump_id: str,
+        initial_pump_speed: float = 0.0,
+        equation_name: str | None = None,
+        pump_parameter_name: str | None = None,
+    ) -> TxHandle:
+        """Queue an *attach_line_pump* mutation."""
+        self._require_open()
+        m: dict[str, object] = {
+            "operation": "attach_line_pump",
+            "line_id": line_id,
+            "pump_id": pump_id,
+            "initial_pump_speed": initial_pump_speed,
+        }
+        if equation_name is not None:
+            m["equation_name"] = equation_name
+        if pump_parameter_name is not None:
+            m["pump_parameter_name"] = pump_parameter_name
+        self._pending.append(m)
+        return self
+
+    def attach_line_heat_actuator(
+        self,
+        line_id: str,
+        *,
+        heat_actuator_id: str,
+        initial_heat_rate: float = 0.0,
+    ) -> TxHandle:
+        """Queue an *attach_line_heat_actuator* mutation."""
+        self._require_open()
+        self._pending.append(
+            {
+                "operation": "attach_line_heat_actuator",
+                "line_id": line_id,
+                "heat_actuator_id": heat_actuator_id,
+                "initial_heat_rate": initial_heat_rate,
+            }
+        )
+        return self
+
     # -- sensor mutations ---------------------------------------------------
 
     def create_sensor(
