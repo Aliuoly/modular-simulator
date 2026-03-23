@@ -3,6 +3,7 @@ from __future__ import annotations
 from importlib import import_module
 from time import sleep, time
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -225,3 +226,101 @@ def test_pause_and_resume_routes_do_not_exist() -> None:
 
     assert pause.status_code == 404
     assert resume.status_code == 404
+
+
+def test_purge_tank_route_does_not_exist() -> None:
+    """Freeze guard: purge-by-tank is internal only in this pack.
+
+    The purge primitive must not be exposed as a public HTTP command in 4fm.
+    This guard will fail if anyone accidentally adds a /commands/purge-tank route.
+    """
+    client = _client()
+
+    create = client.post("/game/sessions", json={"mode_id": "phase1_process_sandbox_v1"})
+    assert create.status_code == 201
+    session_id = create.json()["session_id"]
+
+    purge_tank = client.post(
+        f"/game/sessions/{session_id}/commands/purge-tank",
+        json={"tank_id": "some_tank"},
+    )
+
+    assert purge_tank.status_code == 404
+
+
+def test_buy_feed_and_sell_product_payloads_remain_without_tank_id() -> None:
+    """Freeze guard: buy-feed and sell-product keep their current payload shapes.
+
+    The current routes accept {material_id, quantity_mol} and {product_id, quantity_mol}
+    respectively, with no tank_id field.  This test pins those exact shapes so any attempt
+    to add tank_id to these routes triggers a deliberate review.
+    """
+    client = _client()
+
+    create = client.post("/game/sessions", json={"mode_id": "phase1_process_sandbox_v1"})
+    assert create.status_code == 201
+    session_id = create.json()["session_id"]
+
+    # buy-feed: exact payload shape without tank_id succeeds
+    buy = client.post(
+        f"/game/sessions/{session_id}/commands/buy-feed",
+        json={"material_id": "feed_a", "quantity_mol": 1.0},
+    )
+    assert buy.status_code == 200
+    buy_payload = buy.json()
+    assert set(buy_payload) == {"accepted", "message", "snapshot"}
+
+    _wait_for_product_inventory(client, session_id, minimum_product_a_mol=0.01)
+
+    # sell-product: exact payload shape without tank_id succeeds
+    sell = client.post(
+        f"/game/sessions/{session_id}/commands/sell-product",
+        json={"product_id": "product_a", "quantity_mol": 0.01},
+    )
+    assert sell.status_code == 200
+    sell_payload = sell.json()
+    assert set(sell_payload) == {"accepted", "message", "snapshot"}
+
+
+def test_buy_feed_and_sell_product_routes_do_not_forward_tank_id() -> None:
+    """Freeze guard: tank_id is not part of the current public buy/sell command contract.
+
+    The routes may receive extra JSON keys because they currently accept generic
+    Mapping payloads, but in this pack they must continue forwarding only the
+    frozen arguments to gameplay: session_id + material/product id + quantity_mol.
+    """
+    module = import_module("modular_simulation.app.game_api")
+    buy_calls: list[dict[str, Any]] = []
+    sell_calls: list[dict[str, Any]] = []
+
+    def _fake_buy_feed(**kwargs: Any) -> dict[str, Any]:
+        buy_calls.append(kwargs)
+        return {"accepted": True, "message": "ok", "snapshot": {}}
+
+    def _fake_sell_product(**kwargs: Any) -> dict[str, Any]:
+        sell_calls.append(kwargs)
+        return {"accepted": True, "message": "ok", "snapshot": {}}
+
+    with (
+        patch.object(module, "buy_feed", side_effect=_fake_buy_feed),
+        patch.object(module, "sell_product", side_effect=_fake_sell_product),
+    ):
+        client = TestClient(module.create_app())
+
+        buy = client.post(
+            "/game/sessions/session-test/commands/buy-feed",
+            json={"material_id": "feed_a", "quantity_mol": 1.0, "tank_id": "tank_1"},
+        )
+        sell = client.post(
+            "/game/sessions/session-test/commands/sell-product",
+            json={"product_id": "product_a", "quantity_mol": 0.5, "tank_id": "tank_2"},
+        )
+
+    assert buy.status_code == 200
+    assert sell.status_code == 200
+    assert buy_calls == [
+        {"session_id": "session-test", "material_id": "feed_a", "quantity_mol": 1.0}
+    ]
+    assert sell_calls == [
+        {"session_id": "session-test", "product_id": "product_a", "quantity_mol": 0.5}
+    ]

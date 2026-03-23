@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from importlib import import_module as _import_module
 from math import isfinite
 from time import monotonic as _time_monotonic
 from typing import Mapping
@@ -16,7 +17,7 @@ def _monotonic() -> float:
 
 
 from modular_simulation.gameplay.board_layout import BoardLayoutRuntime
-from modular_simulation.gameplay.contracts import SandboxRequestError
+from modular_simulation.gameplay.contracts import SandboxCatalogItemDefinition, SandboxRequestError
 from modular_simulation.gameplay.sandbox_catalog import build_sandbox_catalog
 from modular_simulation.gameplay.service_contracts import (
     CommandAcceptedResponse,
@@ -36,6 +37,50 @@ SUPPORTED_BUILD_ITEM_IDS: tuple[str, ...] = (
     "place_flash_drum",
     "build_process_line",
 )
+
+
+@dataclass(frozen=True)
+class _UnitMetadata:
+    """Resolved runtime-authoritative metadata for a unit_blueprint catalog item."""
+
+    unit_module: str
+    unit_type: str
+    constructor_payload: dict[str, object]
+    inlet_ports: tuple[str, ...]
+    outlet_ports: tuple[str, ...]
+
+
+def _resolve_unit_metadata(
+    item: SandboxCatalogItemDefinition,
+) -> _UnitMetadata:
+    """Resolve runtime-authoritative unit metadata from a catalog item definition.
+
+    For ``apply_kind="add_process"`` records, this helper extracts
+    ``unit_module``, ``unit_type``, and ``constructor_payload`` from
+    ``item.default_config``, then derives real declared inlet/outlet ports
+    by importing the unit class and reading its ``.ports`` property.
+
+    The helper is module-private; it must not be called for non-unit items.
+    """
+    cfg = item.default_config
+    unit_module = str(cfg["unit_module"])
+    unit_type = str(cfg["unit_type"])
+    raw_payload = cfg.get("constructor_payload", {})
+    constructor_payload: dict[str, object] = dict(raw_payload) if raw_payload else {}
+
+    mod = _import_module(unit_module)
+    unit_cls = getattr(mod, unit_type)
+    instance = unit_cls(**constructor_payload)
+    ports = instance.ports
+
+    return _UnitMetadata(
+        unit_module=unit_module,
+        unit_type=unit_type,
+        constructor_payload=constructor_payload,
+        inlet_ports=tuple(ports.inlets),
+        outlet_ports=tuple(ports.outlets),
+    )
+
 
 SUPPORTED_SIMULATION_DT_S_PRESETS: tuple[float, ...] = (1 / 60, 1 / 30, 1 / 20)
 DEFAULT_SIMULATION_DT_S: float = 1 / 60
@@ -163,7 +208,11 @@ class RealtimeGameService:
         if item_id in ("place_heater_cooler", "place_flash_drum"):
             process_id = self._require_process_id(config=config)
             anchor_xy = self._require_anchor_xy(layout=layout)
-            self._install_unit(active=active, process_id=process_id)
+            self._install_unit(
+                active=active,
+                process_id=process_id,
+                item=self._sandbox_catalog[item_id],
+            )
             active.board_layout.place_unit(process_id=process_id, anchor_xy=anchor_xy)
         elif item_id == "build_process_line":
             source, target = self._require_line_config(config=config)
@@ -405,10 +454,21 @@ class RealtimeGameService:
         merged.update(config)
         return merged
 
-    def _install_unit(self, *, active: _ActiveSession, process_id: str) -> None:
+    def _install_unit(
+        self,
+        *,
+        active: _ActiveSession,
+        process_id: str,
+        item: SandboxCatalogItemDefinition,
+    ) -> None:
+        meta = _resolve_unit_metadata(item)
         network = active.runtime_bundle.backend_session.network
         try:
-            network.add_process(process_id, inlet_ports=("in",), outlet_ports=("out",))
+            network.add_process(
+                process_id,
+                inlet_ports=meta.inlet_ports,
+                outlet_ports=meta.outlet_ports,
+            )
             active.runtime_bundle.backend_session.compile()
         except Exception as exc:
             raise SandboxRequestError(

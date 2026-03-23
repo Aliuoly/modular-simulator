@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from modular_simulation.gameplay.contracts import CashLedgerSnapshot, SimulationSessionSnapshot
+from modular_simulation.gameplay.sandbox_catalog import build_sandbox_catalog
 
 
 SUPPORTED_MODE_IDS = (
@@ -351,4 +352,284 @@ def test_restart_resets_wall_clock_baseline_so_subsequent_snapshot_is_not_inflat
     assert elapsed < 1.0, (
         f"After restart, elapsed_time_s ({elapsed:.3f}) should reflect only the time "
         "since restart (0.05s), not the full 10.05s since session creation."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Wave 1 — RED guards: item-aware placement seam (module-private helper)
+#
+# These tests prove that a module-private helper exists in realtime_service.py
+# and that it correctly resolves runtime-authoritative metadata (unit_module,
+# unit_type, constructor_payload, and real ports) from SandboxCatalogItemDefinition
+# records with item_kind="unit_blueprint" / apply_kind="add_process".
+#
+# The helper does NOT exist yet, so all tests in this group are expected to
+# fail (RED) until Wave 2 implementation is complete.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_unit_metadata_helper() -> Any:
+    """Return the module-private helper that _install_unit() should call.
+
+    The convention frozen by this test pack is that the helper is named
+    ``_resolve_unit_metadata`` and lives at module level in
+    ``modular_simulation.gameplay.realtime_service``.
+    """
+    module = import_module("modular_simulation.gameplay.realtime_service")
+    helper = getattr(module, "_resolve_unit_metadata", None)
+    if helper is None or not callable(helper):
+        raise AssertionError(
+            "modular_simulation.gameplay.realtime_service does not expose a "
+            "module-private callable '_resolve_unit_metadata'. "
+            "This helper must be added in Wave 2 so that _install_unit() can "
+            "resolve runtime-authoritative unit metadata from catalog records."
+        )
+    return helper
+
+
+def test_module_private_resolve_unit_metadata_helper_exists() -> None:
+    """A module-private helper '_resolve_unit_metadata' must exist in realtime_service.
+
+    This is the exact proof seam: _install_unit() should call this helper to
+    resolve unit metadata from a SandboxCatalogItemDefinition record instead of
+    hard-coding generic ports.  The helper must be importable and callable.
+    """
+    # Will raise AssertionError (red) if the helper is absent.
+    _resolve_unit_metadata_helper()
+
+
+def test_install_unit_uses_resolve_unit_metadata_helper() -> None:
+    """_install_unit() must invoke the exact module-private helper seam.
+
+    The approved 4fm pack freezes one proof seam only: a module-private helper
+    in realtime_service.py used by _install_unit(). This guard fails until
+    _install_unit() actually calls `_resolve_unit_metadata(...)`.
+    """
+    module = import_module("modular_simulation.gameplay.realtime_service")
+    source = inspect.getsource(module.RealtimeGameService._install_unit)
+    assert "_resolve_unit_metadata(" in source, (
+        "RealtimeGameService._install_unit() must call the module-private "
+        "_resolve_unit_metadata(...) helper as the approved item-aware placement seam."
+    )
+
+
+def test_resolve_unit_metadata_derives_real_holding_tank_ports() -> None:
+    """The helper must derive real ports ("inlet",) / ("outlet",) for place_holding_tank.
+
+    The catalog record for place_holding_tank already freezes:
+        unit_module = "modular_simulation.unit_processes.storage.holding_tank"
+        unit_type   = "HoldingTank"
+        constructor_payload = {}
+
+    The HoldingTank implementation declares _PORTS = UnitProcessPorts(
+        inlets=("inlet",), outlets=("outlet",)
+    ).  The helper must read those real ports from the unit rather than forcing
+    the generic ("in",) / ("out",) that _install_unit() currently hard-codes.
+    """
+    helper = _resolve_unit_metadata_helper()
+    catalog = build_sandbox_catalog()
+    item = catalog["place_holding_tank"]
+
+    result = helper(item)
+
+    # result must expose inlet_ports and outlet_ports (attribute or mapping access)
+    as_mapping = result if isinstance(result, Mapping) else None
+
+    def _get(name: str) -> Any:
+        if as_mapping is not None:
+            return as_mapping[name]
+        return getattr(result, name)
+
+    inlet_ports = tuple(_get("inlet_ports"))
+    outlet_ports = tuple(_get("outlet_ports"))
+
+    assert inlet_ports == ("inlet",), (
+        f"place_holding_tank inlet_ports should be ('inlet',), got {inlet_ports!r}. "
+        "The helper must read real declared ports from the unit implementation, not "
+        "hard-code generic ('in',)."
+    )
+    assert outlet_ports == ("outlet",), (
+        f"place_holding_tank outlet_ports should be ('outlet',), got {outlet_ports!r}. "
+        "The helper must read real declared ports from the unit implementation, not "
+        "hard-code generic ('out',)."
+    )
+
+
+def test_resolve_unit_metadata_preserves_constructor_payload_for_quality_control_lab() -> None:
+    """The helper must preserve constructor_payload exactly from the catalog record.
+
+    place_quality_control_lab freezes constructor_payload =
+    {"minimum_purity_mol_fraction": 0.95}.  This payload is runtime-authoritative
+    metadata: the helper must pass it through unchanged alongside unit_module and
+    unit_type, even though no current start exposes this item.
+
+    This is the non-public metadata proof case: it must NOT require widening
+    SUPPORTED_BUILD_ITEM_IDS or any start allowlist.
+    """
+    helper = _resolve_unit_metadata_helper()
+    catalog = build_sandbox_catalog()
+    item = catalog["place_quality_control_lab"]
+
+    result = helper(item)
+
+    as_mapping = result if isinstance(result, Mapping) else None
+
+    def _get(name: str) -> Any:
+        if as_mapping is not None:
+            return as_mapping[name]
+        return getattr(result, name)
+
+    constructor_payload = _get("constructor_payload")
+    assert constructor_payload == {"minimum_purity_mol_fraction": 0.95}, (
+        f"constructor_payload for place_quality_control_lab should be "
+        f"{{'minimum_purity_mol_fraction': 0.95}}, got {constructor_payload!r}. "
+        "The helper must preserve constructor_payload exactly from the catalog record."
+    )
+
+    # Verify unit_module and unit_type are also present.
+    unit_module = _get("unit_module")
+    unit_type = _get("unit_type")
+    assert isinstance(unit_module, str) and unit_module, (
+        "helper result must include a non-empty unit_module string"
+    )
+    assert isinstance(unit_type, str) and unit_type, (
+        "helper result must include a non-empty unit_type string"
+    )
+
+
+def test_resolve_unit_metadata_returns_unit_declared_ports_not_single_in_out_assumption() -> None:
+    """The helper must not freeze single-inlet/single-outlet as a general rule.
+
+    The HoldingTank proof case happens to be single-inlet/single-outlet, but the
+    seam must remain general.  This test verifies that the helper reads ports from
+    the actual unit implementation (UnitProcessPorts) rather than returning a
+    hard-coded single-inlet/single-outlet shape from a lookup table.
+
+    Concretely: the helper called with the place_holding_tank catalog record must
+    return exactly what the HoldingTank.ports property declares — no more, no fewer.
+    """
+    helper = _resolve_unit_metadata_helper()
+    catalog = build_sandbox_catalog()
+    item = catalog["place_holding_tank"]
+
+    result = helper(item)
+
+    as_mapping = result if isinstance(result, Mapping) else None
+
+    def _get(name: str) -> Any:
+        if as_mapping is not None:
+            return as_mapping[name]
+        return getattr(result, name)
+
+    # Import the real HoldingTank to read what ports it actually declares.
+    holding_tank_module = import_module("modular_simulation.unit_processes.storage.holding_tank")
+    HoldingTank = getattr(holding_tank_module, "HoldingTank")
+    real_ports = HoldingTank().ports
+
+    assert tuple(_get("inlet_ports")) == tuple(real_ports.inlets), (
+        "Helper must derive inlet_ports from the unit's declared ports, not a hard-coded rule."
+    )
+    assert tuple(_get("outlet_ports")) == tuple(real_ports.outlets), (
+        "Helper must derive outlet_ports from the unit's declared ports, not a hard-coded rule."
+    )
+
+
+def test_resolve_unit_metadata_instantiates_unit_class_with_constructor_payload() -> None:
+    """The helper must pass constructor_payload kwargs when instantiating the unit class.
+
+    This is the payload-instantiation proof: the helper must call ``unit_cls(**payload)``
+    rather than ``unit_cls()`` (no-args).  Proved by intercepting the module import inside
+    _resolve_unit_metadata and asserting the class is called with the constructor_payload
+    kwargs during port derivation.
+
+    Uses place_quality_control_lab because its catalog record has a non-empty
+    constructor_payload = {"minimum_purity_mol_fraction": 0.95}.
+    """
+    helper = _resolve_unit_metadata_helper()
+    catalog = build_sandbox_catalog()
+    item = catalog["place_quality_control_lab"]
+
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+
+    # Build a fake unit instance with a .ports attribute so the helper can complete.
+    from modular_simulation.thermodynamics.algebraic_process_model import UnitProcessPorts
+
+    fake_ports = UnitProcessPorts(inlets=("inlet",), outlets=("reject_outlet",))
+    fake_instance = MagicMock()
+    fake_instance.ports = fake_ports
+
+    # The fake unit class: records every call's kwargs for later assertion.
+    call_records: list[dict[str, Any]] = []
+
+    class _RecordingClass:
+        def __new__(cls, **kwargs: Any) -> Any:  # type: ignore[override]
+            call_records.append(dict(kwargs))
+            return fake_instance
+
+    # Build a fake module whose attribute lookup for "QualityControlLab" returns the spy.
+    fake_mod = MagicMock()
+    fake_mod.QualityControlLab = _RecordingClass
+
+    with patch.object(realtime_module, "_import_module", return_value=fake_mod):
+        helper(item)
+
+    assert len(call_records) >= 1, (
+        "unit_cls must have been instantiated at least once during port derivation."
+    )
+    last_kwargs = call_records[-1]
+    expected_payload: dict[str, Any] = {"minimum_purity_mol_fraction": 0.95}
+    for key, value in expected_payload.items():
+        assert key in last_kwargs, (
+            f"constructor_payload key {key!r} must be passed to unit_cls() during "
+            f"instantiation; got kwargs {last_kwargs!r}.  "
+            f"The helper must call unit_cls(**constructor_payload), not unit_cls()."
+        )
+        assert last_kwargs[key] == value, (
+            f"constructor_payload[{key!r}] must be {value!r}; got {last_kwargs[key]!r}."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Frozen live-surface guards (must remain GREEN before and after Wave 2)
+# ---------------------------------------------------------------------------
+
+
+def test_supported_build_item_ids_remains_exactly_frozen_live_set() -> None:
+    """SUPPORTED_BUILD_ITEM_IDS must stay exactly ("place_heater_cooler",
+    "place_flash_drum", "build_process_line") — unchanged by the staging work.
+
+    place_holding_tank and place_quality_control_lab must NOT appear here.
+    """
+    module = import_module("modular_simulation.gameplay.realtime_service")
+    supported = tuple(module.SUPPORTED_BUILD_ITEM_IDS)
+    assert supported == (
+        "place_heater_cooler",
+        "place_flash_drum",
+        "build_process_line",
+    ), (
+        f"SUPPORTED_BUILD_ITEM_IDS changed; got {supported!r}. "
+        "This constant must remain frozen throughout the staging work."
+    )
+
+
+def test_public_realtime_service_method_set_is_unchanged() -> None:
+    """The public realtime-service method set must remain exactly the frozen set.
+
+    No new public methods (e.g. 'purge_tank', 'place_tank') may be added by the
+    staging work.  The module-private placement helper must stay non-public.
+    """
+    module = import_module("modular_simulation.gameplay.realtime_service")
+    actual_public_methods = tuple(
+        sorted(
+            name
+            for name in dir(module)
+            if not name.startswith("_")
+            and inspect.isfunction(getattr(module, name, None))
+            and getattr(module, name).__module__ == module.__name__
+        )
+    )
+    expected_public_methods = tuple(sorted(REQUIRED_SERVICE_METHODS))
+    assert actual_public_methods == expected_public_methods, (
+        f"Public method set changed; expected {expected_public_methods!r}, "
+        f"got {actual_public_methods!r}."
     )
