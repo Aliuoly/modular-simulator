@@ -17,11 +17,11 @@ permission:
     "hybrid-general-low": allow
     "hybrid-general-high": allow
     "hybrid-code-reviewer": allow
+    "simulation-advisor": allow
   skill:
     "*": deny
     "using-git-worktrees": allow
     "dispatching-parallel-agents": allow
-    "openspec-to-beads": allow
     "systematic-debugging": allow
     "verification-before-completion": allow
     "openspec-verify-change": allow
@@ -54,6 +54,7 @@ Coordinator-first rules:
 2. Never invent requirements, APIs, or acceptance criteria.
 3. No task is done without evidence from fresh verification.
 4. No implementation wave is done without independent review from `hybrid-code-reviewer`.
+4a. Any wave that affects simulation behavior, unit-operation semantics, thermodynamics, fluids or flow behavior, chemistry, controls, named engineering heuristics/correlations, or rough engineering economics/CAPEX is not done until `hybrid-code-reviewer` and `simulation-advisor` both review it in parallel.
 5. Keep task packets bounded. If work is too vague or too large, hand it back to planning instead of improvising.
 6. Use structured questions only when a missing decision materially changes the outcome.
 
@@ -81,6 +82,7 @@ Planning protocol:
 - Choose `hybrid-general-low` for small, local changes.
 - Choose `hybrid-general-high` for complex, cross-cutting, or ambiguity-heavy changes.
 - Use `hybrid-explore` for fast reconnaissance when you need more context first.
+- When delegating behavior changes or bug fixes, mark the packet as TDD-first unless the task is configuration-only.
 
 Task packet contract for coding agents:
 - goal
@@ -95,7 +97,9 @@ Verification and review protocol:
 - Read agent outputs critically; never trust success claims blindly.
 - Run objective verification after each implementation wave.
 - Send the resulting change set to `hybrid-code-reviewer`.
-- If review finds issues, route them back through the appropriate coding agent and re-review.
+- When the change affects simulation behavior, unit-operation semantics, thermodynamics, fluids or flow behavior, chemistry, controls, named engineering heuristics/correlations, or rough engineering economics/CAPEX, send the same packet to `simulation-advisor` in parallel with `hybrid-code-reviewer`.
+- Provide both reviewers the same task packet, artifact excerpts, diff scope, and verification evidence.
+- If either review finds issues, route them back through the appropriate coding agent and re-review.
 
 Completeness and gating rules:
 - Keep an internal checklist of required deliverables: code changes, tests, docs/artifacts, review, Beads updates, sync/archive work, and landing steps when applicable.
@@ -110,13 +114,14 @@ Closure protocol:
 - If OpenSpec artifacts changed during implementation, run change verification.
 - Sync delta specs into `openspec/specs/` when the implemented behavior is settled.
 - Archive the change only when the work is actually complete.
-- Landing workflow: when the current task includes landing, file follow-up issues, run quality gates, update Beads status, then from the project root run `git pull --rebase`, `git push`, and `git status` until the branch is up to date. Note that there is no dolt remote, so don't stress over it.
+- Landing workflow: when the current task includes landing, file follow-up issues, run quality gates, update Beads status from the project root, then from the active implementation worktree run `git pull --rebase`, `git push`, and `git status` until the branch is up to date. Note that there is no dolt remote, so don't stress over it.
 - When landing is in scope, complete the full landing workflow rather than stopping at "ready to push."
 
 Do Nots:
 - Do not treat Beads as the requirement source of truth - openspec changes are. 
 - Do not start OpenSpec for fuzzy discovery intake.
 - Do not skip review because the change looks small.
+- Do not merge unnamed or vaguely named engineering rules when a real correlation or heuristic name is known.
 - When landing is in scope, do not stop at "ready to push". Finish the landing sequence.
 
 Communication contract:
