@@ -152,3 +152,61 @@ def test_each_start_record_matches_frozen_metadata_payloads() -> None:
         assert definition.starting_topology_summary == expected["starting_topology_summary"]
         assert definition.published_signal_ids == expected["published_signal_ids"]
         assert definition.allowed_item_ids == expected["allowed_item_ids"]
+
+
+def test_no_current_start_allowlist_gains_new_foundation_items() -> None:
+    """This pack does not add place_holding_tank or place_quality_control_lab to any
+    current start's allowed_item_ids.  Both items have supported_start_ids = ()."""
+    catalog = _build_start_catalog()
+    forbidden_new_items = ("place_holding_tank", "place_quality_control_lab")
+    for start_id, definition in catalog.items():
+        for forbidden in forbidden_new_items:
+            assert forbidden not in definition.allowed_item_ids, (
+                f"Start '{start_id}' must not include '{forbidden}' in its "
+                f"allowed_item_ids in this first pack"
+            )
+
+
+def test_phase1_process_sandbox_keeps_current_title_and_provenance() -> None:
+    """phase1_process_sandbox_v1 title and seed_source_paths are frozen; this pack must not change them."""
+    catalog = _build_start_catalog()
+    sandbox = catalog["phase1_process_sandbox_v1"]
+    assert sandbox.title == "Phase-1 process sandbox"
+    assert sandbox.seed_source_paths == (
+        "examples/unit_process_flowsheet/easy_2_heater_flash.py",
+        "examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py",
+    )
+
+
+def test_phase1_process_sandbox_keeps_current_published_signals() -> None:
+    """phase1_process_sandbox_v1 published_signal_ids are frozen; this pack must not change them."""
+    catalog = _build_start_catalog()
+    sandbox = catalog["phase1_process_sandbox_v1"]
+    assert sandbox.published_signal_ids == (
+        "feed_a_draw_mol_s",
+        "feed_b_draw_mol_s",
+        "product_a_flow_mol_s",
+        "product_b_flow_mol_s",
+        "heating_steam_duty_W",
+        "total_normalized_pump_load",
+    )
+
+
+def test_phase1_process_sandbox_keeps_current_allowed_item_ids() -> None:
+    """phase1_process_sandbox_v1 allowed_item_ids are frozen at exactly 12 entries; this pack must not change them."""
+    catalog = _build_start_catalog()
+    sandbox = catalog["phase1_process_sandbox_v1"]
+    assert sandbox.allowed_item_ids == (
+        "place_heater_cooler",
+        "place_flash_drum",
+        "place_heat_exchanger",
+        "place_component_separator",
+        "place_merge_junction_2x1",
+        "place_split_junction_1x2",
+        "build_process_line",
+        "install_line_pump",
+        "install_line_valve",
+        "install_line_heat_actuator",
+        "install_sampled_delayed_sensor",
+        "install_pid_controller",
+    )

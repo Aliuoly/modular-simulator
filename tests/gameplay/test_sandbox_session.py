@@ -169,6 +169,34 @@ def test_install_catalog_item_rejection_codes_are_stable() -> None:
     assert invalid_config.value.error_code == "invalid_config"
 
 
+def test_new_foundation_items_are_unsupported_on_start_in_sandbox() -> None:
+    """Wave-1 red guard: place_holding_tank and place_quality_control_lab must be
+    rejected as unsupported_on_start when attempted in phase1_process_sandbox_v1.
+
+    Both items are catalog-only in this pack (supported_start_ids=()); no current
+    start allowlist gains them.  No new session API method or progression snapshot
+    is introduced by this pack, so REQUIRED_SIMULATION_METHODS must stay frozen.
+    """
+    api = _session_api()
+    error_type = _sandbox_error_type()
+
+    # Guard: session API surface must not grow — no new methods from this pack.
+    assert (
+        tuple(name for name in REQUIRED_SIMULATION_METHODS if callable(getattr(api, name, None)))
+        == REQUIRED_SIMULATION_METHODS
+    ), "session API surface must not gain new methods from this pack"
+
+    api.start_sandbox()
+
+    with pytest.raises(error_type) as holding_tank_exc:
+        api.install_catalog_item("place_holding_tank", config={})
+    assert holding_tank_exc.value.error_code == "unsupported_on_start"
+
+    with pytest.raises(error_type) as qc_lab_exc:
+        api.install_catalog_item("place_quality_control_lab", config={})
+    assert qc_lab_exc.value.error_code == "unsupported_on_start"
+
+
 def test_install_requires_equipment_receipt_id_when_ledger_active() -> None:
     api = _session_api()
     economics = import_module("modular_simulation.gameplay.economics")

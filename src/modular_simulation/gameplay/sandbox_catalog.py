@@ -237,5 +237,37 @@ def build_sandbox_catalog() -> dict[str, SandboxCatalogItemDefinition]:
                 "standard PID controller bound through the existing runtime wiring APIs"
             ),
         ),
+        SandboxCatalogItemDefinition(
+            item_id="place_holding_tank",
+            title="Holding tank",
+            item_kind="unit_blueprint",
+            apply_kind="add_process",
+            default_config={
+                "unit_type": "HoldingTank",
+                "unit_module": "modular_simulation.unit_processes.storage.holding_tank",
+                "constructor_payload": {},
+            },
+            required_user_inputs=("process_id",),
+            supported_start_ids=(),
+            educational_summary=(
+                "single-inlet single-outlet buffer vessel for future tank-mediated material holdup and transfer"
+            ),
+        ),
+        SandboxCatalogItemDefinition(
+            item_id="place_quality_control_lab",
+            title="Quality control lab",
+            item_kind="unit_blueprint",
+            apply_kind="add_process",
+            default_config={
+                "unit_type": "QualityControlLab",
+                "unit_module": "modular_simulation.unit_processes.analysis.quality_control_lab",
+                "constructor_payload": {"minimum_purity_mol_fraction": 0.95},
+            },
+            required_user_inputs=("process_id", "tracked_component_id"),
+            supported_start_ids=(),
+            educational_summary=(
+                "process-stream quality gate that counts accepted moles toward later research progress and rejects off-spec material to disposal"
+            ),
+        ),
     ]
     return {entry.item_id: entry for entry in entries}

@@ -18,6 +18,8 @@ EXPECTED_ITEM_IDS = frozenset(
         "install_line_heat_actuator",
         "install_sampled_delayed_sensor",
         "install_pid_controller",
+        "place_holding_tank",
+        "place_quality_control_lab",
     }
 )
 
@@ -233,6 +235,36 @@ EXPECTED_CATALOG = {
             "standard PID controller bound through the existing runtime wiring APIs"
         ),
     },
+    "place_holding_tank": {
+        "title": "Holding tank",
+        "item_kind": "unit_blueprint",
+        "apply_kind": "add_process",
+        "default_config": {
+            "unit_type": "HoldingTank",
+            "unit_module": "modular_simulation.unit_processes.storage.holding_tank",
+            "constructor_payload": {},
+        },
+        "required_user_inputs": ("process_id",),
+        "supported_start_ids": (),
+        "educational_summary": (
+            "single-inlet single-outlet buffer vessel for future tank-mediated material holdup and transfer"
+        ),
+    },
+    "place_quality_control_lab": {
+        "title": "Quality control lab",
+        "item_kind": "unit_blueprint",
+        "apply_kind": "add_process",
+        "default_config": {
+            "unit_type": "QualityControlLab",
+            "unit_module": "modular_simulation.unit_processes.analysis.quality_control_lab",
+            "constructor_payload": {"minimum_purity_mol_fraction": 0.95},
+        },
+        "required_user_inputs": ("process_id", "tracked_component_id"),
+        "supported_start_ids": (),
+        "educational_summary": (
+            "process-stream quality gate that counts accepted moles toward later research progress and rejects off-spec material to disposal"
+        ),
+    },
 }
 
 
@@ -300,3 +332,14 @@ def test_catalog_boundaries_exclude_out_of_scope_mechanics() -> None:
         ).lower()
         for forbidden in forbidden_tokens:
             assert forbidden not in blob
+
+
+def test_new_foundation_items_use_empty_supported_start_ids() -> None:
+    """Both new catalog items must have supported_start_ids = () in this first pack."""
+    catalog = _build_sandbox_catalog()
+    for new_item_id in ("place_holding_tank", "place_quality_control_lab"):
+        item = catalog[new_item_id]
+        assert item.supported_start_ids == (), (
+            f"{new_item_id} must have supported_start_ids = () in this first pack, "
+            f"got {item.supported_start_ids!r}"
+        )

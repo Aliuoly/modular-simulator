@@ -50,11 +50,11 @@ The phase-1 start catalog SHALL contain exactly `phase1_process_sandbox_v1`, `he
 - **THEN** each start record matches those exact kinds, titles, source paths, topology summaries, published signal ids, and allowed item ids
 
 ### Requirement: The Exact Phase-1 Sandbox Catalog Item Ids Are Frozen
-The phase-1 sandbox catalog SHALL contain exactly `place_heater_cooler`, `place_flash_drum`, `place_heat_exchanger`, `place_component_separator`, `place_merge_junction_2x1`, `place_split_junction_1x2`, `build_process_line`, `install_line_pump`, `install_line_valve`, `install_line_heat_actuator`, `install_sampled_delayed_sensor`, and `install_pid_controller`.
+The phase-1 sandbox catalog SHALL contain exactly `place_heater_cooler`, `place_flash_drum`, `place_heat_exchanger`, `place_component_separator`, `place_merge_junction_2x1`, `place_split_junction_1x2`, `build_process_line`, `install_line_pump`, `install_line_valve`, `install_line_heat_actuator`, `install_sampled_delayed_sensor`, `install_pid_controller`, `place_holding_tank`, and `place_quality_control_lab`.
 
 #### Scenario: No hidden or deferred build items leak into phase 1
 - **WHEN** the catalog is inspected
-- **THEN** it contains exactly those 12 item ids and no arbitrary process-factory, stand-alone pump/valve-unit, or tutorial-only mechanics
+- **THEN** it contains exactly those 14 item ids and no arbitrary process-factory, stand-alone pump/valve-unit, or tutorial-only mechanics
 
 ### Requirement: Sandbox Catalog Items Use Typed Apply Kinds Grounded In Repo APIs
 Each catalog item SHALL declare one typed `apply_kind` grounded in current repo surfaces: `add_process`, `add_junction`, `connect_configure_line`, `attach_line_pump`, `attach_line_valve`, `attach_line_heat_actuator`, `create_bind_sensor`, or `create_bind_activate_controller`.
@@ -85,10 +85,64 @@ The phase-1 sandbox catalog SHALL encode these exact records:
 - `install_line_heat_actuator`: `title = "Line heat-actuator overlay"`, `item_kind = "line_overlay"`, `apply_kind = "attach_line_heat_actuator"`, `default_config = {"initial_heat_rate": 0.0}`, `required_user_inputs = ("line_id", "heat_actuator_id")`, `supported_start_ids = ("phase1_process_sandbox_v1",)`, summary `line-owned heat actuator overlay using the explicit heat-actuator substrate`
 - `install_sampled_delayed_sensor`: `title = "Sampled delayed sensor"`, `item_kind = "sensor"`, `apply_kind = "create_bind_sensor"`, `default_config = {"sensor_type": "SampledDelayedSensor", "sensor_module": "modular_simulation.components.sensors.sampled_delayed_sensor", "sensor_config": {"sampling_period": 0.2, "deadtime": 0.0}}`, `required_user_inputs = ("sensor_id", "signal_key")`, `supported_start_ids = ("phase1_process_sandbox_v1", "reactor_control_tutorial_start_v1")`, summary `sampled and delayed measurement point for instrumentation tutorials and controller feedback`
 - `install_pid_controller`: `title = "PID controller"`, `item_kind = "controller"`, `apply_kind = "create_bind_activate_controller"`, `default_config = {"controller_type": "PIDController", "controller_module": "modular_simulation.components.control_system.controllers", "controller_config": {"Kp": 1.0, "Ti": 5.0, "Td": 0.0}}`, `required_user_inputs = ("controller_id", "signal_key", "actuator_tag")`, `supported_start_ids = ("phase1_process_sandbox_v1", "reactor_control_tutorial_start_v1")`, summary `standard PID controller bound through the existing runtime wiring APIs`
+- `place_holding_tank`: `title = "Holding tank"`, `item_kind = "unit_blueprint"`, `apply_kind = "add_process"`, `default_config = {"unit_type": "HoldingTank", "unit_module": "modular_simulation.unit_processes.storage.holding_tank", "constructor_payload": {}}`, `required_user_inputs = ("process_id",)`, `supported_start_ids = ()`, summary `single-inlet single-outlet buffer vessel for future tank-mediated material holdup and transfer`
+- `place_quality_control_lab`: `title = "Quality control lab"`, `item_kind = "unit_blueprint"`, `apply_kind = "add_process"`, `default_config = {"unit_type": "QualityControlLab", "unit_module": "modular_simulation.unit_processes.analysis.quality_control_lab", "constructor_payload": {"minimum_purity_mol_fraction": 0.95}}`, `required_user_inputs = ("process_id", "tracked_component_id")`, `supported_start_ids = ()`, summary `process-stream quality gate that counts accepted moles toward later research progress and rejects off-spec material to disposal`
 
 #### Scenario: Catalog records are frozen exactly
 - **WHEN** a contributor inspects any phase-1 catalog item
 - **THEN** its title, kind, apply kind, payload, required inputs, supported start ids, and educational summary match the exact frozen record above
+
+### Requirement: Catalog-Only Foundation Items Do Not Change Current Starts
+The additive foundation items introduced by this change SHALL remain unavailable on every current sandbox and tutorial start.
+
+#### Scenario: Current start allowlists remain unchanged
+- **WHEN** a contributor inspects `phase1_process_sandbox_v1`, `heater_flash_tutorial_start_v1`, `reactor_control_tutorial_start_v1`, and `recycle_purge_tutorial_start_v1`
+- **THEN** none of those start records include `place_holding_tank` or `place_quality_control_lab` in `allowed_item_ids`
+
+### Requirement: Foundation Units Participate As Ordinary Connected Process Nodes
+`HoldingTank` and `QualityControlLab` SHALL expose explicit `hydraulic_participation` declarations so they can compile as ordinary connected process nodes under the current connection contract.
+
+#### Scenario: Holding tank declares explicit connected-unit participation
+- **WHEN** a contributor inspects `HoldingTank`
+- **THEN** it declares explicit hydraulic participation for `inlet` and `outlet`
+- **AND** it declares exactly one balancing group over `("inlet", "outlet")`
+- **AND** compile does not depend on undeclared passive-port inference or a topology exception
+
+#### Scenario: Quality control lab declares explicit connected-unit participation
+- **WHEN** a contributor inspects `QualityControlLab`
+- **THEN** it declares explicit hydraulic participation for `inlet` and `reject_outlet`
+- **AND** it declares exactly one balancing group over `("inlet", "reject_outlet")`
+- **AND** compile does not depend on undeclared passive-port inference or a topology exception
+
+### Requirement: Holding Tank Freezes Minimum Holdup Behavior
+`HoldingTank` SHALL behave as a real single-inlet single-outlet holdup unit foundation.
+
+#### Scenario: Outlet flow is bounded by stored holdup
+- **WHEN** the holding tank advances with finite stored inventory
+- **THEN** any outlet flow comes only from stored holdup
+- **AND** outlet flow for the simulated step never exceeds available holdup
+
+#### Scenario: Empty tank does not invent discharge
+- **WHEN** the holding tank has zero stored holdup and no incoming material for the step
+- **THEN** the outlet flow is zero
+
+### Requirement: Quality Control Lab Freezes Pass-Fail Progress Accounting
+`QualityControlLab` SHALL use one pass/fail purity rule based on `tracked_component_id` and `minimum_purity_mol_fraction`.
+
+#### Scenario: Threshold-met stream grants whole-stream credit
+- **WHEN** the incoming stream purity for `tracked_component_id` is greater than or equal to the configured minimum threshold
+- **THEN** the lab increases `accepted_progress_mol` by the entire incoming stream molar amount
+- **AND** higher purity above the threshold does not grant additional credit
+
+#### Scenario: Off-spec stream grants no credit
+- **WHEN** the incoming stream purity for `tracked_component_id` is below the configured minimum threshold
+- **THEN** the lab increases `accepted_progress_mol` by `0.0`
+
+#### Scenario: Lab stays topology-compatible with one outlet
+- **WHEN** the quality control lab participates in the current topology model
+- **THEN** it exposes exactly one outlet named `reject_outlet`
+- **AND** accepted and rejected stream slices both leave through that one outlet boundary in this first pack
+- **AND** the unit does not rely on a second accepted-material outlet or a sink-only topology exception
 
 ### Requirement: Generic Backend-Session Helper Scope Is Explicit
 Phase 1 SHALL add only the generic `TxHandle` helper surface required by the frozen catalog: `add_junction`, `attach_line_pump`, and `attach_line_heat_actuator`, all reachable through `PlantBackendSession.begin_tx()`.
