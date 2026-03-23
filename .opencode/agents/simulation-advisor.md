@@ -4,7 +4,6 @@ mode: subagent
 model: github-copilot/gpt-5.4
 variant: high
 temperature: 0.1
-color: cyan
 permission:
   edit: deny
   bash: allow
