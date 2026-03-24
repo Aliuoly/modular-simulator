@@ -520,9 +520,111 @@ def test_live_runtime_snapshot_schema_and_fields_remain_connection_runtime_v1() 
         "queued_request_ids",
         "queued_request_count",
         "committed_idempotency_keys",
+        "process_runtime_state",
         "transport_runtime_state",
     }
     assert "port_condition_store" not in live_snapshot
+
+
+def test_restore_process_runtime_state_with_dimension_change_allows_subsequent_step() -> None:
+    """Restoring 2-species HoldingTank state into a fresh 1-species tank must
+    rebuild cached ProcessModel views so the next step() does not crash with a
+    shape mismatch.  Regression test for the missing _rebuild_cached_state_views
+    call in ConnectedPlantOrchestrator.restore_process_runtime_state().
+    """
+    from dataclasses import dataclass
+
+    import numpy as np
+
+    from modular_simulation.connection.runtime.connected_plant_orchestrator import (
+        ConnectedPlantOrchestrator,
+    )
+    from modular_simulation.connection.topology.subsystem_descriptor import (
+        SubsystemRuntimeDescriptor,
+    )
+    from modular_simulation.unit_processes.storage.holding_tank import HoldingTank
+
+    # A minimal subsystem wrapper that exposes .system.process_model to the orchestrator.
+    @dataclass
+    class _TankSystem:
+        process_model: HoldingTank
+
+    @dataclass
+    class _TankSubsystem:
+        descriptor: SubsystemRuntimeDescriptor
+        system: _TankSystem
+
+        def run_sensor_phase(self) -> None:
+            pass
+
+        def run_calculation_phase(self) -> None:
+            pass
+
+        def run_controller_phase(self) -> None:
+            pass
+
+        def run_process_phase(self, duration: float) -> None:
+            pass
+
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network(runtime)
+
+    # The tank starts with 1 species (default).
+    tank = HoldingTank()
+    assert tank.holdup_component_moles.size == 1
+
+    subsystem = _TankSubsystem(
+        descriptor=SubsystemRuntimeDescriptor(
+            descriptor_id="tank_ss",
+            process_id="reactor",
+            inlet_ports=("feed",),
+            outlet_ports=("product",),
+            publication_map={},
+        ),
+        system=_TankSystem(process_model=tank),
+    )
+    orchestrator = ConnectedPlantOrchestrator(
+        subsystems=(subsystem,),
+        network=network,
+        runtime_orchestrator=runtime,
+    )
+
+    # Build a 2-species state payload (as exported by ConnectedPlantOrchestrator).
+    two_species_payload = {
+        "reactor": {
+            "holdup_component_moles": [1.5, 0.5],
+            "holdup_temperature": 320.0,
+            "holdup_pressure": 115000.0,
+            "inlet_flow": 0.0,
+            "inlet_temperature": 298.15,
+            "inlet_pressure": 101325.0,
+            "inlet_composition": [0.75, 0.25],
+            "requested_outlet_flow_mol_s": 0.0,
+            "imposed_outlet_flow_mol_s": 0.0,
+            "resolved_outlet_flow_mol_s": 0.0,
+            "outlet_temperature": 320.0,
+            "outlet_pressure": 115000.0,
+            "outlet_composition": [0.75, 0.25],
+            "_holdup_species_ids": ["A", "B"],
+            "_inlet_species_ids": ["A", "B"],
+            "_outlet_species_ids": ["A", "B"],
+        }
+    }
+
+    # Restore the 2-species state into the 1-species tank.
+    orchestrator.restore_process_runtime_state(two_species_payload)
+
+    # After restore, the array fields should reflect the 2-species payload.
+    assert tank.holdup_component_moles.size == 2
+
+    # Calling step() must not raise a shape-mismatch ValueError.
+    # Before the fix this raises:
+    #   ValueError: could not broadcast input array from shape (2,) into shape (1,)
+    tank.step(1.0)
+
+    # Verify the tank state is consistent after the step:
+    # holdup_component_moles must still be a 2-element array (species dimension preserved).
+    assert tank.holdup_component_moles.size == 2
 
 
 def test_live_runtime_snapshot_round_trip_preserves_transport_owner_state() -> None:
@@ -580,4 +682,48 @@ def test_live_runtime_snapshot_round_trip_preserves_transport_owner_state() -> N
                 },
             }
         ],
+    }
+
+
+def test_runtime_snapshot_round_trip_restores_holding_tank_process_runtime_state() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network(runtime)
+    process_runtime_state: dict[str, object] = {
+        "tank": {
+            "holdup_mol": 2.75,
+            "holdup_temperature": 312.0,
+            "holdup_pressure": 121000.0,
+            "holdup_composition": [0.2, 0.8],
+            "holdup_species_ids": ["A", "B"],
+            "requested_outlet_flow_mol_s": 1.2,
+            "resolved_outlet_flow_mol_s": 1.1,
+        }
+    }
+
+    snapshot = save_runtime_snapshot_contract(
+        runtime=runtime,
+        network=network,
+        process_runtime_state=process_runtime_state,
+    )
+
+    process_runtime_state.clear()
+    process_runtime_state["tank"] = {"holdup_mol": -1.0}
+
+    restore_runtime_snapshot_contract(
+        runtime=runtime,
+        network=network,
+        process_runtime_state_sink=process_runtime_state,
+        snapshot=snapshot,
+    )
+
+    assert process_runtime_state == {
+        "tank": {
+            "holdup_composition": [0.2, 0.8],
+            "holdup_mol": 2.75,
+            "holdup_pressure": 121000.0,
+            "holdup_species_ids": ["A", "B"],
+            "holdup_temperature": 312.0,
+            "requested_outlet_flow_mol_s": 1.2,
+            "resolved_outlet_flow_mol_s": 1.1,
+        }
     }
