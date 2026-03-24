@@ -284,8 +284,10 @@ def test_observability_snapshot_observables_section_shape() -> None:
     assert isinstance(observables, MappingABC)
     assert "published_measurements" in observables
     assert "plant_calculation_outputs" in observables
+    assert "process_state_values" in observables
     assert isinstance(observables["published_measurements"], MappingABC)
     assert isinstance(observables["plant_calculation_outputs"], MappingABC)
+    assert isinstance(observables["process_state_values"], MappingABC)
 
 
 def test_observability_snapshot_is_distinct_from_save_runtime_snapshot() -> None:

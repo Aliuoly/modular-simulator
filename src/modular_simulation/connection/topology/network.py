@@ -800,6 +800,7 @@ class ConnectionNetwork:
 
         published_measurements: dict[str, float] = {}
         plant_calculation_outputs: dict[str, float] = {}
+        process_state_values: dict[str, float] = {}
 
         if self._runtime_orchestrator is not None:
             runtime_state = self._runtime_orchestrator.get_observability_state()
@@ -819,6 +820,7 @@ class ConnectionNetwork:
                 observables = observables_provider()
                 published_measurements = dict(observables.get("published_measurements", {}))
                 plant_calculation_outputs = dict(observables.get("plant_calculation_outputs", {}))
+                process_state_values = dict(observables.get("process_state_values", {}))
         else:
             simulation_time_s = 0.0
             macro_step_index = 0
@@ -841,6 +843,7 @@ class ConnectionNetwork:
             "observables": {
                 "published_measurements": published_measurements,
                 "plant_calculation_outputs": plant_calculation_outputs,
+                "process_state_values": process_state_values,
             },
         }
 

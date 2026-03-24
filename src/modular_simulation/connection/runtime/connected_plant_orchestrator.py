@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from numbers import Real
 from typing import TYPE_CHECKING, Protocol, TypeAlias, cast
 
+import numpy as np
+
 from ..topology.network import (
     ConnectionNetwork,
     QueuedReconfigurationTransaction,
@@ -116,10 +118,100 @@ class ConnectedPlantOrchestrator:
         return dict(self._plant_calculation_outputs)
 
     def get_observability_observables(self) -> Mapping[str, Mapping[str, float]]:
+        process_state_values: dict[str, float] = {}
+        for subsystem in self._subsystems:
+            system = getattr(subsystem, "system", None)
+            process_model = getattr(system, "process_model", None)
+            if process_model is None:
+                continue
+            process_id = subsystem.descriptor.process_id
+            if self._is_holding_tank_process_model(process_model):
+                process_state_values.update(
+                    self._snapshot_holding_tank_process_state_values(
+                        process_id=process_id,
+                        process_model=process_model,
+                    )
+                )
+                continue
+
+            descriptor_id = subsystem.descriptor.descriptor_id
+            for state_name in process_model.state_list:
+                state_value = process_model.state_getter(state_name)
+                if isinstance(state_value, Real):
+                    process_state_values[f"{descriptor_id}/{state_name}"] = float(state_value)
+
         return {
             "published_measurements": self._snapshot_published_measurement_map(),
             "plant_calculation_outputs": dict(self._plant_calculation_outputs),
+            "process_state_values": process_state_values,
         }
+
+    def export_process_runtime_state(self) -> Mapping[str, object]:
+        state_by_process_id: dict[str, object] = {}
+        for subsystem in self._subsystems:
+            system = getattr(subsystem, "system", None)
+            process_model = getattr(system, "process_model", None)
+            if process_model is None:
+                continue
+
+            process_state: dict[str, object] = {}
+            for state_name in process_model.state_list:
+                raw_value = process_model.state_getter(state_name)
+                process_state[state_name] = self._serialize_state_value(raw_value)
+
+            for private_field in (
+                "_holdup_species_ids",
+                "_inlet_species_ids",
+                "_outlet_species_ids",
+            ):
+                if hasattr(process_model, private_field):
+                    process_state[private_field] = self._serialize_state_value(
+                        getattr(process_model, private_field)
+                    )
+
+            state_by_process_id[subsystem.descriptor.process_id] = process_state
+        return state_by_process_id
+
+    def restore_process_runtime_state(self, payload: Mapping[str, object]) -> None:
+        subsystem_by_process_id = {
+            subsystem.descriptor.process_id: subsystem for subsystem in self._subsystems
+        }
+        for process_id, process_payload in payload.items():
+            if not isinstance(process_payload, Mapping):
+                continue
+            subsystem = subsystem_by_process_id.get(str(process_id))
+            if subsystem is None:
+                continue
+            system = getattr(subsystem, "system", None)
+            process_model = getattr(system, "process_model", None)
+            if process_model is None:
+                continue
+
+            array_dimension_changed = False
+            for state_name, serialized_value in cast(
+                Mapping[object, object], process_payload
+            ).items():
+                field_name = str(state_name)
+                if not hasattr(process_model, field_name):
+                    continue
+                current_value = getattr(process_model, field_name)
+                restored_value = self._deserialize_state_value(
+                    serialized_value,
+                    field_name=field_name,
+                    current_value=current_value,
+                )
+                if (
+                    isinstance(current_value, np.ndarray)
+                    and isinstance(restored_value, np.ndarray)
+                    and current_value.shape != restored_value.shape
+                ):
+                    array_dimension_changed = True
+                setattr(process_model, field_name, restored_value)
+
+            if array_dimension_changed and callable(
+                getattr(process_model, "_rebuild_cached_state_views", None)
+            ):
+                process_model._rebuild_cached_state_views()
 
     @property
     def runtime_context(self) -> SimulationRuntimeContext | None:
@@ -326,6 +418,114 @@ class ConnectedPlantOrchestrator:
             return
         for subsystem in self._subsystems:
             phase_step(subsystem)
+
+    def _is_holding_tank_process_model(self, process_model: object) -> bool:
+        return all(
+            hasattr(process_model, field_name)
+            for field_name in (
+                "holdup_component_moles",
+                "holdup_temperature",
+                "resolved_outlet_flow_mol_s",
+                "outlet_composition",
+            )
+        )
+
+    def _snapshot_holding_tank_process_state_values(
+        self,
+        *,
+        process_id: str,
+        process_model: object,
+    ) -> dict[str, float]:
+        values: dict[str, float] = {}
+        holdup_components = np.asarray(
+            getattr(process_model, "holdup_component_moles"),
+            dtype=np.float64,
+        ).reshape(-1)
+        clipped_holdup_components = np.clip(holdup_components, 0.0, None)
+        holdup_total = float(np.sum(clipped_holdup_components))
+        values[f"{process_id}/holdup_total_mol"] = holdup_total
+        values[f"{process_id}/outlet_flow_mol_s"] = float(
+            getattr(process_model, "resolved_outlet_flow_mol_s")
+        )
+        values[f"{process_id}/bulk_temperature_K"] = float(
+            getattr(process_model, "holdup_temperature")
+        )
+
+        if holdup_total > 1.0e-12:
+            composition = clipped_holdup_components / holdup_total
+        else:
+            composition = np.asarray(getattr(process_model, "outlet_composition"), dtype=np.float64)
+            composition = np.clip(composition.reshape(-1), 0.0, None)
+            composition_sum = float(np.sum(composition))
+            if composition_sum > 1.0e-12:
+                composition = composition / composition_sum
+            elif composition.size > 0:
+                composition = np.full(
+                    composition.size, 1.0 / float(composition.size), dtype=np.float64
+                )
+
+        species_ids = self._resolve_holding_tank_species_ids(
+            process_model=process_model,
+            composition_size=int(composition.size),
+        )
+        for index, fraction in enumerate(composition):
+            species_id = species_ids[index]
+            values[f"{process_id}/mole_fraction/{species_id}"] = float(fraction)
+        return values
+
+    def _resolve_holding_tank_species_ids(
+        self,
+        *,
+        process_model: object,
+        composition_size: int,
+    ) -> tuple[str, ...]:
+        for field_name in ("_holdup_species_ids", "_inlet_species_ids"):
+            raw_ids = getattr(process_model, field_name, None)
+            if isinstance(raw_ids, tuple) and len(raw_ids) == composition_size:
+                return tuple(str(item) for item in raw_ids)
+
+        if self._runtime_context is not None:
+            species_names = tuple(self._runtime_context.species_registry.name_list)
+            if len(species_names) == composition_size:
+                return species_names
+
+        return tuple(f"species_{index}" for index in range(composition_size))
+
+    def _serialize_state_value(self, value: object) -> object:
+        if isinstance(value, np.ndarray):
+            return [self._serialize_state_value(item) for item in value.tolist()]
+        if isinstance(value, tuple):
+            return [self._serialize_state_value(item) for item in value]
+        if isinstance(value, list):
+            return [self._serialize_state_value(item) for item in value]
+        if isinstance(value, Mapping):
+            return {
+                str(key): self._serialize_state_value(nested_value)
+                for key, nested_value in value.items()
+            }
+        if isinstance(value, np.floating):
+            return float(value)
+        if isinstance(value, np.integer):
+            return int(value)
+        return value
+
+    def _deserialize_state_value(
+        self,
+        value: object,
+        *,
+        field_name: str,
+        current_value: object,
+    ) -> object:
+        if isinstance(current_value, np.ndarray) and isinstance(value, Sequence):
+            return np.asarray(value, dtype=current_value.dtype)
+        if isinstance(current_value, tuple) and isinstance(value, Sequence):
+            return tuple(value)
+        if field_name in {"_holdup_species_ids", "_inlet_species_ids", "_outlet_species_ids"}:
+            if value is None:
+                return None
+            if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+                return tuple(str(item) for item in value)
+        return value
 
     def _run_plant_calculations(self) -> None:
         if not self._plant_calculations:

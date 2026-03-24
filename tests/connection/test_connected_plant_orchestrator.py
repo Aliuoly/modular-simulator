@@ -51,6 +51,36 @@ class _FakeSubsystem:
         return dict(self.descriptor.publication_map)
 
 
+class _FakeTankProcessModel:
+    def __init__(self) -> None:
+        self.holdup_component_moles = np.asarray([1.0, 3.0], dtype=np.float64)
+        self.holdup_temperature = 333.0
+        self.resolved_outlet_flow_mol_s = 2.5
+        self.outlet_composition = np.asarray([0.25, 0.75], dtype=np.float64)
+        self._holdup_species_ids = ("methane", "ethane")
+        self._inlet_species_ids = ("methane", "ethane")
+        self._outlet_species_ids = ("methane", "ethane")
+        self.state_list = (
+            "holdup_component_moles",
+            "holdup_temperature",
+            "resolved_outlet_flow_mol_s",
+            "outlet_composition",
+        )
+
+    def state_getter(self, name: str):
+        return getattr(self, name)
+
+
+class _FakeTankSystem:
+    def __init__(self) -> None:
+        self.process_model = _FakeTankProcessModel()
+
+
+@dataclass
+class _FakeTankSubsystem(_FakeSubsystem):
+    system: _FakeTankSystem | None = None
+
+
 def _hydraulic_result() -> HydraulicSolveResult:
     return HydraulicSolveResult(
         converged=True,
@@ -547,3 +577,117 @@ def test_connected_plant_calculation_outputs_must_be_numeric() -> None:
     assert str(excinfo.value) == (
         "plant calculation 'non_numeric_output' output 'plant/not_numeric' must be numeric"
     )
+
+
+def test_connected_plant_observability_observables_include_process_state_values() -> None:
+    runtime = ConnectionRuntimeOrchestrator(
+        hydraulic_solve_step=lambda *, network, macro_step_time_s: _hydraulic_result(),
+        transport_and_mixing_step=(
+            lambda *, network, hydraulic_result, macro_step_time_s: TransportAndMixingUpdate(
+                transport_results={}
+            )
+        ),
+        boundary_propagation_step=(
+            lambda *, network, hydraulic_result, transport_and_mixing_update, macro_step_time_s: {}
+        ),
+    )
+    network = _network(runtime, process_ids=("reactor",))
+    subsystem = _subsystem("subsystem_runtime", "reactor", calls=[])
+
+    orchestrator = ConnectedPlantOrchestrator(
+        subsystems=(subsystem,),
+        network=network,
+        runtime_orchestrator=runtime,
+    )
+
+    observables = orchestrator.get_observability_observables()
+
+    assert "published_measurements" in observables
+    assert "plant_calculation_outputs" in observables
+    assert "process_state_values" in observables
+    assert isinstance(observables["process_state_values"], dict)
+
+
+def test_connected_plant_observability_normalizes_holding_tank_process_state_values() -> None:
+    runtime = ConnectionRuntimeOrchestrator(
+        hydraulic_solve_step=lambda *, network, macro_step_time_s: _hydraulic_result(),
+        transport_and_mixing_step=(
+            lambda *, network, hydraulic_result, macro_step_time_s: TransportAndMixingUpdate(
+                transport_results={}
+            )
+        ),
+        boundary_propagation_step=(
+            lambda *, network, hydraulic_result, transport_and_mixing_update, macro_step_time_s: {}
+        ),
+    )
+    network = _network(runtime, process_ids=("tank_process",))
+    subsystem = _FakeTankSubsystem(
+        descriptor=SubsystemRuntimeDescriptor(
+            descriptor_id="tank_subsystem",
+            process_id="tank_process",
+            inlet_ports=("feed",),
+            outlet_ports=("product",),
+            publication_map={},
+        ),
+        calls=[],
+        system=_FakeTankSystem(),
+    )
+    orchestrator = ConnectedPlantOrchestrator(
+        subsystems=(subsystem,),
+        network=network,
+        runtime_orchestrator=runtime,
+    )
+
+    observables = orchestrator.get_observability_observables()
+    process_state_values = observables["process_state_values"]
+
+    assert process_state_values["tank_process/holdup_total_mol"] == pytest.approx(4.0)
+    assert process_state_values["tank_process/outlet_flow_mol_s"] == pytest.approx(2.5)
+    assert process_state_values["tank_process/bulk_temperature_K"] == pytest.approx(333.0)
+    assert process_state_values["tank_process/mole_fraction/methane"] == pytest.approx(0.25)
+    assert process_state_values["tank_process/mole_fraction/ethane"] == pytest.approx(0.75)
+
+
+def test_connected_plant_process_runtime_state_export_restore_round_trip() -> None:
+    runtime = ConnectionRuntimeOrchestrator(
+        hydraulic_solve_step=lambda *, network, macro_step_time_s: _hydraulic_result(),
+        transport_and_mixing_step=(
+            lambda *, network, hydraulic_result, macro_step_time_s: TransportAndMixingUpdate(
+                transport_results={}
+            )
+        ),
+        boundary_propagation_step=(
+            lambda *, network, hydraulic_result, transport_and_mixing_update, macro_step_time_s: {}
+        ),
+    )
+    network = _network(runtime, process_ids=("tank_process",))
+    subsystem = _FakeTankSubsystem(
+        descriptor=SubsystemRuntimeDescriptor(
+            descriptor_id="tank_subsystem",
+            process_id="tank_process",
+            inlet_ports=("feed",),
+            outlet_ports=("product",),
+            publication_map={},
+        ),
+        calls=[],
+        system=_FakeTankSystem(),
+    )
+    orchestrator = ConnectedPlantOrchestrator(
+        subsystems=(subsystem,),
+        network=network,
+        runtime_orchestrator=runtime,
+    )
+
+    exported = orchestrator.export_process_runtime_state()
+    model = subsystem.system.process_model
+    model.holdup_component_moles = np.asarray([0.0, 0.0], dtype=np.float64)
+    model.holdup_temperature = 298.15
+    model.resolved_outlet_flow_mol_s = 0.0
+    model._holdup_species_ids = None
+
+    orchestrator.restore_process_runtime_state(exported)
+
+    assert tuple(float(x) for x in model.holdup_component_moles) == pytest.approx((1.0, 3.0))
+    assert model.holdup_temperature == pytest.approx(333.0)
+    assert model.resolved_outlet_flow_mol_s == pytest.approx(2.5)
+    assert model._holdup_species_ids == ("methane", "ethane")
