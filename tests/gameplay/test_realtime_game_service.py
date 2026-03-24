@@ -633,3 +633,274 @@ def test_public_realtime_service_method_set_is_unchanged() -> None:
         f"Public method set changed; expected {expected_public_methods!r}, "
         f"got {actual_public_methods!r}."
     )
+
+
+# ---------------------------------------------------------------------------
+# Wave 3 — RED guards: build-path metadata-resolution failure translation
+#
+# These tests prove that _install_unit() is the explicit translation boundary
+# for qualifying metadata-resolution failures.  All three failure modes
+# (missing module, missing unit type, bad constructor payload) must be
+# translated into SandboxRequestError(error_code="invalid_config", ...).
+#
+# The tests use the module-private _resolve_unit_metadata helper seam and
+# a crafted SandboxCatalogItemDefinition to inject each failure mode.
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_unit_blueprint_item(default_config: dict[str, object]) -> Any:
+    """Build a minimal SandboxCatalogItemDefinition with apply_kind='add_process'."""
+    from modular_simulation.gameplay.contracts import SandboxCatalogItemDefinition
+
+    return SandboxCatalogItemDefinition(
+        item_id="__test_item__",
+        title="Test item",
+        item_kind="unit_blueprint",
+        apply_kind="add_process",
+        default_config=default_config,
+        required_user_inputs=("process_id",),
+        supported_start_ids=(),
+        educational_summary="Test only",
+    )
+
+
+def test_install_unit_translates_missing_module_to_invalid_config_error() -> None:
+    """_install_unit() must translate ModuleNotFoundError from metadata resolution.
+
+    When the catalog record references a unit_module that cannot be imported,
+    _resolve_unit_metadata raises ModuleNotFoundError.  _install_unit() must
+    catch this and re-raise SandboxRequestError(error_code="invalid_config", ...)
+    rather than letting the raw ModuleNotFoundError escape to callers.
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    error_type = _sandbox_error_type()
+
+    service = realtime_module.RealtimeGameService()
+    created = service.create_session(mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+    active = service._active_session  # type: ignore[attr-defined]
+
+    bad_item = _make_fake_unit_blueprint_item(
+        {
+            "unit_module": "modular_simulation.unit_processes.__does_not_exist__",
+            "unit_type": "SomeUnit",
+            "constructor_payload": {},
+        }
+    )
+
+    with pytest.raises(error_type) as exc_info:
+        service._install_unit(active=active, process_id="test_proc", item=bad_item)  # type: ignore[attr-defined]
+
+    assert exc_info.value.error_code == "invalid_config", (
+        f"Missing-module failure must produce error_code='invalid_config'; "
+        f"got {exc_info.value.error_code!r}.  "
+        "_install_unit() must be the translation boundary for metadata-resolution failures."
+    )
+
+
+def test_install_unit_translates_missing_unit_type_to_invalid_config_error() -> None:
+    """_install_unit() must translate AttributeError from a missing unit type.
+
+    When unit_module imports successfully but unit_type does not exist as an
+    attribute, _resolve_unit_metadata raises AttributeError.  _install_unit()
+    must translate this into SandboxRequestError(error_code="invalid_config", ...).
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    error_type = _sandbox_error_type()
+
+    service = realtime_module.RealtimeGameService()
+    created = service.create_session(mode_id="phase1_process_sandbox_v1")
+    active = service._active_session  # type: ignore[attr-defined]
+
+    # Use a real importable module but a unit_type that doesn't exist in it.
+    bad_item = _make_fake_unit_blueprint_item(
+        {
+            "unit_module": "modular_simulation.unit_processes.thermal.heater_cooler",
+            "unit_type": "__DoesNotExistUnit__",
+            "constructor_payload": {},
+        }
+    )
+
+    with pytest.raises(error_type) as exc_info:
+        service._install_unit(active=active, process_id="test_proc2", item=bad_item)  # type: ignore[attr-defined]
+
+    assert exc_info.value.error_code == "invalid_config", (
+        f"Missing-unit-type failure must produce error_code='invalid_config'; "
+        f"got {exc_info.value.error_code!r}.  "
+        "_install_unit() must be the translation boundary for missing exported unit types."
+    )
+
+
+def test_install_unit_translates_constructor_payload_failure_to_invalid_config_error() -> None:
+    """_install_unit() must translate constructor payload failures.
+
+    When unit_cls(**constructor_payload) raises TypeError or ValueError because
+    the payload does not match the constructor signature, _resolve_unit_metadata
+    propagates the raw exception.  _install_unit() must translate it into
+    SandboxRequestError(error_code="invalid_config", ...).
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    error_type = _sandbox_error_type()
+
+    service = realtime_module.RealtimeGameService()
+    created = service.create_session(mode_id="phase1_process_sandbox_v1")
+    active = service._active_session  # type: ignore[attr-defined]
+
+    # HeaterCooler does NOT accept 'nonexistent_kwarg'; this causes TypeError.
+    bad_item = _make_fake_unit_blueprint_item(
+        {
+            "unit_module": "modular_simulation.unit_processes.thermal.heater_cooler",
+            "unit_type": "HeaterCooler",
+            "constructor_payload": {"nonexistent_kwarg": "bad_value"},
+        }
+    )
+
+    with pytest.raises(error_type) as exc_info:
+        service._install_unit(active=active, process_id="test_proc3", item=bad_item)  # type: ignore[attr-defined]
+
+    assert exc_info.value.error_code == "invalid_config", (
+        f"Constructor-payload failure must produce error_code='invalid_config'; "
+        f"got {exc_info.value.error_code!r}.  "
+        "_install_unit() must be the translation boundary for constructor payload failures."
+    )
+
+
+def test_build_route_returns_invalid_config_on_metadata_resolution_failure() -> None:
+    """The public build() path must return SandboxRequestError(invalid_config)
+    when metadata resolution fails, not a raw internal exception.
+
+    This end-to-end test ensures the full build() → _install_unit() → _resolve_unit_metadata
+    chain translates the failure before it reaches the caller.  Uses patch to inject
+    a _MetadataResolutionError from _resolve_unit_metadata so the test is isolated from
+    actual module availability.
+
+    Under the internal-sentinel design, _install_unit() catches _MetadataResolutionError
+    (not raw exception families), so the patch must inject the sentinel.
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    error_type = _sandbox_error_type()
+
+    # Access the module-private sentinel class.
+    MetadataResolutionError = getattr(realtime_module, "_MetadataResolutionError")
+
+    service = realtime_module.RealtimeGameService()
+    created = service.create_session(mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+
+    # Inject a _MetadataResolutionError from _resolve_unit_metadata to simulate
+    # a corrupt catalog entry (e.g. missing module target).
+    with patch.object(
+        realtime_module,
+        "_resolve_unit_metadata",
+        side_effect=MetadataResolutionError("injected missing module sentinel"),
+    ):
+        with pytest.raises(error_type) as exc_info:
+            service.build(
+                session_id=session_id,
+                item_id="place_heater_cooler",
+                config={"process_id": "heater_test"},
+                layout={"anchor_xy": (0.0, 0.0)},
+            )
+
+    assert exc_info.value.error_code == "invalid_config", (
+        f"build() must translate _MetadataResolutionError from _resolve_unit_metadata "
+        f"into SandboxRequestError(error_code='invalid_config'); "
+        f"got {exc_info.value.error_code!r}."
+    )
+
+
+def test_install_unit_does_not_translate_unrelated_exception_to_invalid_config() -> None:
+    """_install_unit() must NOT translate unrelated exceptions from _resolve_unit_metadata.
+
+    An unrelated exception such as RuntimeError injected from _resolve_unit_metadata
+    must propagate unchanged — not be silently masked as 'invalid_config'.
+
+    This guard enforces the narrow seam: broad Exception masking is not allowed.
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    error_type = _sandbox_error_type()
+
+    service = realtime_module.RealtimeGameService()
+    created = service.create_session(mode_id="phase1_process_sandbox_v1")
+    active = service._active_session  # type: ignore[attr-defined]
+
+    # Use a real catalog item so we reach _resolve_unit_metadata patching.
+    catalog = build_sandbox_catalog()
+    item = catalog["place_heater_cooler"]
+
+    unrelated_error = RuntimeError("unexpected internal failure — must not be masked")
+
+    with patch.object(
+        realtime_module,
+        "_resolve_unit_metadata",
+        side_effect=unrelated_error,
+    ):
+        with pytest.raises(RuntimeError) as exc_info:
+            service._install_unit(active=active, process_id="test_proc_unrelated", item=item)  # type: ignore[attr-defined]
+
+    assert exc_info.value is unrelated_error, (
+        "_install_unit() must NOT translate an unrelated RuntimeError from "
+        "_resolve_unit_metadata into SandboxRequestError(invalid_config). "
+        "Only approved metadata-resolution failures may be translated."
+    )
+    # Also assert no SandboxRequestError was raised instead.
+    assert not isinstance(exc_info.value, error_type), (
+        "The unrelated RuntimeError must NOT be wrapped as a SandboxRequestError."
+    )
+
+
+def test_resolve_unit_metadata_does_not_translate_import_side_effect_module_not_found() -> None:
+    """_resolve_unit_metadata must NOT translate import-side-effect ModuleNotFoundError.
+
+    If an otherwise valid module successfully starts loading but then fails because
+    one of ITS OWN dependencies is missing (import side-effect), the resulting
+    ModuleNotFoundError should NOT be translated to invalid_config.  Only
+    ModuleNotFoundError for the target module itself (unit_module) qualifies
+    as a metadata-resolution failure.
+
+    This regression guard proves the sentinel design is narrow: a
+    ModuleNotFoundError whose .name is NOT the target unit_module must escape
+    as-is and must NOT be caught and re-raised as SandboxRequestError(invalid_config).
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    error_type = _sandbox_error_type()
+
+    service = realtime_module.RealtimeGameService()
+    created = service.create_session(mode_id="phase1_process_sandbox_v1")
+    active = service._active_session  # type: ignore[attr-defined]
+
+    # A real importable module with a unit that actually exists — so unit_module itself
+    # is valid. We simulate that this module's own dependency "some_missing_dep" fails.
+    valid_unit_module = "modular_simulation.unit_processes.thermal.heater_cooler"
+    item = _make_fake_unit_blueprint_item(
+        {
+            "unit_module": valid_unit_module,
+            "unit_type": "HeaterCooler",
+            "constructor_payload": {},
+        }
+    )
+
+    # Inject a ModuleNotFoundError whose .name is a *different* module (side-effect dep),
+    # not the target unit_module.  This simulates a valid module whose dependency fails.
+    side_effect_dep_name = "some_missing_side_effect_dependency"
+    side_effect_error = ModuleNotFoundError(
+        f"No module named {side_effect_dep_name!r}",
+        name=side_effect_dep_name,
+    )
+
+    with patch.object(
+        realtime_module,
+        "_import_module",
+        side_effect=side_effect_error,
+    ):
+        with pytest.raises(ModuleNotFoundError) as exc_info:
+            service._install_unit(active=active, process_id="test_proc_side_effect", item=item)  # type: ignore[attr-defined]
+
+    assert exc_info.value is side_effect_error, (
+        "A ModuleNotFoundError caused by an import side-effect inside an otherwise "
+        "valid module (i.e. exc.name != unit_module) must NOT be caught and translated "
+        "to SandboxRequestError(invalid_config).  It must propagate unchanged."
+    )
+    assert not isinstance(exc_info.value, error_type), (
+        "Import side-effect ModuleNotFoundError must NOT become a SandboxRequestError."
+    )

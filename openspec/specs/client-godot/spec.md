@@ -75,6 +75,14 @@ Rejected playable-slice API requests SHALL return JSON error payloads with stabl
 - **WHEN** a client submits an invalid build item id, unsupported slice item, invalid build config, or invalid layout payload
 - **THEN** the service rejects the request with JSON `{error_code, message}` using stable error codes for the applicable failure
 
+### Requirement: Invalid Metadata-Driven Build Requests Preserve Stable HTTP Errors
+The playable-slice HTTP bridge SHALL translate invalid runtime-authoritative unit metadata failures for build requests into the existing stable JSON error payload and invalid-request status path.
+
+#### Scenario: Invalid metadata-driven build request returns stable JSON and HTTP 400
+- **WHEN** a build request reaches the gameplay layer and runtime-authoritative unit metadata resolution fails because the configured module, unit type, or constructor payload is invalid
+- **THEN** the HTTP bridge responds with JSON `{error_code: "invalid_config", message: ...}`
+- **AND** the response status is HTTP `400`
+
 ### Requirement: Command Success Responses Are Stable
 Successful playable-slice command endpoints SHALL return exactly `accepted`, `message`, and `snapshot` fields.
 

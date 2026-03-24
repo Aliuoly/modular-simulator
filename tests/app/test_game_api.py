@@ -282,6 +282,42 @@ def test_buy_feed_and_sell_product_payloads_remain_without_tank_id() -> None:
     assert set(sell_payload) == {"accepted", "message", "snapshot"}
 
 
+def test_build_route_returns_400_with_stable_invalid_config_on_metadata_resolution_failure() -> (
+    None
+):
+    """API regression: build route returns HTTP 400 with stable {error_code, message} when
+    the gameplay build path raises a metadata-resolution failure translated to invalid_config.
+
+    This pins the contract that _install_unit()'s SandboxRequestError(error_code="invalid_config")
+    surfaces as HTTP 400 with the frozen error shape, not as a 500 or unhandled exception.
+    """
+    module = import_module("modular_simulation.app.game_api")
+    from modular_simulation.gameplay.contracts import SandboxRequestError
+
+    def _fake_build_raises_invalid_config(**kwargs: Any) -> dict[str, Any]:
+        raise SandboxRequestError(
+            error_code="invalid_config",
+            message="Failed to resolve unit metadata for 'heater_1': No module named 'missing.module'",
+        )
+
+    with patch.object(module, "build", side_effect=_fake_build_raises_invalid_config):
+        client = TestClient(module.create_app())
+
+        response = client.post(
+            "/game/sessions/session-test/commands/build",
+            json={
+                "item_id": "place_heater_cooler",
+                "config": {"process_id": "heater_1"},
+                "layout": {"anchor_xy": [0.0, 0.0]},
+            },
+        )
+
+    assert response.status_code == 400
+    payload = response.json()
+    _assert_stable_error_payload(payload)
+    assert payload["error_code"] == "invalid_config"
+
+
 def test_buy_feed_and_sell_product_routes_do_not_forward_tank_id() -> None:
     """Freeze guard: tank_id is not part of the current public buy/sell command contract.
 

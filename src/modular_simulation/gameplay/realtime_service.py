@@ -50,6 +50,20 @@ class _UnitMetadata:
     outlet_ports: tuple[str, ...]
 
 
+class _MetadataResolutionError(Exception):
+    """Sentinel exception raised at exactly the approved failure sites within
+    _resolve_unit_metadata().  Only _install_unit() may catch this class.
+
+    The three approved failure sites are:
+    1. The target unit_module cannot be imported (ModuleNotFoundError for that module).
+    2. The unit_type attribute does not exist on the imported module (AttributeError).
+    3. The constructor_payload kwargs are invalid for the unit class (TypeError/ValueError).
+
+    Import-time side-effect failures inside an otherwise valid module are NOT
+    translated here; they are allowed to propagate as-is.
+    """
+
+
 def _resolve_unit_metadata(
     item: SandboxCatalogItemDefinition,
 ) -> _UnitMetadata:
@@ -61,6 +75,10 @@ def _resolve_unit_metadata(
     by importing the unit class and reading its ``.ports`` property.
 
     The helper is module-private; it must not be called for non-unit items.
+
+    Only three exact failure sites raise ``_MetadataResolutionError``; all other
+    exceptions propagate unchanged.  See ``_MetadataResolutionError`` for the
+    approved failure-site list.
     """
     cfg = item.default_config
     unit_module = str(cfg["unit_module"])
@@ -68,9 +86,37 @@ def _resolve_unit_metadata(
     raw_payload = cfg.get("constructor_payload", {})
     constructor_payload: dict[str, object] = dict(raw_payload) if raw_payload else {}
 
-    mod = _import_module(unit_module)
-    unit_cls = getattr(mod, unit_type)
-    instance = unit_cls(**constructor_payload)
+    # --- Failure site 1: missing configured module target ---
+    # Only translate ModuleNotFoundError if it refers to the target module itself
+    # (or a missing parent package).  A ModuleNotFoundError whose .name is a
+    # dependency of an otherwise-valid module must propagate unchanged.
+    try:
+        mod = _import_module(unit_module)
+    except ModuleNotFoundError as exc:
+        if exc.name is not None and (
+            exc.name == unit_module or unit_module.startswith(exc.name + ".")
+        ):
+            raise _MetadataResolutionError(
+                f"unit_module {unit_module!r} cannot be imported: {exc}"
+            ) from exc
+        raise
+
+    # --- Failure site 2: missing configured exported unit type ---
+    try:
+        unit_cls = getattr(mod, unit_type)
+    except AttributeError as exc:
+        raise _MetadataResolutionError(
+            f"unit_type {unit_type!r} not found in module {unit_module!r}: {exc}"
+        ) from exc
+
+    # --- Failure site 3: constructor payload signature/validation failure ---
+    try:
+        instance = unit_cls(**constructor_payload)
+    except (TypeError, ValueError) as exc:
+        raise _MetadataResolutionError(
+            f"constructor_payload is invalid for {unit_type!r}: {exc}"
+        ) from exc
+
     ports = instance.ports
 
     return _UnitMetadata(
@@ -461,7 +507,13 @@ class RealtimeGameService:
         process_id: str,
         item: SandboxCatalogItemDefinition,
     ) -> None:
-        meta = _resolve_unit_metadata(item)
+        try:
+            meta = _resolve_unit_metadata(item)
+        except _MetadataResolutionError as exc:
+            raise SandboxRequestError(
+                error_code="invalid_config",
+                message=f"Failed to resolve unit metadata for {process_id!r}: {exc}",
+            ) from exc
         network = active.runtime_bundle.backend_session.network
         try:
             network.add_process(
