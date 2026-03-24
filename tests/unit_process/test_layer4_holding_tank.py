@@ -235,6 +235,59 @@ def test_holding_tank_hydraulic_participation_has_exactly_one_balancing_group() 
 # ---------------------------------------------------------------------------
 
 
+def test_holding_tank_same_step_inflow_supports_same_step_withdrawal() -> None:
+    """Inflow arriving in the same step may support an equal withdrawal.
+
+    An empty tank receiving 10 mol/s inlet and a requested outlet demand of
+    10 mol/s over 1 second must:
+    - produce a positive outlet flow (material flows through),
+    - leave holdup >= 0 (conservation is not violated).
+
+    This is the same-step timing rule the spec explicitly allows: the ODE
+    integration sees the inlet throughout the step, so the bulk inventory
+    is transiently non-zero and can support the simultaneous draw.
+    """
+    tank = _make_tank(inlet_flow=10.0, inlet_temperature=300.0, inlet_pressure=101325.0)
+    tank.apply_requested_outlet_through_flow_demand("outlet", 10.0)
+    assert float(tank.holdup_mol) == pytest.approx(0.0)
+
+    tank.step(1.0)
+
+    assert float(tank.outlet_flow) > 0.0
+    assert float(tank.holdup_mol) >= 0.0
+
+
+def test_holding_tank_requested_outlet_is_capped_by_holdup_plus_same_step_inflow() -> None:
+    """Requested outlet demand must not overdraw beyond physically available moles.
+
+    For an empty tank with 10 mol/s inlet over 1 second, the maximum physically
+    withdrawable amount in the same step is 10 mol. A 20 mol/s requested demand
+    must therefore be capped to <= 10 mol/s realized outlet.
+    """
+    tank = _make_tank(inlet_flow=10.0, inlet_temperature=300.0, inlet_pressure=101325.0)
+    tank.apply_requested_outlet_through_flow_demand("outlet", 20.0)
+    assert float(tank.holdup_mol) == pytest.approx(0.0)
+
+    tank.step(1.0)
+
+    assert float(tank.outlet_flow) <= 10.0 + 1e-6
+    assert float(tank.holdup_mol) >= 0.0
+
+
+def test_holding_tank_empty_pass_through_uses_inlet_temperature_and_pressure() -> None:
+    """Near-empty pass-through must expose inlet T/P, not stale stored bulk T/P."""
+    tank = _make_tank(inlet_flow=5.0, inlet_temperature=355.0, inlet_pressure=155000.0)
+    tank.apply_requested_outlet_through_flow_demand("outlet", 5.0)
+
+    # Keep the tank in pass-through mode (near-empty with balanced in/out).
+    assert float(tank.holdup_mol) == pytest.approx(0.0)
+    tank.step(1.0)
+
+    outlet = tank.get_outlet_stream("outlet")
+    assert outlet.temperature == pytest.approx(355.0)
+    assert outlet.pressure == pytest.approx(155000.0)
+
+
 def test_holding_tank_compiles_as_ordinary_connected_process_node() -> None:
     """HoldingTank must compile successfully as an ordinary two-port process
     node in a minimal feed → tank → sink flowsheet.
@@ -263,3 +316,97 @@ def test_holding_tank_compiles_as_ordinary_connected_process_node() -> None:
     plant = flowsheet.compile()
 
     assert isinstance(plant, ConnectedPlantOrchestrator)
+
+
+def test_holding_tank_two_step_sequence_does_not_crash_when_inlet_widens_species_dimension() -> (
+    None
+):
+    """Running two macro-steps on a feed→tank→sink flowsheet where the feed carries
+    two species must not raise a ValueError on step 2.
+
+    Regression for: runtime transport lag cache retains stale 1-species composition
+    after step 1 caches the initial (1-species default) edge state.  On step 2 the
+    advected state reflects the now-2-species tank outlet, causing
+    ``_update_lag_transport_state`` to raise
+    ``ValueError: current_state and advected_state composition lengths must match``.
+
+    The fix must be in the runtime transport-state resolution path, not in HoldingTank.
+    """
+    from modular_simulation.flowsheet import Flowsheet
+    from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
+
+    # HoldingTank defaults to 1 species; the feed carries 2 species.
+    # Step 1: boundary propagation widens the tank to 2 species at the end of the step.
+    # Step 2: transport step sees 2-species advected state but (before the fix) a
+    #         stale 1-species cached lag state, triggering the length mismatch error.
+    context = SimulationRuntimeContext.create(species_names=["methane", "ethane"])
+    flowsheet = Flowsheet(context=context, dt=1.0)
+
+    tank = HoldingTank()  # type: ignore[call-arg]
+    flowsheet.add_unit("tank", tank)
+    flowsheet.add_feed_from_values("feed", T=300.0, P=150_000.0, z=(0.6, 0.4), flow=5.0)
+    flowsheet.add_sink("sink")
+    flowsheet.connect("feed", "tank")
+    flowsheet.connect("tank", "sink")
+
+    plant = flowsheet.compile()
+
+    # Step 1 must succeed.
+    _ = plant.step(macro_step_time_s=1.0)
+
+    # Step 2 must also succeed (before the fix this raises ValueError).
+    _ = plant.step(macro_step_time_s=1.0)
+
+
+def test_holding_tank_published_measurements_are_all_numeric_after_species_widening() -> None:
+    """After a HoldingTank widens species dimension (step 1 with a 2-species feed),
+    get_observability_observables() must return a published_measurements mapping
+    whose values are all plain Python floats (not ndarrays).
+
+    Regression for: _derive_publication_map() includes array-valued states
+    (holdup_component_moles, outlet_composition) in the publication map, and
+    Subsystem._make_publication_value_getter() calls float(source_getter()).
+    After the tank widens to 2 species, float(ndarray_of_shape_2) raises
+    TypeError: only length-1 arrays can be converted to Python scalars.
+    """
+    from modular_simulation.connection.runtime.connected_plant_orchestrator import (
+        ConnectedPlantOrchestrator,
+    )
+    from modular_simulation.flowsheet import Flowsheet
+    from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
+
+    context = SimulationRuntimeContext.create(species_names=["methane", "ethane"])
+    flowsheet = Flowsheet(context=context, dt=1.0)
+
+    tank = HoldingTank()  # type: ignore[call-arg]
+    flowsheet.add_unit("tank", tank)
+    flowsheet.add_feed_from_values("feed", T=300.0, P=150_000.0, z=(0.6, 0.4), flow=5.0)
+    flowsheet.add_sink("sink")
+    flowsheet.connect("feed", "tank")
+    flowsheet.connect("tank", "sink")
+
+    plant = flowsheet.compile()
+    assert isinstance(plant, ConnectedPlantOrchestrator)
+
+    # Step 1 widens the tank from 1-species default to 2 species.
+    _ = plant.step(macro_step_time_s=1.0)
+
+    # Reading observability after species widening must not raise TypeError.
+    # Before the fix this crashes:
+    #   TypeError: only length-1 arrays can be converted to Python scalars
+    observables = plant.get_observability_observables()
+
+    published_measurements = observables["published_measurements"]
+    # Every value must be a plain float, not an ndarray.
+    for tag, value in published_measurements.items():
+        assert isinstance(value, float), (
+            f"published_measurements['{tag}'] is {type(value).__name__}, expected float"
+        )
+
+    # Array-shaped states must NOT appear in published_measurements.
+    assert not any("component_moles" in tag for tag in published_measurements), (
+        "holdup_component_moles (ndarray) must not appear in published_measurements"
+    )
+    assert not any("composition" in tag and "tank" in tag for tag in published_measurements), (
+        "outlet_composition (ndarray) must not appear in published_measurements"
+    )

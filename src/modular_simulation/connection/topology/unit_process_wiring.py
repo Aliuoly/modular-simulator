@@ -72,15 +72,15 @@ def _derive_publication_map(unit: ProcessModel) -> dict[str, float]:
     for state_name, metadata in unit.state_metadata_dict.items():
         if metadata.type not in {StateType.ALGEBRAIC, StateType.DIFFERENTIAL}:
             continue
-        publication_map[state_name] = _default_publication_value(unit=unit, state_name=state_name)
+        value = unit.state_getter(state_name)
+        if not isinstance(value, (int, float)):
+            # Skip non-scalar states (e.g. ndarray composition vectors).
+            # Array-shaped states are surfaced via process_state_values, not
+            # published_measurements, so omitting them here is correct and
+            # prevents float(ndarray) TypeError after species-dimension widening.
+            continue
+        publication_map[state_name] = float(value)
     return publication_map
-
-
-def _default_publication_value(unit: ProcessModel, state_name: str) -> float:
-    value = unit.state_getter(state_name)
-    if isinstance(value, (int, float)):
-        return float(value)
-    return 0.0
 
 
 def _derive_descriptor_runtime_context(

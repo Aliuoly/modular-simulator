@@ -143,6 +143,7 @@ class _FakeNetwork:
             "observables": {
                 "published_measurements": {},
                 "plant_calculation_outputs": {},
+                "process_state_values": {},
             },
         }
 
@@ -890,6 +891,7 @@ class TestObservabilitySnapshot:
         assert isinstance(observables, MappingABC)
         assert "published_measurements" in observables
         assert "plant_calculation_outputs" in observables
+        assert "process_state_values" in observables
 
     def test_get_observability_snapshot_distinct_from_save_checkpoint(
         self,

@@ -55,9 +55,16 @@ def test_auto_wrap_heater() -> None:
     assert descriptor_fields["inlet_inlet"] == "unit_heater_inlet_inlet"
     assert descriptor_fields["outlet_outlet"] == "unit_heater_outlet_outlet"
 
+    # Only scalar-valued ALGEBRAIC/DIFFERENTIAL states are included in publication_map.
+    # Array-valued states (e.g. outlet_composition) are excluded to prevent float()
+    # conversion errors when species dimensions widen during simulation.
     for state_name, metadata in heater.state_metadata_dict.items():
         if metadata.type in {StateType.ALGEBRAIC, StateType.DIFFERENTIAL}:
-            assert state_name in subsystem.descriptor.publication_map
+            value = heater.state_getter(state_name)
+            if isinstance(value, (int, float)):
+                assert state_name in subsystem.descriptor.publication_map
+            else:
+                assert state_name not in subsystem.descriptor.publication_map
 
     assert getattr(heater, "_property_package", None) is runtime_context.get_property_package()
 
@@ -72,14 +79,24 @@ def test_auto_wrap_heater() -> None:
         dt=0.1,
         runtime_context=runtime_context,
     )
-    differential_states = [
+    # Only scalar DIFFERENTIAL states are published; array states (species_moles) are not.
+    scalar_differential_states = [
         name
         for name, metadata in cstr.state_metadata_dict.items()
         if metadata.type == StateType.DIFFERENTIAL
+        and isinstance(cstr.state_getter(name), (int, float))
     ]
-    assert differential_states
-    for state_name in differential_states:
+    assert scalar_differential_states
+    for state_name in scalar_differential_states:
         assert state_name in cstr_subsystem.descriptor.publication_map
+    array_differential_states = [
+        name
+        for name, metadata in cstr.state_metadata_dict.items()
+        if metadata.type == StateType.DIFFERENTIAL
+        and not isinstance(cstr.state_getter(name), (int, float))
+    ]
+    for state_name in array_differential_states:
+        assert state_name not in cstr_subsystem.descriptor.publication_map
 
     flash = FlashDrum(n_species=2)
     flash_subsystem = create_subsystem_for_unit(
