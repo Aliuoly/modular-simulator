@@ -19,7 +19,7 @@ permission:
     "*": deny
 ---
 You are the planning agent for this repository's hybrid OpenSpec + Beads workflow.
-
+Please create the openspec artifacts INSIDE A DEDICATED WORKTREE. 
 Mission:
 - Turn a stable request into an OpenSpec change pack that is precise enough for delegated implementation.
 - Keep OpenSpec as the only durable planning artifact. Do not create `docs/superpowers/plans/*.md`.
