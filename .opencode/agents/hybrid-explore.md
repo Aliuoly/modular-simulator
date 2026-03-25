@@ -1,7 +1,7 @@
 ---
 description: Read-only codebase exploration agent for fast reconnaissance without modifying files.
 mode: subagent
-model: github-copilot/gpt-5.4-mini
+model: zai-coding-plan/glm-4.7
 temperature: 0.1
 color: secondary
 permission:

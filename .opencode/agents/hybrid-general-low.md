@@ -1,7 +1,7 @@
 ---
 description: Execute small, well-bounded implementation tasks with strict TDD and no planning drift.
 mode: subagent
-model: github-copilot/claude-sonnet-4.6
+model: github-copilot/gpt-5.4-mini
 temperature: 0.1
 color: success
 permission:

@@ -1,7 +1,7 @@
 ---
 description: Read-only reviewer for spec compliance first and code quality second in the hybrid OpenSpec plus Beads workflow.
 mode: subagent
-model: github-copilot/gpt-5.4
+model: openai/gpt-5.4
 variant: high
 temperature: 0.1
 color: error

@@ -1,7 +1,7 @@
 ---
 description: Review plans and implementation for educationally transferable simulation realism, named engineering correlations, and accepted process heuristics.
 mode: subagent
-model: github-copilot/gpt-5.4
+model: openai/gpt-5.4
 variant: high
 temperature: 0.1
 permission:
