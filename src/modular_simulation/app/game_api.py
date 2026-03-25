@@ -8,7 +8,6 @@ from fastapi.responses import JSONResponse
 
 from modular_simulation.gameplay.contracts import SandboxRequestError
 from modular_simulation.gameplay.realtime_service import (
-    SUPPORTED_BUILD_ITEM_IDS,
     build,
     buy_feed,
     create_session,
@@ -18,10 +17,6 @@ from modular_simulation.gameplay.realtime_service import (
     sell_product,
 )
 from modular_simulation.gameplay.start_runtime import SUPPORTED_MODE_IDS
-
-SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID: dict[str, tuple[str, ...]] = {
-    mode_id: SUPPORTED_BUILD_ITEM_IDS for mode_id in SUPPORTED_MODE_IDS
-}
 
 
 class _ApiError(Exception):

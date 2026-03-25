@@ -15,6 +15,19 @@ SUPPORTED_MODE_IDS = (
     "phase1_process_sandbox_v1",
     "heater_flash_guided_build_v1",
 )
+SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID = {
+    "phase1_process_sandbox_v1": (
+        "place_heater_cooler",
+        "place_flash_drum",
+        "place_heat_exchanger",
+        "build_process_line",
+    ),
+    "heater_flash_guided_build_v1": (
+        "place_heater_cooler",
+        "place_flash_drum",
+        "build_process_line",
+    ),
+}
 SUPPORTED_SIMULATION_DT_S_PRESETS = (1 / 60, 1 / 30, 1 / 20)
 DEFAULT_SIMULATION_DT_S = 1 / 60
 
@@ -98,6 +111,27 @@ def _create_session(
     return service.create_session(mode_id=mode_id, simulation_dt_s=simulation_dt_s)
 
 
+def _place_public_process_units_for_line_tests(service: Any, session_id: str) -> None:
+    service.build(
+        session_id=session_id,
+        item_id="place_heater_cooler",
+        config={"process_id": "heater_1"},
+        layout={"anchor_xy": (0.0, 0.0)},
+    )
+    service.build(
+        session_id=session_id,
+        item_id="place_flash_drum",
+        config={"process_id": "flash_1"},
+        layout={"anchor_xy": (4.0, 0.0)},
+    )
+    service.build(
+        session_id=session_id,
+        item_id="place_heat_exchanger",
+        config={"process_id": "heat_exchanger_1"},
+        layout={"anchor_xy": (2.0, 2.0)},
+    )
+
+
 def test_realtime_service_api_surface_is_frozen() -> None:
     service = _service_api()
     assert (
@@ -112,11 +146,47 @@ def test_bootstrap_exposes_exact_slice_modes_and_simulation_dt_contract() -> Non
     bootstrap = service.get_bootstrap()
 
     assert tuple(cast(Any, _field(bootstrap, "supported_mode_ids"))) == SUPPORTED_MODE_IDS
+    assert dict(_field(bootstrap, "supported_build_item_ids_by_mode_id")) == {
+        mode_id: tuple(item_ids)
+        for mode_id, item_ids in SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID.items()
+    }
     assert tuple(
         cast(Any, _field(bootstrap, "supported_simulation_dt_s_presets"))
     ) == pytest.approx(SUPPORTED_SIMULATION_DT_S_PRESETS)
     assert _field(bootstrap, "default_simulation_dt_s") == pytest.approx(DEFAULT_SIMULATION_DT_S)
     assert _field(bootstrap, "pause_supported") is False
+
+
+def test_get_bootstrap_returns_copy_not_mutable_internal_mapping() -> None:
+    """get_bootstrap() must return a copy of the per-mode build mapping.
+
+    Mutating the returned mapping must not affect subsequent calls to
+    get_bootstrap(), proving the service-owned dict is not exposed directly.
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    service = realtime_module.RealtimeGameService()
+
+    bootstrap1 = service.get_bootstrap()
+    mapping = cast(Any, _field(bootstrap1, "supported_build_item_ids_by_mode_id"))
+
+    # Attempt to mutate the returned mapping by clearing it.
+    try:
+        mapping.clear()
+    except (AttributeError, TypeError):
+        # If the mapping is already immutable (e.g. a frozendict or wrapped),
+        # that's fine — the constraint is already satisfied.
+        return
+
+    # If mutation succeeded, a fresh call must still return the original data.
+    bootstrap2 = service.get_bootstrap()
+    mapping2 = dict(cast(Any, _field(bootstrap2, "supported_build_item_ids_by_mode_id")))
+    assert mapping2 == {
+        mode_id: tuple(item_ids)
+        for mode_id, item_ids in SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID.items()
+    }, (
+        "get_bootstrap() must return a defensive copy of the per-mode build mapping; "
+        "mutating the returned value must not corrupt subsequent bootstrap calls."
+    )
 
 
 @pytest.mark.parametrize("simulation_dt_s", [None, 1 / 60, 1 / 30, 1 / 20])
@@ -231,10 +301,9 @@ def test_combined_snapshot_contains_required_authoritative_sections() -> None:
     assert isinstance(_field(snapshot, "published_signal_values_by_id"), Mapping)
     assert isinstance(_field(snapshot, "topology"), Mapping)
     assert isinstance(_field(snapshot, "board_layout"), Mapping)
-    assert tuple(cast(Any, _field(snapshot, "supported_build_item_ids"))) == (
-        "place_heater_cooler",
-        "place_flash_drum",
-        "build_process_line",
+    assert (
+        tuple(cast(Any, _field(snapshot, "supported_build_item_ids")))
+        == (SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID["phase1_process_sandbox_v1"])
     )
     assert cast(float, _field(snapshot, "lag_backlog_s")) >= 0.0
 
@@ -594,21 +663,439 @@ def test_resolve_unit_metadata_instantiates_unit_class_with_constructor_payload(
 # ---------------------------------------------------------------------------
 
 
-def test_supported_build_item_ids_remains_exactly_frozen_live_set() -> None:
-    """SUPPORTED_BUILD_ITEM_IDS must stay exactly ("place_heater_cooler",
-    "place_flash_drum", "build_process_line") — unchanged by the staging work.
+def test_supported_build_items_are_mode_exact_for_current_public_slice() -> None:
+    service = _service_api()
 
-    place_holding_tank and place_quality_control_lab must NOT appear here.
+    bootstrap = service.get_bootstrap()
+    actual = {
+        mode_id: tuple(item_ids)
+        for mode_id, item_ids in dict(
+            _field(bootstrap, "supported_build_item_ids_by_mode_id")
+        ).items()
+    }
+    assert actual == SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID
+
+
+@pytest.mark.parametrize(
+    ("mode_id", "expected_items"),
+    [
+        (
+            "phase1_process_sandbox_v1",
+            SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID["phase1_process_sandbox_v1"],
+        ),
+        (
+            "heater_flash_guided_build_v1",
+            SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID["heater_flash_guided_build_v1"],
+        ),
+    ],
+)
+def test_snapshot_supported_build_items_match_mode_exact_public_slice(
+    mode_id: str, expected_items: tuple[str, ...]
+) -> None:
+    service = _service_api()
+
+    created = _create_session(service, mode_id=mode_id)
+    snapshot = _field(created, "snapshot")
+    assert tuple(cast(Any, _field(snapshot, "supported_build_item_ids"))) == expected_items
+
+
+def test_widened_add_process_items_build_successfully_with_generic_contract() -> None:
+    service = _service_api()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+
+    build_heat_exchanger = service.build(
+        session_id=session_id,
+        item_id="place_heat_exchanger",
+        config={"process_id": "heat_exchanger_1"},
+        layout={"anchor_xy": (1.0, 1.0)},
+    )
+    assert _field(build_heat_exchanger, "accepted") is True
+
+
+def test_public_add_process_build_ignores_metadata_override_keys() -> None:
+    service = _service_api()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+
+    build_heater = service.build(
+        session_id=session_id,
+        item_id="place_heater_cooler",
+        config={
+            "process_id": "heater_override_attempt",
+            "unit_module": "modular_simulation.unit_processes.__does_not_exist__",
+            "unit_type": "DefinitelyNotAUnit",
+            "constructor_payload": {"not": "used"},
+        },
+        layout={"anchor_xy": (0.0, 0.0)},
+    )
+
+    assert _field(build_heater, "accepted") is True
+
+
+def test_place_component_separator_is_rejected_with_unknown_item_in_sandbox() -> None:
+    """place_component_separator must be rejected on the stable unknown_item path.
+
+    Even though it is a unit_blueprint/add_process item in the catalog and appears
+    in the start's allowed_item_ids, it is explicitly deferred from the current
+    public playable build slice. The build() call must raise
+    SandboxRequestError(error_code="unknown_item").
     """
-    module = import_module("modular_simulation.gameplay.realtime_service")
-    supported = tuple(module.SUPPORTED_BUILD_ITEM_IDS)
-    assert supported == (
-        "place_heater_cooler",
-        "place_flash_drum",
-        "build_process_line",
+    service = _service_api()
+    error_type = _sandbox_error_type()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+
+    with pytest.raises(error_type) as exc_info:
+        service.build(
+            session_id=session_id,
+            item_id="place_component_separator",
+            config={
+                "process_id": "component_separator_1",
+            },
+            layout={"anchor_xy": (2.0, 1.0)},
+        )
+    assert exc_info.value.error_code == "unknown_item", (
+        f"place_component_separator must be rejected with error_code='unknown_item'; "
+        f"got {exc_info.value.error_code!r}. "
+        "It is deferred from the current public playable build slice."
+    )
+
+
+@pytest.mark.parametrize(
+    "deferred_item_id",
+    [
+        "place_component_separator",
+        "install_sampled_delayed_sensor",
+        "install_pid_controller",
+        "install_line_pump",
+        "install_line_valve",
+        "install_line_heat_actuator",
+        "place_merge_junction_2x1",
+        "place_split_junction_1x2",
+    ],
+)
+def test_deferred_build_items_stay_unknown_item_for_current_playable_slice(
+    deferred_item_id: str,
+) -> None:
+    service = _service_api()
+    error_type = _sandbox_error_type()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+
+    with pytest.raises(error_type) as exc_info:
+        service.build(
+            session_id=session_id,
+            item_id=deferred_item_id,
+            config={},
+            layout={},
+        )
+
+    assert exc_info.value.error_code == "unknown_item"
+
+
+def test_rejected_widened_add_process_build_is_state_atomic() -> None:
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    error_type = _sandbox_error_type()
+    service = realtime_module.RealtimeGameService()
+
+    with patch.object(realtime_module, "_monotonic", return_value=0.0):
+        created = service.create_session(mode_id="phase1_process_sandbox_v1")
+        session_id = _field(created, "session_id")
+        baseline_snapshot = service.get_snapshot(session_id=session_id)
+
+    with pytest.raises(error_type) as exc_info:
+        service.build(
+            session_id=session_id,
+            item_id="place_heat_exchanger",
+            config={"process_id": "hx_missing_anchor"},
+            layout={},
+        )
+    assert exc_info.value.error_code == "invalid_layout"
+
+    with patch.object(realtime_module, "_monotonic", return_value=0.0):
+        after_snapshot = service.get_snapshot(session_id=session_id)
+
+    assert _field(after_snapshot, "board_layout") == _field(baseline_snapshot, "board_layout")
+    assert _field(after_snapshot, "topology") == _field(baseline_snapshot, "topology")
+    assert _field(after_snapshot, "cash_ledger") == _field(baseline_snapshot, "cash_ledger")
+
+
+def test_insufficient_cash_build_rejection_is_state_atomic() -> None:
+    """A build rejected due to insufficient cash must leave topology, board_layout,
+    and cash_ledger unchanged.
+
+    Reproduces the bug: build() was mutating topology/layout before calling
+    record_equipment_purchase(), so an insufficient_cash failure left partial state.
+
+    Strategy: place_heater_cooler costs 145.0 (25 * Lang factor 5.8) per unit.
+    Starting cash is 900.0.  Six heaters exhaust 870.0 leaving 30.0.  The seventh
+    heater placement triggers insufficient_cash before the ledger is committed.
+    We assert the failing command leaves board_layout, topology, and cash_ledger
+    unchanged from the pre-failure snapshot.
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    error_type = _sandbox_error_type()
+    service = realtime_module.RealtimeGameService()
+
+    with patch.object(realtime_module, "_monotonic", return_value=0.0):
+        created = service.create_session(mode_id="phase1_process_sandbox_v1")
+        session_id = _field(created, "session_id")
+
+    # Place heaters until cash is too low for another one.
+    # place_heater_cooler installed cost = 25.0 * 5.8 = 145.0.
+    # 6 placements consume 870.0 of 900.0, leaving 30.0 < 145.0.
+    for i in range(6):
+        with patch.object(realtime_module, "_monotonic", return_value=0.0):
+            service.build(
+                session_id=session_id,
+                item_id="place_heater_cooler",
+                config={"process_id": f"heater_{i}"},
+                layout={"anchor_xy": (float(i), 0.0)},
+            )
+
+    # Snapshot the state just before the failing build.
+    with patch.object(realtime_module, "_monotonic", return_value=0.0):
+        pre_failure_snapshot = service.get_snapshot(session_id=session_id)
+
+    # The seventh heater should be unaffordable.
+    with pytest.raises(error_type) as exc_info:
+        with patch.object(realtime_module, "_monotonic", return_value=0.0):
+            service.build(
+                session_id=session_id,
+                item_id="place_heater_cooler",
+                config={"process_id": "heater_overflow"},
+                layout={"anchor_xy": (6.0, 0.0)},
+            )
+    assert exc_info.value.error_code == "insufficient_cash", (
+        f"Expected insufficient_cash error; got {exc_info.value.error_code!r}. "
+        "Adjust the setup so cash is actually exhausted."
+    )
+
+    # The failed build must be state-atomic: topology, layout, and ledger unchanged.
+    with patch.object(realtime_module, "_monotonic", return_value=0.0):
+        post_failure_snapshot = service.get_snapshot(session_id=session_id)
+
+    assert _field(post_failure_snapshot, "board_layout") == _field(
+        pre_failure_snapshot, "board_layout"
+    ), "board_layout must not be mutated by a rejected insufficient_cash build."
+    assert _field(post_failure_snapshot, "topology") == _field(pre_failure_snapshot, "topology"), (
+        "topology must not be mutated by a rejected insufficient_cash build."
+    )
+    assert _field(post_failure_snapshot, "cash_ledger") == _field(
+        pre_failure_snapshot, "cash_ledger"
+    ), "cash_ledger must not be mutated by a rejected insufficient_cash build."
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("feed_a", "heater_1.inlet"),
+        ("heater_1.outlet", "product_a"),
+        ("feed_a", "flash_1.inlet"),
+        ("flash_1.vapor_outlet", "product_a"),
+        ("flash_1.liquid_outlet", "product_b"),
+        ("feed_a", "heat_exchanger_1.hot_inlet"),
+        ("feed_b", "heat_exchanger_1.cold_inlet"),
+        ("heat_exchanger_1.hot_outlet", "product_a"),
+        ("heat_exchanger_1.cold_outlet", "product_b"),
+    ],
+)
+def test_build_process_line_accepts_explicit_endpoint_contract(source: str, target: str) -> None:
+    service = _service_api()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+
+    _place_public_process_units_for_line_tests(service, session_id)
+
+    build_line = service.build(
+        session_id=session_id,
+        item_id="build_process_line",
+        config={"source": source, "target": target},
+        layout={"path_xy": [(0.0, 0.0), (2.0, 0.0)]},
+    )
+    assert _field(build_line, "accepted") is True
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("feed_a", "heater_1"),
+        ("feed_a", "flash_1"),
+        ("feed_a", "heat_exchanger_1"),
+        ("heater_1", "product_a"),
+        ("flash_1", "product_a"),
+        ("heat_exchanger_1", "product_a"),
+    ],
+)
+def test_build_process_line_rejects_bare_non_boundary_endpoint_ids(
+    source: str, target: str
+) -> None:
+    service = _service_api()
+    error_type = _sandbox_error_type()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+    _place_public_process_units_for_line_tests(service, session_id)
+
+    with pytest.raises(error_type) as exc_info:
+        service.build(
+            session_id=session_id,
+            item_id="build_process_line",
+            config={"source": source, "target": target},
+            layout={"path_xy": [(0.0, 0.0), (2.0, 0.0)]},
+        )
+
+    assert exc_info.value.error_code == "invalid_config"
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("heater_1..outlet", "product_a"),
+        ("ghost_1.outlet", "product_a"),
+        ("feed_a", "unknown_product_boundary"),
+        ("heater_1.ghost_port", "product_a"),
+        ("heater_1.inlet", "product_a"),
+        ("feed_a", "heater_1.outlet"),
+    ],
+)
+def test_build_process_line_rejects_malformed_unknown_or_wrong_direction_endpoints(
+    source: str, target: str
+) -> None:
+    service = _service_api()
+    error_type = _sandbox_error_type()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+    _place_public_process_units_for_line_tests(service, session_id)
+
+    with pytest.raises(error_type) as exc_info:
+        service.build(
+            session_id=session_id,
+            item_id="build_process_line",
+            config={"source": source, "target": target},
+            layout={"path_xy": [(0.0, 0.0), (2.0, 0.0)]},
+        )
+
+    assert exc_info.value.error_code == "invalid_config"
+
+
+def test_build_process_line_preserves_exact_endpoint_strings_in_snapshot_payloads() -> None:
+    service = _service_api()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+    _place_public_process_units_for_line_tests(service, session_id)
+
+    line = service.build(
+        session_id=session_id,
+        item_id="build_process_line",
+        config={"source": "feed_a", "target": "heater_1.inlet"},
+        layout={"path_xy": [(0.0, 0.0), (1.0, 0.0)]},
+    )
+    snapshot = _field(line, "snapshot")
+    board_layout = cast(Mapping[str, object], _field(snapshot, "board_layout"))
+    line_entities = cast(
+        Mapping[str, Mapping[str, object]], board_layout["line_entities_by_line_id"]
+    )
+    assert len(line_entities) == 1
+    only_line = next(iter(line_entities.values()))
+    assert only_line["source"] == "feed_a"
+    assert only_line["target"] == "heater_1.inlet"
+
+    topology = cast(Mapping[str, object], _field(snapshot, "topology"))
+    topology_graph = cast(Mapping[str, object], topology["topology"])
+    edges = cast(tuple[Mapping[str, object], ...], tuple(topology_graph["edges"]))
+    assert len(edges) == 1
+    edge = edges[0]
+    assert cast(Mapping[str, object], edge["source"]) == {
+        "node_id": "feed_a",
+        "port_name": "outlet",
+    }
+    assert cast(Mapping[str, object], edge["target"]) == {
+        "node_id": "heater_1",
+        "port_name": "inlet",
+    }
+
+
+def test_port_wiring_remains_topology_only_without_runtime_unit_behavior() -> None:
+    """Topology wiring is honesty-only: same-feed sessions produce identical
+    signal values and product inventory whether or not process-port lines are wired.
+
+    Two freshly-created sessions receive identical feed purchases and an equal
+    tick.  Session B additionally has heater_1 placed and feed_a wired through
+    heater_1.inlet -> heater_1.outlet to product_a.  Because the topology layer
+    is honesty-only in this slice, the production and published signal values
+    must be the same in both sessions after the tick.
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+
+    # Session A: feed purchased, no units placed, no wiring.
+    with patch.object(realtime_module, "_monotonic", return_value=0.0):
+        service_a = realtime_module.RealtimeGameService()
+        created_a = service_a.create_session(mode_id="phase1_process_sandbox_v1")
+        session_id_a = _field(created_a, "session_id")
+        service_a.buy_feed(session_id=session_id_a, material_id="feed_a", quantity_mol=50.0)
+
+    # Session B: same feed purchased, heater placed, feed wired through unit ports.
+    with patch.object(realtime_module, "_monotonic", return_value=0.0):
+        service_b = realtime_module.RealtimeGameService()
+        created_b = service_b.create_session(mode_id="phase1_process_sandbox_v1")
+        session_id_b = _field(created_b, "session_id")
+        service_b.buy_feed(session_id=session_id_b, material_id="feed_a", quantity_mol=50.0)
+        service_b.build(
+            session_id=session_id_b,
+            item_id="place_heater_cooler",
+            config={"process_id": "heater_1"},
+            layout={"anchor_xy": (0.0, 0.0)},
+        )
+        service_b.build(
+            session_id=session_id_b,
+            item_id="build_process_line",
+            config={"source": "feed_a", "target": "heater_1.inlet"},
+            layout={"path_xy": [(0.0, 0.0), (1.0, 0.0)]},
+        )
+        service_b.build(
+            session_id=session_id_b,
+            item_id="build_process_line",
+            config={"source": "heater_1.outlet", "target": "product_a"},
+            layout={"path_xy": [(1.0, 0.0), (2.0, 0.0)]},
+        )
+
+    # Advance both sessions by the same wall-clock delta, no auto-advancement.
+    tick_a = service_a.tick(session_id=session_id_a, wall_dt_s=0.5)
+    tick_b = service_b.tick(session_id=session_id_b, wall_dt_s=0.5)
+
+    snap_a = cast(
+        SimulationSessionSnapshot, _field(_field(tick_a, "snapshot"), "simulation_snapshot")
+    )
+    snap_b = cast(
+        SimulationSessionSnapshot, _field(_field(tick_b, "snapshot"), "simulation_snapshot")
+    )
+
+    # Product inventory must be identical: topology wiring is honesty-only.
+    assert dict(snap_a.product_inventory_by_product_id) == dict(
+        snap_b.product_inventory_by_product_id
     ), (
-        f"SUPPORTED_BUILD_ITEM_IDS changed; got {supported!r}. "
-        "This constant must remain frozen throughout the staging work."
+        "Topology wiring (heater_1 process-port wiring) must not affect product inventory. "
+        "The topology layer is honesty-only in this slice."
+    )
+
+    # Published signal values must also be identical across both sessions.
+    sigs_a = cast(
+        Mapping[str, float], _field(_field(tick_a, "snapshot"), "published_signal_values_by_id")
+    )
+    sigs_b = cast(
+        Mapping[str, float], _field(_field(tick_b, "snapshot"), "published_signal_values_by_id")
+    )
+    assert dict(sigs_a) == dict(sigs_b), (
+        "Published signal values must be unaffected by topology wiring in the current slice."
     )
 
 
