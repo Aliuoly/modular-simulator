@@ -15,6 +15,19 @@ SUPPORTED_MODE_IDS = (
     "phase1_process_sandbox_v1",
     "heater_flash_guided_build_v1",
 )
+SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID = {
+    "phase1_process_sandbox_v1": (
+        "place_heater_cooler",
+        "place_flash_drum",
+        "place_heat_exchanger",
+        "build_process_line",
+    ),
+    "heater_flash_guided_build_v1": (
+        "place_heater_cooler",
+        "place_flash_drum",
+        "build_process_line",
+    ),
+}
 SUPPORTED_SIMULATION_DT_S_PRESETS = (1 / 60, 1 / 30, 1 / 20)
 DEFAULT_SIMULATION_DT_S = 1 / 60
 
@@ -98,6 +111,27 @@ def _create_session(
     return service.create_session(mode_id=mode_id, simulation_dt_s=simulation_dt_s)
 
 
+def _place_public_process_units_for_line_tests(service: Any, session_id: str) -> None:
+    service.build(
+        session_id=session_id,
+        item_id="place_heater_cooler",
+        config={"process_id": "heater_1"},
+        layout={"anchor_xy": (0.0, 0.0)},
+    )
+    service.build(
+        session_id=session_id,
+        item_id="place_flash_drum",
+        config={"process_id": "flash_1"},
+        layout={"anchor_xy": (4.0, 0.0)},
+    )
+    service.build(
+        session_id=session_id,
+        item_id="place_heat_exchanger",
+        config={"process_id": "heat_exchanger_1"},
+        layout={"anchor_xy": (2.0, 2.0)},
+    )
+
+
 def test_realtime_service_api_surface_is_frozen() -> None:
     service = _service_api()
     assert (
@@ -112,11 +146,47 @@ def test_bootstrap_exposes_exact_slice_modes_and_simulation_dt_contract() -> Non
     bootstrap = service.get_bootstrap()
 
     assert tuple(cast(Any, _field(bootstrap, "supported_mode_ids"))) == SUPPORTED_MODE_IDS
+    assert dict(_field(bootstrap, "supported_build_item_ids_by_mode_id")) == {
+        mode_id: tuple(item_ids)
+        for mode_id, item_ids in SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID.items()
+    }
     assert tuple(
         cast(Any, _field(bootstrap, "supported_simulation_dt_s_presets"))
     ) == pytest.approx(SUPPORTED_SIMULATION_DT_S_PRESETS)
     assert _field(bootstrap, "default_simulation_dt_s") == pytest.approx(DEFAULT_SIMULATION_DT_S)
     assert _field(bootstrap, "pause_supported") is False
+
+
+def test_get_bootstrap_returns_copy_not_mutable_internal_mapping() -> None:
+    """get_bootstrap() must return a copy of the per-mode build mapping.
+
+    Mutating the returned mapping must not affect subsequent calls to
+    get_bootstrap(), proving the service-owned dict is not exposed directly.
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    service = realtime_module.RealtimeGameService()
+
+    bootstrap1 = service.get_bootstrap()
+    mapping = cast(Any, _field(bootstrap1, "supported_build_item_ids_by_mode_id"))
+
+    # Attempt to mutate the returned mapping by clearing it.
+    try:
+        mapping.clear()
+    except (AttributeError, TypeError):
+        # If the mapping is already immutable (e.g. a frozendict or wrapped),
+        # that's fine — the constraint is already satisfied.
+        return
+
+    # If mutation succeeded, a fresh call must still return the original data.
+    bootstrap2 = service.get_bootstrap()
+    mapping2 = dict(cast(Any, _field(bootstrap2, "supported_build_item_ids_by_mode_id")))
+    assert mapping2 == {
+        mode_id: tuple(item_ids)
+        for mode_id, item_ids in SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID.items()
+    }, (
+        "get_bootstrap() must return a defensive copy of the per-mode build mapping; "
+        "mutating the returned value must not corrupt subsequent bootstrap calls."
+    )
 
 
 @pytest.mark.parametrize("simulation_dt_s", [None, 1 / 60, 1 / 30, 1 / 20])
@@ -231,10 +301,9 @@ def test_combined_snapshot_contains_required_authoritative_sections() -> None:
     assert isinstance(_field(snapshot, "published_signal_values_by_id"), Mapping)
     assert isinstance(_field(snapshot, "topology"), Mapping)
     assert isinstance(_field(snapshot, "board_layout"), Mapping)
-    assert tuple(cast(Any, _field(snapshot, "supported_build_item_ids"))) == (
-        "place_heater_cooler",
-        "place_flash_drum",
-        "build_process_line",
+    assert (
+        tuple(cast(Any, _field(snapshot, "supported_build_item_ids")))
+        == (SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID["phase1_process_sandbox_v1"])
     )
     assert cast(float, _field(snapshot, "lag_backlog_s")) >= 0.0
 
@@ -594,21 +663,439 @@ def test_resolve_unit_metadata_instantiates_unit_class_with_constructor_payload(
 # ---------------------------------------------------------------------------
 
 
-def test_supported_build_item_ids_remains_exactly_frozen_live_set() -> None:
-    """SUPPORTED_BUILD_ITEM_IDS must stay exactly ("place_heater_cooler",
-    "place_flash_drum", "build_process_line") — unchanged by the staging work.
+def test_supported_build_items_are_mode_exact_for_current_public_slice() -> None:
+    service = _service_api()
 
-    place_holding_tank and place_quality_control_lab must NOT appear here.
+    bootstrap = service.get_bootstrap()
+    actual = {
+        mode_id: tuple(item_ids)
+        for mode_id, item_ids in dict(
+            _field(bootstrap, "supported_build_item_ids_by_mode_id")
+        ).items()
+    }
+    assert actual == SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID
+
+
+@pytest.mark.parametrize(
+    ("mode_id", "expected_items"),
+    [
+        (
+            "phase1_process_sandbox_v1",
+            SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID["phase1_process_sandbox_v1"],
+        ),
+        (
+            "heater_flash_guided_build_v1",
+            SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID["heater_flash_guided_build_v1"],
+        ),
+    ],
+)
+def test_snapshot_supported_build_items_match_mode_exact_public_slice(
+    mode_id: str, expected_items: tuple[str, ...]
+) -> None:
+    service = _service_api()
+
+    created = _create_session(service, mode_id=mode_id)
+    snapshot = _field(created, "snapshot")
+    assert tuple(cast(Any, _field(snapshot, "supported_build_item_ids"))) == expected_items
+
+
+def test_widened_add_process_items_build_successfully_with_generic_contract() -> None:
+    service = _service_api()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+
+    build_heat_exchanger = service.build(
+        session_id=session_id,
+        item_id="place_heat_exchanger",
+        config={"process_id": "heat_exchanger_1"},
+        layout={"anchor_xy": (1.0, 1.0)},
+    )
+    assert _field(build_heat_exchanger, "accepted") is True
+
+
+def test_public_add_process_build_ignores_metadata_override_keys() -> None:
+    service = _service_api()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+
+    build_heater = service.build(
+        session_id=session_id,
+        item_id="place_heater_cooler",
+        config={
+            "process_id": "heater_override_attempt",
+            "unit_module": "modular_simulation.unit_processes.__does_not_exist__",
+            "unit_type": "DefinitelyNotAUnit",
+            "constructor_payload": {"not": "used"},
+        },
+        layout={"anchor_xy": (0.0, 0.0)},
+    )
+
+    assert _field(build_heater, "accepted") is True
+
+
+def test_place_component_separator_is_rejected_with_unknown_item_in_sandbox() -> None:
+    """place_component_separator must be rejected on the stable unknown_item path.
+
+    Even though it is a unit_blueprint/add_process item in the catalog and appears
+    in the start's allowed_item_ids, it is explicitly deferred from the current
+    public playable build slice. The build() call must raise
+    SandboxRequestError(error_code="unknown_item").
     """
-    module = import_module("modular_simulation.gameplay.realtime_service")
-    supported = tuple(module.SUPPORTED_BUILD_ITEM_IDS)
-    assert supported == (
-        "place_heater_cooler",
-        "place_flash_drum",
-        "build_process_line",
+    service = _service_api()
+    error_type = _sandbox_error_type()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+
+    with pytest.raises(error_type) as exc_info:
+        service.build(
+            session_id=session_id,
+            item_id="place_component_separator",
+            config={
+                "process_id": "component_separator_1",
+            },
+            layout={"anchor_xy": (2.0, 1.0)},
+        )
+    assert exc_info.value.error_code == "unknown_item", (
+        f"place_component_separator must be rejected with error_code='unknown_item'; "
+        f"got {exc_info.value.error_code!r}. "
+        "It is deferred from the current public playable build slice."
+    )
+
+
+@pytest.mark.parametrize(
+    "deferred_item_id",
+    [
+        "place_component_separator",
+        "install_sampled_delayed_sensor",
+        "install_pid_controller",
+        "install_line_pump",
+        "install_line_valve",
+        "install_line_heat_actuator",
+        "place_merge_junction_2x1",
+        "place_split_junction_1x2",
+    ],
+)
+def test_deferred_build_items_stay_unknown_item_for_current_playable_slice(
+    deferred_item_id: str,
+) -> None:
+    service = _service_api()
+    error_type = _sandbox_error_type()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+
+    with pytest.raises(error_type) as exc_info:
+        service.build(
+            session_id=session_id,
+            item_id=deferred_item_id,
+            config={},
+            layout={},
+        )
+
+    assert exc_info.value.error_code == "unknown_item"
+
+
+def test_rejected_widened_add_process_build_is_state_atomic() -> None:
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    error_type = _sandbox_error_type()
+    service = realtime_module.RealtimeGameService()
+
+    with patch.object(realtime_module, "_monotonic", return_value=0.0):
+        created = service.create_session(mode_id="phase1_process_sandbox_v1")
+        session_id = _field(created, "session_id")
+        baseline_snapshot = service.get_snapshot(session_id=session_id)
+
+    with pytest.raises(error_type) as exc_info:
+        service.build(
+            session_id=session_id,
+            item_id="place_heat_exchanger",
+            config={"process_id": "hx_missing_anchor"},
+            layout={},
+        )
+    assert exc_info.value.error_code == "invalid_layout"
+
+    with patch.object(realtime_module, "_monotonic", return_value=0.0):
+        after_snapshot = service.get_snapshot(session_id=session_id)
+
+    assert _field(after_snapshot, "board_layout") == _field(baseline_snapshot, "board_layout")
+    assert _field(after_snapshot, "topology") == _field(baseline_snapshot, "topology")
+    assert _field(after_snapshot, "cash_ledger") == _field(baseline_snapshot, "cash_ledger")
+
+
+def test_insufficient_cash_build_rejection_is_state_atomic() -> None:
+    """A build rejected due to insufficient cash must leave topology, board_layout,
+    and cash_ledger unchanged.
+
+    Reproduces the bug: build() was mutating topology/layout before calling
+    record_equipment_purchase(), so an insufficient_cash failure left partial state.
+
+    Strategy: place_heater_cooler costs 145.0 (25 * Lang factor 5.8) per unit.
+    Starting cash is 900.0.  Six heaters exhaust 870.0 leaving 30.0.  The seventh
+    heater placement triggers insufficient_cash before the ledger is committed.
+    We assert the failing command leaves board_layout, topology, and cash_ledger
+    unchanged from the pre-failure snapshot.
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    error_type = _sandbox_error_type()
+    service = realtime_module.RealtimeGameService()
+
+    with patch.object(realtime_module, "_monotonic", return_value=0.0):
+        created = service.create_session(mode_id="phase1_process_sandbox_v1")
+        session_id = _field(created, "session_id")
+
+    # Place heaters until cash is too low for another one.
+    # place_heater_cooler installed cost = 25.0 * 5.8 = 145.0.
+    # 6 placements consume 870.0 of 900.0, leaving 30.0 < 145.0.
+    for i in range(6):
+        with patch.object(realtime_module, "_monotonic", return_value=0.0):
+            service.build(
+                session_id=session_id,
+                item_id="place_heater_cooler",
+                config={"process_id": f"heater_{i}"},
+                layout={"anchor_xy": (float(i), 0.0)},
+            )
+
+    # Snapshot the state just before the failing build.
+    with patch.object(realtime_module, "_monotonic", return_value=0.0):
+        pre_failure_snapshot = service.get_snapshot(session_id=session_id)
+
+    # The seventh heater should be unaffordable.
+    with pytest.raises(error_type) as exc_info:
+        with patch.object(realtime_module, "_monotonic", return_value=0.0):
+            service.build(
+                session_id=session_id,
+                item_id="place_heater_cooler",
+                config={"process_id": "heater_overflow"},
+                layout={"anchor_xy": (6.0, 0.0)},
+            )
+    assert exc_info.value.error_code == "insufficient_cash", (
+        f"Expected insufficient_cash error; got {exc_info.value.error_code!r}. "
+        "Adjust the setup so cash is actually exhausted."
+    )
+
+    # The failed build must be state-atomic: topology, layout, and ledger unchanged.
+    with patch.object(realtime_module, "_monotonic", return_value=0.0):
+        post_failure_snapshot = service.get_snapshot(session_id=session_id)
+
+    assert _field(post_failure_snapshot, "board_layout") == _field(
+        pre_failure_snapshot, "board_layout"
+    ), "board_layout must not be mutated by a rejected insufficient_cash build."
+    assert _field(post_failure_snapshot, "topology") == _field(pre_failure_snapshot, "topology"), (
+        "topology must not be mutated by a rejected insufficient_cash build."
+    )
+    assert _field(post_failure_snapshot, "cash_ledger") == _field(
+        pre_failure_snapshot, "cash_ledger"
+    ), "cash_ledger must not be mutated by a rejected insufficient_cash build."
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("feed_a", "heater_1.inlet"),
+        ("heater_1.outlet", "product_a"),
+        ("feed_a", "flash_1.inlet"),
+        ("flash_1.vapor_outlet", "product_a"),
+        ("flash_1.liquid_outlet", "product_b"),
+        ("feed_a", "heat_exchanger_1.hot_inlet"),
+        ("feed_b", "heat_exchanger_1.cold_inlet"),
+        ("heat_exchanger_1.hot_outlet", "product_a"),
+        ("heat_exchanger_1.cold_outlet", "product_b"),
+    ],
+)
+def test_build_process_line_accepts_explicit_endpoint_contract(source: str, target: str) -> None:
+    service = _service_api()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+
+    _place_public_process_units_for_line_tests(service, session_id)
+
+    build_line = service.build(
+        session_id=session_id,
+        item_id="build_process_line",
+        config={"source": source, "target": target},
+        layout={"path_xy": [(0.0, 0.0), (2.0, 0.0)]},
+    )
+    assert _field(build_line, "accepted") is True
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("feed_a", "heater_1"),
+        ("feed_a", "flash_1"),
+        ("feed_a", "heat_exchanger_1"),
+        ("heater_1", "product_a"),
+        ("flash_1", "product_a"),
+        ("heat_exchanger_1", "product_a"),
+    ],
+)
+def test_build_process_line_rejects_bare_non_boundary_endpoint_ids(
+    source: str, target: str
+) -> None:
+    service = _service_api()
+    error_type = _sandbox_error_type()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+    _place_public_process_units_for_line_tests(service, session_id)
+
+    with pytest.raises(error_type) as exc_info:
+        service.build(
+            session_id=session_id,
+            item_id="build_process_line",
+            config={"source": source, "target": target},
+            layout={"path_xy": [(0.0, 0.0), (2.0, 0.0)]},
+        )
+
+    assert exc_info.value.error_code == "invalid_config"
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("heater_1..outlet", "product_a"),
+        ("ghost_1.outlet", "product_a"),
+        ("feed_a", "unknown_product_boundary"),
+        ("heater_1.ghost_port", "product_a"),
+        ("heater_1.inlet", "product_a"),
+        ("feed_a", "heater_1.outlet"),
+    ],
+)
+def test_build_process_line_rejects_malformed_unknown_or_wrong_direction_endpoints(
+    source: str, target: str
+) -> None:
+    service = _service_api()
+    error_type = _sandbox_error_type()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+    _place_public_process_units_for_line_tests(service, session_id)
+
+    with pytest.raises(error_type) as exc_info:
+        service.build(
+            session_id=session_id,
+            item_id="build_process_line",
+            config={"source": source, "target": target},
+            layout={"path_xy": [(0.0, 0.0), (2.0, 0.0)]},
+        )
+
+    assert exc_info.value.error_code == "invalid_config"
+
+
+def test_build_process_line_preserves_exact_endpoint_strings_in_snapshot_payloads() -> None:
+    service = _service_api()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+    _place_public_process_units_for_line_tests(service, session_id)
+
+    line = service.build(
+        session_id=session_id,
+        item_id="build_process_line",
+        config={"source": "feed_a", "target": "heater_1.inlet"},
+        layout={"path_xy": [(0.0, 0.0), (1.0, 0.0)]},
+    )
+    snapshot = _field(line, "snapshot")
+    board_layout = cast(Mapping[str, object], _field(snapshot, "board_layout"))
+    line_entities = cast(
+        Mapping[str, Mapping[str, object]], board_layout["line_entities_by_line_id"]
+    )
+    assert len(line_entities) == 1
+    only_line = next(iter(line_entities.values()))
+    assert only_line["source"] == "feed_a"
+    assert only_line["target"] == "heater_1.inlet"
+
+    topology = cast(Mapping[str, object], _field(snapshot, "topology"))
+    topology_graph = cast(Mapping[str, object], topology["topology"])
+    edges = cast(tuple[Mapping[str, object], ...], tuple(topology_graph["edges"]))
+    assert len(edges) == 1
+    edge = edges[0]
+    assert cast(Mapping[str, object], edge["source"]) == {
+        "node_id": "feed_a",
+        "port_name": "outlet",
+    }
+    assert cast(Mapping[str, object], edge["target"]) == {
+        "node_id": "heater_1",
+        "port_name": "inlet",
+    }
+
+
+def test_port_wiring_remains_topology_only_without_runtime_unit_behavior() -> None:
+    """Topology wiring is honesty-only: same-feed sessions produce identical
+    signal values and product inventory whether or not process-port lines are wired.
+
+    Two freshly-created sessions receive identical feed purchases and an equal
+    tick.  Session B additionally has heater_1 placed and feed_a wired through
+    heater_1.inlet -> heater_1.outlet to product_a.  Because the topology layer
+    is honesty-only in this slice, the production and published signal values
+    must be the same in both sessions after the tick.
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+
+    # Session A: feed purchased, no units placed, no wiring.
+    with patch.object(realtime_module, "_monotonic", return_value=0.0):
+        service_a = realtime_module.RealtimeGameService()
+        created_a = service_a.create_session(mode_id="phase1_process_sandbox_v1")
+        session_id_a = _field(created_a, "session_id")
+        service_a.buy_feed(session_id=session_id_a, material_id="feed_a", quantity_mol=50.0)
+
+    # Session B: same feed purchased, heater placed, feed wired through unit ports.
+    with patch.object(realtime_module, "_monotonic", return_value=0.0):
+        service_b = realtime_module.RealtimeGameService()
+        created_b = service_b.create_session(mode_id="phase1_process_sandbox_v1")
+        session_id_b = _field(created_b, "session_id")
+        service_b.buy_feed(session_id=session_id_b, material_id="feed_a", quantity_mol=50.0)
+        service_b.build(
+            session_id=session_id_b,
+            item_id="place_heater_cooler",
+            config={"process_id": "heater_1"},
+            layout={"anchor_xy": (0.0, 0.0)},
+        )
+        service_b.build(
+            session_id=session_id_b,
+            item_id="build_process_line",
+            config={"source": "feed_a", "target": "heater_1.inlet"},
+            layout={"path_xy": [(0.0, 0.0), (1.0, 0.0)]},
+        )
+        service_b.build(
+            session_id=session_id_b,
+            item_id="build_process_line",
+            config={"source": "heater_1.outlet", "target": "product_a"},
+            layout={"path_xy": [(1.0, 0.0), (2.0, 0.0)]},
+        )
+
+    # Advance both sessions by the same wall-clock delta, no auto-advancement.
+    tick_a = service_a.tick(session_id=session_id_a, wall_dt_s=0.5)
+    tick_b = service_b.tick(session_id=session_id_b, wall_dt_s=0.5)
+
+    snap_a = cast(
+        SimulationSessionSnapshot, _field(_field(tick_a, "snapshot"), "simulation_snapshot")
+    )
+    snap_b = cast(
+        SimulationSessionSnapshot, _field(_field(tick_b, "snapshot"), "simulation_snapshot")
+    )
+
+    # Product inventory must be identical: topology wiring is honesty-only.
+    assert dict(snap_a.product_inventory_by_product_id) == dict(
+        snap_b.product_inventory_by_product_id
     ), (
-        f"SUPPORTED_BUILD_ITEM_IDS changed; got {supported!r}. "
-        "This constant must remain frozen throughout the staging work."
+        "Topology wiring (heater_1 process-port wiring) must not affect product inventory. "
+        "The topology layer is honesty-only in this slice."
+    )
+
+    # Published signal values must also be identical across both sessions.
+    sigs_a = cast(
+        Mapping[str, float], _field(_field(tick_a, "snapshot"), "published_signal_values_by_id")
+    )
+    sigs_b = cast(
+        Mapping[str, float], _field(_field(tick_b, "snapshot"), "published_signal_values_by_id")
+    )
+    assert dict(sigs_a) == dict(sigs_b), (
+        "Published signal values must be unaffected by topology wiring in the current slice."
     )
 
 
@@ -632,4 +1119,275 @@ def test_public_realtime_service_method_set_is_unchanged() -> None:
     assert actual_public_methods == expected_public_methods, (
         f"Public method set changed; expected {expected_public_methods!r}, "
         f"got {actual_public_methods!r}."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Wave 3 — RED guards: build-path metadata-resolution failure translation
+#
+# These tests prove that _install_unit() is the explicit translation boundary
+# for qualifying metadata-resolution failures.  All three failure modes
+# (missing module, missing unit type, bad constructor payload) must be
+# translated into SandboxRequestError(error_code="invalid_config", ...).
+#
+# The tests use the module-private _resolve_unit_metadata helper seam and
+# a crafted SandboxCatalogItemDefinition to inject each failure mode.
+# ---------------------------------------------------------------------------
+
+
+def _make_fake_unit_blueprint_item(default_config: dict[str, object]) -> Any:
+    """Build a minimal SandboxCatalogItemDefinition with apply_kind='add_process'."""
+    from modular_simulation.gameplay.contracts import SandboxCatalogItemDefinition
+
+    return SandboxCatalogItemDefinition(
+        item_id="__test_item__",
+        title="Test item",
+        item_kind="unit_blueprint",
+        apply_kind="add_process",
+        default_config=default_config,
+        required_user_inputs=("process_id",),
+        supported_start_ids=(),
+        educational_summary="Test only",
+    )
+
+
+def test_install_unit_translates_missing_module_to_invalid_config_error() -> None:
+    """_install_unit() must translate ModuleNotFoundError from metadata resolution.
+
+    When the catalog record references a unit_module that cannot be imported,
+    _resolve_unit_metadata raises ModuleNotFoundError.  _install_unit() must
+    catch this and re-raise SandboxRequestError(error_code="invalid_config", ...)
+    rather than letting the raw ModuleNotFoundError escape to callers.
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    error_type = _sandbox_error_type()
+
+    service = realtime_module.RealtimeGameService()
+    created = service.create_session(mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+    active = service._active_session  # type: ignore[attr-defined]
+
+    bad_item = _make_fake_unit_blueprint_item(
+        {
+            "unit_module": "modular_simulation.unit_processes.__does_not_exist__",
+            "unit_type": "SomeUnit",
+            "constructor_payload": {},
+        }
+    )
+
+    with pytest.raises(error_type) as exc_info:
+        service._install_unit(active=active, process_id="test_proc", item=bad_item)  # type: ignore[attr-defined]
+
+    assert exc_info.value.error_code == "invalid_config", (
+        f"Missing-module failure must produce error_code='invalid_config'; "
+        f"got {exc_info.value.error_code!r}.  "
+        "_install_unit() must be the translation boundary for metadata-resolution failures."
+    )
+
+
+def test_install_unit_translates_missing_unit_type_to_invalid_config_error() -> None:
+    """_install_unit() must translate AttributeError from a missing unit type.
+
+    When unit_module imports successfully but unit_type does not exist as an
+    attribute, _resolve_unit_metadata raises AttributeError.  _install_unit()
+    must translate this into SandboxRequestError(error_code="invalid_config", ...).
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    error_type = _sandbox_error_type()
+
+    service = realtime_module.RealtimeGameService()
+    created = service.create_session(mode_id="phase1_process_sandbox_v1")
+    active = service._active_session  # type: ignore[attr-defined]
+
+    # Use a real importable module but a unit_type that doesn't exist in it.
+    bad_item = _make_fake_unit_blueprint_item(
+        {
+            "unit_module": "modular_simulation.unit_processes.thermal.heater_cooler",
+            "unit_type": "__DoesNotExistUnit__",
+            "constructor_payload": {},
+        }
+    )
+
+    with pytest.raises(error_type) as exc_info:
+        service._install_unit(active=active, process_id="test_proc2", item=bad_item)  # type: ignore[attr-defined]
+
+    assert exc_info.value.error_code == "invalid_config", (
+        f"Missing-unit-type failure must produce error_code='invalid_config'; "
+        f"got {exc_info.value.error_code!r}.  "
+        "_install_unit() must be the translation boundary for missing exported unit types."
+    )
+
+
+def test_install_unit_translates_constructor_payload_failure_to_invalid_config_error() -> None:
+    """_install_unit() must translate constructor payload failures.
+
+    When unit_cls(**constructor_payload) raises TypeError or ValueError because
+    the payload does not match the constructor signature, _resolve_unit_metadata
+    propagates the raw exception.  _install_unit() must translate it into
+    SandboxRequestError(error_code="invalid_config", ...).
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    error_type = _sandbox_error_type()
+
+    service = realtime_module.RealtimeGameService()
+    created = service.create_session(mode_id="phase1_process_sandbox_v1")
+    active = service._active_session  # type: ignore[attr-defined]
+
+    # HeaterCooler does NOT accept 'nonexistent_kwarg'; this causes TypeError.
+    bad_item = _make_fake_unit_blueprint_item(
+        {
+            "unit_module": "modular_simulation.unit_processes.thermal.heater_cooler",
+            "unit_type": "HeaterCooler",
+            "constructor_payload": {"nonexistent_kwarg": "bad_value"},
+        }
+    )
+
+    with pytest.raises(error_type) as exc_info:
+        service._install_unit(active=active, process_id="test_proc3", item=bad_item)  # type: ignore[attr-defined]
+
+    assert exc_info.value.error_code == "invalid_config", (
+        f"Constructor-payload failure must produce error_code='invalid_config'; "
+        f"got {exc_info.value.error_code!r}.  "
+        "_install_unit() must be the translation boundary for constructor payload failures."
+    )
+
+
+def test_build_route_returns_invalid_config_on_metadata_resolution_failure() -> None:
+    """The public build() path must return SandboxRequestError(invalid_config)
+    when metadata resolution fails, not a raw internal exception.
+
+    This end-to-end test ensures the full build() → _install_unit() → _resolve_unit_metadata
+    chain translates the failure before it reaches the caller.  Uses patch to inject
+    a _MetadataResolutionError from _resolve_unit_metadata so the test is isolated from
+    actual module availability.
+
+    Under the internal-sentinel design, _install_unit() catches _MetadataResolutionError
+    (not raw exception families), so the patch must inject the sentinel.
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    error_type = _sandbox_error_type()
+
+    # Access the module-private sentinel class.
+    MetadataResolutionError = getattr(realtime_module, "_MetadataResolutionError")
+
+    service = realtime_module.RealtimeGameService()
+    created = service.create_session(mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+
+    # Inject a _MetadataResolutionError from _resolve_unit_metadata to simulate
+    # a corrupt catalog entry (e.g. missing module target).
+    with patch.object(
+        realtime_module,
+        "_resolve_unit_metadata",
+        side_effect=MetadataResolutionError("injected missing module sentinel"),
+    ):
+        with pytest.raises(error_type) as exc_info:
+            service.build(
+                session_id=session_id,
+                item_id="place_heater_cooler",
+                config={"process_id": "heater_test"},
+                layout={"anchor_xy": (0.0, 0.0)},
+            )
+
+    assert exc_info.value.error_code == "invalid_config", (
+        f"build() must translate _MetadataResolutionError from _resolve_unit_metadata "
+        f"into SandboxRequestError(error_code='invalid_config'); "
+        f"got {exc_info.value.error_code!r}."
+    )
+
+
+def test_install_unit_does_not_translate_unrelated_exception_to_invalid_config() -> None:
+    """_install_unit() must NOT translate unrelated exceptions from _resolve_unit_metadata.
+
+    An unrelated exception such as RuntimeError injected from _resolve_unit_metadata
+    must propagate unchanged — not be silently masked as 'invalid_config'.
+
+    This guard enforces the narrow seam: broad Exception masking is not allowed.
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    error_type = _sandbox_error_type()
+
+    service = realtime_module.RealtimeGameService()
+    created = service.create_session(mode_id="phase1_process_sandbox_v1")
+    active = service._active_session  # type: ignore[attr-defined]
+
+    # Use a real catalog item so we reach _resolve_unit_metadata patching.
+    catalog = build_sandbox_catalog()
+    item = catalog["place_heater_cooler"]
+
+    unrelated_error = RuntimeError("unexpected internal failure — must not be masked")
+
+    with patch.object(
+        realtime_module,
+        "_resolve_unit_metadata",
+        side_effect=unrelated_error,
+    ):
+        with pytest.raises(RuntimeError) as exc_info:
+            service._install_unit(active=active, process_id="test_proc_unrelated", item=item)  # type: ignore[attr-defined]
+
+    assert exc_info.value is unrelated_error, (
+        "_install_unit() must NOT translate an unrelated RuntimeError from "
+        "_resolve_unit_metadata into SandboxRequestError(invalid_config). "
+        "Only approved metadata-resolution failures may be translated."
+    )
+    # Also assert no SandboxRequestError was raised instead.
+    assert not isinstance(exc_info.value, error_type), (
+        "The unrelated RuntimeError must NOT be wrapped as a SandboxRequestError."
+    )
+
+
+def test_resolve_unit_metadata_does_not_translate_import_side_effect_module_not_found() -> None:
+    """_resolve_unit_metadata must NOT translate import-side-effect ModuleNotFoundError.
+
+    If an otherwise valid module successfully starts loading but then fails because
+    one of ITS OWN dependencies is missing (import side-effect), the resulting
+    ModuleNotFoundError should NOT be translated to invalid_config.  Only
+    ModuleNotFoundError for the target module itself (unit_module) qualifies
+    as a metadata-resolution failure.
+
+    This regression guard proves the sentinel design is narrow: a
+    ModuleNotFoundError whose .name is NOT the target unit_module must escape
+    as-is and must NOT be caught and re-raised as SandboxRequestError(invalid_config).
+    """
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    error_type = _sandbox_error_type()
+
+    service = realtime_module.RealtimeGameService()
+    created = service.create_session(mode_id="phase1_process_sandbox_v1")
+    active = service._active_session  # type: ignore[attr-defined]
+
+    # A real importable module with a unit that actually exists — so unit_module itself
+    # is valid. We simulate that this module's own dependency "some_missing_dep" fails.
+    valid_unit_module = "modular_simulation.unit_processes.thermal.heater_cooler"
+    item = _make_fake_unit_blueprint_item(
+        {
+            "unit_module": valid_unit_module,
+            "unit_type": "HeaterCooler",
+            "constructor_payload": {},
+        }
+    )
+
+    # Inject a ModuleNotFoundError whose .name is a *different* module (side-effect dep),
+    # not the target unit_module.  This simulates a valid module whose dependency fails.
+    side_effect_dep_name = "some_missing_side_effect_dependency"
+    side_effect_error = ModuleNotFoundError(
+        f"No module named {side_effect_dep_name!r}",
+        name=side_effect_dep_name,
+    )
+
+    with patch.object(
+        realtime_module,
+        "_import_module",
+        side_effect=side_effect_error,
+    ):
+        with pytest.raises(ModuleNotFoundError) as exc_info:
+            service._install_unit(active=active, process_id="test_proc_side_effect", item=item)  # type: ignore[attr-defined]
+
+    assert exc_info.value is side_effect_error, (
+        "A ModuleNotFoundError caused by an import side-effect inside an otherwise "
+        "valid module (i.e. exc.name != unit_module) must NOT be caught and translated "
+        "to SandboxRequestError(invalid_config).  It must propagate unchanged."
+    )
+    assert not isinstance(exc_info.value, error_type), (
+        "Import side-effect ModuleNotFoundError must NOT become a SandboxRequestError."
     )

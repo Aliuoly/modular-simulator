@@ -17,8 +17,13 @@ def _monotonic() -> float:
 
 
 from modular_simulation.gameplay.board_layout import BoardLayoutRuntime
-from modular_simulation.gameplay.contracts import SandboxCatalogItemDefinition, SandboxRequestError
+from modular_simulation.gameplay.contracts import (
+    PlayStartDefinition,
+    SandboxCatalogItemDefinition,
+    SandboxRequestError,
+)
 from modular_simulation.gameplay.sandbox_catalog import build_sandbox_catalog
+from modular_simulation.gameplay.start_catalog import build_start_catalog
 from modular_simulation.gameplay.service_contracts import (
     CommandAcceptedResponse,
     GameBootstrapResponse,
@@ -32,10 +37,15 @@ from modular_simulation.gameplay.start_runtime import (
     create_start_runtime_bundle,
 )
 
-SUPPORTED_BUILD_ITEM_IDS: tuple[str, ...] = (
-    "place_heater_cooler",
-    "place_flash_drum",
-    "build_process_line",
+PUBLIC_BUILD_FAMILY_MATRIX: tuple[tuple[str, str], ...] = (
+    ("unit_blueprint", "add_process"),
+    ("line", "connect_configure_line"),
+)
+
+DEFERRED_PUBLIC_BUILD_ITEM_IDS: frozenset[str] = frozenset({"place_component_separator"})
+
+ADD_PROCESS_METADATA_KEYS: frozenset[str] = frozenset(
+    {"unit_module", "unit_type", "constructor_payload"}
 )
 
 
@@ -50,6 +60,20 @@ class _UnitMetadata:
     outlet_ports: tuple[str, ...]
 
 
+class _MetadataResolutionError(Exception):
+    """Sentinel exception raised at exactly the approved failure sites within
+    _resolve_unit_metadata().  Only _install_unit() may catch this class.
+
+    The three approved failure sites are:
+    1. The target unit_module cannot be imported (ModuleNotFoundError for that module).
+    2. The unit_type attribute does not exist on the imported module (AttributeError).
+    3. The constructor_payload kwargs are invalid for the unit class (TypeError/ValueError).
+
+    Import-time side-effect failures inside an otherwise valid module are NOT
+    translated here; they are allowed to propagate as-is.
+    """
+
+
 def _resolve_unit_metadata(
     item: SandboxCatalogItemDefinition,
 ) -> _UnitMetadata:
@@ -61,6 +85,10 @@ def _resolve_unit_metadata(
     by importing the unit class and reading its ``.ports`` property.
 
     The helper is module-private; it must not be called for non-unit items.
+
+    Only three exact failure sites raise ``_MetadataResolutionError``; all other
+    exceptions propagate unchanged.  See ``_MetadataResolutionError`` for the
+    approved failure-site list.
     """
     cfg = item.default_config
     unit_module = str(cfg["unit_module"])
@@ -68,9 +96,37 @@ def _resolve_unit_metadata(
     raw_payload = cfg.get("constructor_payload", {})
     constructor_payload: dict[str, object] = dict(raw_payload) if raw_payload else {}
 
-    mod = _import_module(unit_module)
-    unit_cls = getattr(mod, unit_type)
-    instance = unit_cls(**constructor_payload)
+    # --- Failure site 1: missing configured module target ---
+    # Only translate ModuleNotFoundError if it refers to the target module itself
+    # (or a missing parent package).  A ModuleNotFoundError whose .name is a
+    # dependency of an otherwise-valid module must propagate unchanged.
+    try:
+        mod = _import_module(unit_module)
+    except ModuleNotFoundError as exc:
+        if exc.name is not None and (
+            exc.name == unit_module or unit_module.startswith(exc.name + ".")
+        ):
+            raise _MetadataResolutionError(
+                f"unit_module {unit_module!r} cannot be imported: {exc}"
+            ) from exc
+        raise
+
+    # --- Failure site 2: missing configured exported unit type ---
+    try:
+        unit_cls = getattr(mod, unit_type)
+    except AttributeError as exc:
+        raise _MetadataResolutionError(
+            f"unit_type {unit_type!r} not found in module {unit_module!r}: {exc}"
+        ) from exc
+
+    # --- Failure site 3: constructor payload signature/validation failure ---
+    try:
+        instance = unit_cls(**constructor_payload)
+    except (TypeError, ValueError) as exc:
+        raise _MetadataResolutionError(
+            f"constructor_payload is invalid for {unit_type!r}: {exc}"
+        ) from exc
+
     ports = instance.ports
 
     return _UnitMetadata(
@@ -101,14 +157,16 @@ class _ActiveSession:
 class RealtimeGameService:
     def __init__(self) -> None:
         self._sandbox_catalog = build_sandbox_catalog()
+        self._start_catalog = build_start_catalog()
+        self._supported_build_item_ids_by_mode_id = (
+            self._derive_supported_build_item_ids_by_mode_id()
+        )
         self._active_session: _ActiveSession | None = None
 
     def get_bootstrap(self) -> GameBootstrapResponse:
         return GameBootstrapResponse(
             supported_mode_ids=SUPPORTED_MODE_IDS,
-            supported_build_item_ids_by_mode_id={
-                mode_id: SUPPORTED_BUILD_ITEM_IDS for mode_id in SUPPORTED_MODE_IDS
-            },
+            supported_build_item_ids_by_mode_id=dict(self._supported_build_item_ids_by_mode_id),
             supported_simulation_dt_s_presets=SUPPORTED_SIMULATION_DT_S_PRESETS,
             default_simulation_dt_s=DEFAULT_SIMULATION_DT_S,
             pause_supported=False,
@@ -199,19 +257,34 @@ class RealtimeGameService:
     ) -> CommandAcceptedResponse:
         active = self._require_session(session_id)
         self._advance_from_wall_time(active)
-        if item_id not in set(SUPPORTED_BUILD_ITEM_IDS):
+        supported_for_mode = self._supported_build_item_ids_by_mode_id[active.mode_id]
+        if item_id not in set(supported_for_mode):
             raise SandboxRequestError(
                 error_code="unknown_item",
                 message=f"Unsupported item for slice: {item_id!r}",
             )
 
-        if item_id in ("place_heater_cooler", "place_flash_drum"):
+        item = self._sandbox_catalog[item_id]
+        effective_config = self._effective_config_for_item(item_id=item_id, config=config)
+
+        # Preflight affordability check: fail fast before any topology/layout mutation.
+        quote = active.runtime_bundle.cash_ledger_runtime.quote_equipment_purchase(
+            item_id,
+            config=effective_config,
+        )
+        if not quote.affordable:
+            raise SandboxRequestError(
+                error_code="insufficient_cash",
+                message="Insufficient cash balance for equipment purchase.",
+            )
+
+        if self._is_public_add_process_item(item):
             process_id = self._require_process_id(config=config)
             anchor_xy = self._require_anchor_xy(layout=layout)
             self._install_unit(
                 active=active,
                 process_id=process_id,
-                item=self._sandbox_catalog[item_id],
+                item=item,
             )
             active.board_layout.place_unit(process_id=process_id, anchor_xy=anchor_xy)
         elif item_id == "build_process_line":
@@ -220,15 +293,20 @@ class RealtimeGameService:
             self._install_line(
                 active=active, source=source, target=target, config=config, path_xy=path_xy
             )
+        else:
+            raise SandboxRequestError(
+                error_code="unknown_item",
+                message=f"Unsupported item for slice: {item_id!r}",
+            )
 
         # Orchestrate economics receipt internally.
         equipment_receipt = active.runtime_bundle.cash_ledger_runtime.record_equipment_purchase(
             item_id,
-            config=self._effective_config_for_item(item_id=item_id, config=config),
+            config=effective_config,
         )
         active.runtime_bundle.sandbox_runtime.install_catalog_item(
             item_id,
-            config=self._effective_config_for_item(item_id=item_id, config=config),
+            config=effective_config,
             equipment_receipt_id=equipment_receipt.receipt_id,
         )
         return CommandAcceptedResponse(
@@ -385,9 +463,38 @@ class RealtimeGameService:
             published_signal_values_by_id=dict(active.published_signal_values_by_id or {}),
             topology=dict(active.runtime_bundle.backend_session.get_topology()),
             board_layout=dict(active.board_layout.as_payload()),
-            supported_build_item_ids=SUPPORTED_BUILD_ITEM_IDS,
+            supported_build_item_ids=self._supported_build_item_ids_by_mode_id[active.mode_id],
             lag_backlog_s=max(0.0, active.lag_backlog_s),
         )
+
+    def _derive_supported_build_item_ids_by_mode_id(self) -> dict[str, tuple[str, ...]]:
+        supported: dict[str, tuple[str, ...]] = {}
+        for mode_id in SUPPORTED_MODE_IDS:
+            start_id = MODE_TO_START_ID[mode_id]
+            start = self._start_catalog[start_id]
+            supported[mode_id] = self._derive_supported_build_item_ids_for_start(start)
+        return supported
+
+    def _derive_supported_build_item_ids_for_start(
+        self, start: PlayStartDefinition
+    ) -> tuple[str, ...]:
+        ordered_supported: list[str] = []
+        for item_id in start.allowed_item_ids:
+            item = self._sandbox_catalog.get(item_id)
+            if item is None:
+                continue
+            if self._is_public_build_item(item):
+                ordered_supported.append(item_id)
+        return tuple(ordered_supported)
+
+    def _is_public_build_item(self, item: SandboxCatalogItemDefinition) -> bool:
+        return item.item_id not in DEFERRED_PUBLIC_BUILD_ITEM_IDS and (
+            item.item_kind,
+            item.apply_kind,
+        ) in set(PUBLIC_BUILD_FAMILY_MATRIX)
+
+    def _is_public_add_process_item(self, item: SandboxCatalogItemDefinition) -> bool:
+        return self._is_public_build_item(item) and item.item_kind == "unit_blueprint"
 
     def _require_process_id(self, *, config: Mapping[str, object]) -> str:
         process_id = config.get("process_id")
@@ -451,7 +558,16 @@ class RealtimeGameService:
     ) -> Mapping[str, object]:
         catalog_item = self._sandbox_catalog[item_id]
         merged: dict[str, object] = dict(catalog_item.default_config)
-        merged.update(config)
+        if self._is_public_add_process_item(catalog_item):
+            merged.update(
+                {
+                    key: value
+                    for key, value in config.items()
+                    if key not in ADD_PROCESS_METADATA_KEYS
+                }
+            )
+        else:
+            merged.update(config)
         return merged
 
     def _install_unit(
@@ -461,7 +577,13 @@ class RealtimeGameService:
         process_id: str,
         item: SandboxCatalogItemDefinition,
     ) -> None:
-        meta = _resolve_unit_metadata(item)
+        try:
+            meta = _resolve_unit_metadata(item)
+        except _MetadataResolutionError as exc:
+            raise SandboxRequestError(
+                error_code="invalid_config",
+                message=f"Failed to resolve unit metadata for {process_id!r}: {exc}",
+            ) from exc
         network = active.runtime_bundle.backend_session.network
         try:
             network.add_process(
@@ -485,12 +607,10 @@ class RealtimeGameService:
         config: Mapping[str, object],
         path_xy: tuple[tuple[float, float], ...],
     ) -> None:
-        resolved_source = self._resolve_source_endpoint(active=active, node_id=source)
-        resolved_target = self._resolve_target_endpoint(active=active, node_id=target)
         effective = self._effective_config_for_item(item_id="build_process_line", config=config)
         network = active.runtime_bundle.backend_session.network
         try:
-            line_id = network.connect(resolved_source, resolved_target)
+            line_id = network.connect(source, target)
             radius = effective.get("radius_m")
             length = effective.get("length_m")
             if not isinstance(radius, (int, float)) or not isinstance(length, (int, float)):
@@ -513,18 +633,6 @@ class RealtimeGameService:
             ) from exc
 
         active.board_layout.add_line(source=source, target=target, path_xy=path_xy, line_id=line_id)
-
-    def _resolve_source_endpoint(self, *, active: _ActiveSession, node_id: str) -> str:
-        state = active.runtime_bundle.sandbox_runtime.get_simulation_state()
-        if node_id in set(state.feed_inventory_by_material_id):
-            return node_id
-        return f"{node_id}.out"
-
-    def _resolve_target_endpoint(self, *, active: _ActiveSession, node_id: str) -> str:
-        state = active.runtime_bundle.sandbox_runtime.get_simulation_state()
-        if node_id in set(state.product_inventory_by_product_id):
-            return node_id
-        return f"{node_id}.in"
 
 
 _SERVICE_BY_SCOPE: dict[str, RealtimeGameService] = {}

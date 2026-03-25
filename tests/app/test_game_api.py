@@ -18,6 +18,7 @@ SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID = {
     "phase1_process_sandbox_v1": [
         "place_heater_cooler",
         "place_flash_drum",
+        "place_heat_exchanger",
         "build_process_line",
     ],
     "heater_flash_guided_build_v1": [
@@ -182,6 +183,152 @@ def test_successful_command_routes_return_200_with_exact_payload_shape() -> None
         assert isinstance(payload["snapshot"], dict)
 
 
+def test_build_route_accepts_widened_add_process_items_in_sandbox() -> None:
+    client = _client()
+
+    create = client.post("/game/sessions", json={"mode_id": "phase1_process_sandbox_v1"})
+    assert create.status_code == 201
+    session_id = create.json()["session_id"]
+
+    build_heat_exchanger = client.post(
+        f"/game/sessions/{session_id}/commands/build",
+        json={
+            "item_id": "place_heat_exchanger",
+            "config": {"process_id": "heat_exchanger_1"},
+            "layout": {"anchor_xy": [1.0, 0.0]},
+        },
+    )
+    assert build_heat_exchanger.status_code == 200
+    assert set(build_heat_exchanger.json()) == {"accepted", "message", "snapshot"}
+
+
+def test_build_route_accepts_explicit_named_endpoints_for_public_line_contract() -> None:
+    client = _client()
+
+    create = client.post("/game/sessions", json={"mode_id": "phase1_process_sandbox_v1"})
+    assert create.status_code == 201
+    session_id = create.json()["session_id"]
+
+    for item_id, process_id, anchor_xy in (
+        ("place_heater_cooler", "heater_1", [0.0, 0.0]),
+        ("place_flash_drum", "flash_1", [4.0, 0.0]),
+        ("place_heat_exchanger", "heat_exchanger_1", [2.0, 2.0]),
+    ):
+        placed = client.post(
+            f"/game/sessions/{session_id}/commands/build",
+            json={
+                "item_id": item_id,
+                "config": {"process_id": process_id},
+                "layout": {"anchor_xy": anchor_xy},
+            },
+        )
+        assert placed.status_code == 200
+
+    for source, target in (
+        ("feed_a", "heater_1.inlet"),
+        ("heater_1.outlet", "product_a"),
+        ("feed_a", "flash_1.inlet"),
+        ("flash_1.vapor_outlet", "product_a"),
+        ("flash_1.liquid_outlet", "product_b"),
+        ("feed_a", "heat_exchanger_1.hot_inlet"),
+        ("feed_b", "heat_exchanger_1.cold_inlet"),
+        ("heat_exchanger_1.hot_outlet", "product_a"),
+        ("heat_exchanger_1.cold_outlet", "product_b"),
+    ):
+        built = client.post(
+            f"/game/sessions/{session_id}/commands/build",
+            json={
+                "item_id": "build_process_line",
+                "config": {"source": source, "target": target},
+                "layout": {"path_xy": [[0.0, 0.0], [1.0, 0.0]]},
+            },
+        )
+        assert built.status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("feed_a", "heater_1"),
+        ("feed_a", "flash_1"),
+        ("feed_a", "heat_exchanger_1"),
+        ("heater_1", "product_a"),
+        ("flash_1", "product_a"),
+        ("heat_exchanger_1", "product_a"),
+        ("heater_1..outlet", "product_a"),
+        ("ghost_1.outlet", "product_a"),
+        ("feed_a", "ghost_product"),
+        ("heater_1.ghost_port", "product_a"),
+        ("heater_1.inlet", "product_a"),
+        ("feed_a", "heater_1.outlet"),
+    ],
+)
+def test_build_route_rejects_invalid_line_endpoints_with_stable_invalid_config_json(
+    source: str, target: str
+) -> None:
+    client = _client()
+
+    create = client.post("/game/sessions", json={"mode_id": "phase1_process_sandbox_v1"})
+    assert create.status_code == 201
+    session_id = create.json()["session_id"]
+
+    place_heater = client.post(
+        f"/game/sessions/{session_id}/commands/build",
+        json={
+            "item_id": "place_heater_cooler",
+            "config": {"process_id": "heater_1"},
+            "layout": {"anchor_xy": [0.0, 0.0]},
+        },
+    )
+    assert place_heater.status_code == 200
+
+    rejected = client.post(
+        f"/game/sessions/{session_id}/commands/build",
+        json={
+            "item_id": "build_process_line",
+            "config": {"source": source, "target": target},
+            "layout": {"path_xy": [[0.0, 0.0], [1.0, 0.0]]},
+        },
+    )
+
+    assert rejected.status_code == 400
+    payload = rejected.json()
+    _assert_stable_error_payload(payload)
+    assert payload["error_code"] == "invalid_config"
+
+
+@pytest.mark.parametrize(
+    "deferred_item_id",
+    [
+        "place_component_separator",
+        "install_sampled_delayed_sensor",
+        "install_pid_controller",
+        "install_line_pump",
+        "install_line_valve",
+        "install_line_heat_actuator",
+        "place_merge_junction_2x1",
+        "place_split_junction_1x2",
+    ],
+)
+def test_deferred_build_items_stay_unknown_item_in_api_for_current_slice(
+    deferred_item_id: str,
+) -> None:
+    client = _client()
+
+    create = client.post("/game/sessions", json={"mode_id": "phase1_process_sandbox_v1"})
+    assert create.status_code == 201
+    session_id = create.json()["session_id"]
+
+    rejected = client.post(
+        f"/game/sessions/{session_id}/commands/build",
+        json={"item_id": deferred_item_id, "config": {}, "layout": {}},
+    )
+    assert rejected.status_code == 400
+    payload = rejected.json()
+    _assert_stable_error_payload(payload)
+    assert payload["error_code"] == "unknown_item"
+
+
 def test_rejections_use_stable_error_json_and_frozen_status_semantics() -> None:
     client = _client()
 
@@ -280,6 +427,42 @@ def test_buy_feed_and_sell_product_payloads_remain_without_tank_id() -> None:
     assert sell.status_code == 200
     sell_payload = sell.json()
     assert set(sell_payload) == {"accepted", "message", "snapshot"}
+
+
+def test_build_route_returns_400_with_stable_invalid_config_on_metadata_resolution_failure() -> (
+    None
+):
+    """API regression: build route returns HTTP 400 with stable {error_code, message} when
+    the gameplay build path raises a metadata-resolution failure translated to invalid_config.
+
+    This pins the contract that _install_unit()'s SandboxRequestError(error_code="invalid_config")
+    surfaces as HTTP 400 with the frozen error shape, not as a 500 or unhandled exception.
+    """
+    module = import_module("modular_simulation.app.game_api")
+    from modular_simulation.gameplay.contracts import SandboxRequestError
+
+    def _fake_build_raises_invalid_config(**kwargs: Any) -> dict[str, Any]:
+        raise SandboxRequestError(
+            error_code="invalid_config",
+            message="Failed to resolve unit metadata for 'heater_1': No module named 'missing.module'",
+        )
+
+    with patch.object(module, "build", side_effect=_fake_build_raises_invalid_config):
+        client = TestClient(module.create_app())
+
+        response = client.post(
+            "/game/sessions/session-test/commands/build",
+            json={
+                "item_id": "place_heater_cooler",
+                "config": {"process_id": "heater_1"},
+                "layout": {"anchor_xy": [0.0, 0.0]},
+            },
+        )
+
+    assert response.status_code == 400
+    payload = response.json()
+    _assert_stable_error_payload(payload)
+    assert payload["error_code"] == "invalid_config"
 
 
 def test_buy_feed_and_sell_product_routes_do_not_forward_tank_id() -> None:

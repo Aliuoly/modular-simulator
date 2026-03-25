@@ -81,15 +81,35 @@ def test_sandbox_flow_smoke() -> None:
     )
     assert build_flash.status_code == 200
 
-    build_line = client.post(
+    build_heat_exchanger = client.post(
         f"/game/sessions/{session_id}/commands/build",
         json={
-            "item_id": "build_process_line",
-            "config": {"source": "feed_a", "target": "product_a"},
-            "layout": {"path_xy": [[0.0, 0.0], [2.0, 0.0], [4.0, 0.0]]},
+            "item_id": "place_heat_exchanger",
+            "config": {"process_id": "heat_exchanger_1"},
+            "layout": {"anchor_xy": [2.0, 2.0]},
         },
     )
-    assert build_line.status_code == 200
+    assert build_heat_exchanger.status_code == 200
+    assert set(build_heat_exchanger.json()) == {"accepted", "message", "snapshot"}
+
+    line_commands = (
+        {"source": "feed_a", "target": "heater_1.inlet"},
+        {"source": "heater_1.outlet", "target": "flash_1.inlet"},
+        {"source": "flash_1.vapor_outlet", "target": "heat_exchanger_1.hot_inlet"},
+        {"source": "feed_b", "target": "heat_exchanger_1.cold_inlet"},
+        {"source": "heat_exchanger_1.hot_outlet", "target": "product_a"},
+        {"source": "heat_exchanger_1.cold_outlet", "target": "product_b"},
+    )
+    for line_config in line_commands:
+        build_line = client.post(
+            f"/game/sessions/{session_id}/commands/build",
+            json={
+                "item_id": "build_process_line",
+                "config": line_config,
+                "layout": {"path_xy": [[0.0, 0.0], [2.0, 0.0], [4.0, 0.0]]},
+            },
+        )
+        assert build_line.status_code == 200
 
     buy_feed = client.post(
         f"/game/sessions/{session_id}/commands/buy-feed",
@@ -110,6 +130,27 @@ def test_sandbox_flow_smoke() -> None:
     )
     assert sell_product.status_code == 200
     assert set(sell_product.json()) == {"accepted", "message", "snapshot"}
+
+    post_build_snapshot = client.get(f"/game/sessions/{session_id}/snapshot")
+    assert post_build_snapshot.status_code == 200
+    payload = post_build_snapshot.json()
+    assert set(payload) == {
+        "session_id",
+        "is_running",
+        "mode_id",
+        "session_kind",
+        "active_start_id",
+        "active_tutorial_id",
+        "elapsed_time_s",
+        "simulation_dt_s",
+        "simulation_snapshot",
+        "cash_ledger",
+        "published_signal_values_by_id",
+        "topology",
+        "board_layout",
+        "supported_build_item_ids",
+        "lag_backlog_s",
+    }
 
 
 def test_tutorial_flow_smoke() -> None:
@@ -141,15 +182,45 @@ def test_tutorial_flow_smoke() -> None:
     )
     assert build_flash.status_code == 200
 
-    build_line = client.post(
+    build_line_1 = client.post(
         f"/game/sessions/{session_id}/commands/build",
         json={
             "item_id": "build_process_line",
-            "config": {"source": "feed", "target": "vapor_product"},
-            "layout": {"path_xy": [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]]},
+            "config": {"source": "feed", "target": "heater_1.inlet"},
+            "layout": {"path_xy": [[0.0, 0.0], [1.0, 0.0]]},
         },
     )
-    assert build_line.status_code == 200
+    assert build_line_1.status_code == 200
+
+    build_line_2 = client.post(
+        f"/game/sessions/{session_id}/commands/build",
+        json={
+            "item_id": "build_process_line",
+            "config": {"source": "heater_1.outlet", "target": "flash_1.inlet"},
+            "layout": {"path_xy": [[1.0, 0.0], [2.0, 0.0]]},
+        },
+    )
+    assert build_line_2.status_code == 200
+
+    build_line_3 = client.post(
+        f"/game/sessions/{session_id}/commands/build",
+        json={
+            "item_id": "build_process_line",
+            "config": {"source": "flash_1.vapor_outlet", "target": "vapor_product"},
+            "layout": {"path_xy": [[2.0, 0.0], [3.0, 0.0]]},
+        },
+    )
+    assert build_line_3.status_code == 200
+
+    build_line_4 = client.post(
+        f"/game/sessions/{session_id}/commands/build",
+        json={
+            "item_id": "build_process_line",
+            "config": {"source": "flash_1.liquid_outlet", "target": "liquid_product"},
+            "layout": {"path_xy": [[2.0, 0.0], [3.0, -1.0]]},
+        },
+    )
+    assert build_line_4.status_code == 200
 
     snapshot = client.get(f"/game/sessions/{session_id}/snapshot")
     assert snapshot.status_code == 200
