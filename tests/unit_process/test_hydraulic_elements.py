@@ -32,7 +32,7 @@ from modular_simulation.unit_processes import (
     FlashDrum,
     HeatExchanger,
     HeaterCooler,
-    ShortcutDistillation,
+    StagewiseDistillationColumn,
 )
 
 
@@ -167,8 +167,8 @@ def test_network_hydraulic_solve() -> None:
         (ConversionReactor(n_species=2), "outlet", 1.0e4),
         (FlashDrum(n_species=2), "vapor_outlet", 5.0e3),
         (FlashDrum(n_species=2), "liquid_outlet", 5.0e3),
-        (ShortcutDistillation(n_species=2), "distillate", 2.0e4),
-        (ShortcutDistillation(n_species=2), "bottoms", 2.0e4),
+        (StagewiseDistillationColumn(n_species=2), "distillate", 2.0e4),
+        (StagewiseDistillationColumn(n_species=2), "bottoms", 2.0e4),
         (
             ComponentSeparator(
                 n_species=2,

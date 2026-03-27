@@ -37,6 +37,10 @@ class SubsystemPhaseRuntime(Protocol):
     def run_process_phase(self, duration: float) -> None: ...
 
 
+class _ProcessStateProjectionProvider(Protocol):
+    def snapshot_process_state_values(self) -> Mapping[str, float]: ...
+
+
 @dataclass(frozen=True)
 class ConnectedPlantInitializationResult:
     graph_revision: str | None
@@ -119,7 +123,20 @@ class ConnectedPlantOrchestrator:
         return {
             "published_measurements": self._snapshot_published_measurement_map(),
             "plant_calculation_outputs": dict(self._plant_calculation_outputs),
+            "process_state_values": self._snapshot_process_state_values(),
         }
+
+    def _snapshot_process_state_values(self) -> dict[str, float]:
+        process_state_values: dict[str, float] = {}
+        for subsystem in self._subsystems:
+            snapshotter = getattr(subsystem, "snapshot_process_state_values", None)
+            if snapshotter is None:
+                continue
+            snapshot = cast(
+                _ProcessStateProjectionProvider, subsystem
+            ).snapshot_process_state_values()
+            process_state_values.update(dict(snapshot))
+        return process_state_values
 
     @property
     def runtime_context(self) -> SimulationRuntimeContext | None:

@@ -263,7 +263,7 @@ def build_canonical_pressure_pump_system() -> System:
     )
     actuator_sensor = SampledDelayedSensor(
         name="pump_speed_alias_sensor",
-        measurement_tag="pump_speed",
+        measurement_tag="recycle_pump",
         alias_tag="actuator/pump/recycle_pump",
         unit="Pa",
         sampling_period=0.0,

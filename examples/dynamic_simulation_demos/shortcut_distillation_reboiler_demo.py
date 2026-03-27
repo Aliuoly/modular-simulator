@@ -10,7 +10,8 @@ from numpy.typing import NDArray
 
 from modular_simulation.framework.system import System
 from modular_simulation.thermodynamics.property_package import FlashResult, PropertyPackage
-from modular_simulation.unit_processes import ShortcutDistillation
+from modular_simulation.thermodynamics.stream import StreamData
+from modular_simulation.unit_processes import StagewiseDistillationColumn
 
 
 @dataclass
@@ -110,38 +111,38 @@ class _DemoDistillationPackage(PropertyPackage):
 
 
 def run_demo() -> dict[str, float]:
-    package = _DemoDistillationPackage(k_values=(2.8, 1.0), vapor_fraction=0.38)
-    column = ShortcutDistillation(
+    _ = _DemoDistillationPackage(k_values=(2.8, 1.0), vapor_fraction=0.38)
+    column = StagewiseDistillationColumn(
         n_species=2,
-        light_key_index=0,
-        heavy_key_index=1,
-        inlet_flow=12.0,
-        inlet_temperature=358.0,
-        inlet_pressure=101325.0,
-        inlet_composition=np.array([0.45, 0.55], dtype=np.float64),
-        configured_light_key_distillate_recovery_target=0.97,
-        configured_heavy_key_bottoms_recovery_target=0.97,
-        configured_minimum_reflux_ratio_factor=1.45,
+        active_contact_height_m=4.0,
+        shell_diameter_m=1.0,
     )
-    column.set_property_package(package)
     column.attach_system(cast(System, cast(object, _StubSystem(solver_options={}))))
+    column.apply_inlet(
+        "feed_1",
+        StreamData(
+            temperature=358.0,
+            pressure=101325.0,
+            mole_fractions=(0.45, 0.55),
+            molar_flow_rate=12.0,
+        ),
+    )
 
-    try:
-        column.step(0.5)
-    except ValueError:
-        column.set_property_package(None)
-        column.step(0.5)
-    reboiler_base = float(column.reboiler_duty)
-
-    column.configured_reflux_ratio_target = float(column.actual_reflux_ratio * 1.25)
+    column.condenser_duty_request_W = -15000.0
+    column.reboiler_duty_request_W = 15000.0
     column.step(0.5)
-    reboiler_after = float(column.reboiler_duty)
+    condenser_base = float(column.condenser_duty_W)
+    reboiler_base = float(column.reboiler_duty_W)
+
+    column.condenser_duty_request_W = -22000.0
+    column.reboiler_duty_request_W = 22000.0
+    column.step(0.5)
+    condenser_after = float(column.condenser_duty_W)
+    reboiler_after = float(column.reboiler_duty_W)
 
     return {
-        "minimum_reflux_ratio": float(column.minimum_reflux_ratio),
-        "actual_reflux_ratio": float(column.actual_reflux_ratio),
-        "minimum_stages": float(column.minimum_stages),
-        "actual_stages": float(column.actual_stages),
+        "condenser_duty_base_w": condenser_base,
+        "condenser_duty_after_w": condenser_after,
         "reboiler_duty_base_w": reboiler_base,
         "reboiler_duty_after_w": reboiler_after,
         "reboiler_duty_delta_w": reboiler_after - reboiler_base,
@@ -150,7 +151,7 @@ def run_demo() -> dict[str, float]:
 
 def main() -> None:
     result = run_demo()
-    print("SHORTCUT DISTILLATION REBOILER DEMO")
+    print("STAGEWISE DISTILLATION REBOILER DEMO (legacy filename)")
     for key, value in result.items():
         print(f"{key}={value:.6f}")
 

@@ -21,7 +21,7 @@ from modular_simulation.connection.domain.transport import (
     LagTransportUpdateResult,
 )
 from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
-from modular_simulation.unit_processes import FlashDrum, ShortcutDistillation
+from modular_simulation.unit_processes import FlashDrum, StagewiseDistillationColumn
 
 
 def _linear_equation(
@@ -247,11 +247,11 @@ def test_flash_drum_outlet_ports_share_one_declared_pressure_ref() -> None:
     )
 
 
-def test_shortcut_distillation_outlet_ports_keep_distinct_declared_pressure_refs() -> None:
-    participation = ShortcutDistillation().hydraulic_participation
+def test_stagewise_distillation_outlet_ports_share_declared_pressure_ref() -> None:
+    participation = StagewiseDistillationColumn().hydraulic_participation
 
     assert participation is not None
     assert (
         participation.ports["distillate"].pressure_state
-        != participation.ports["bottoms"].pressure_state
+        == participation.ports["bottoms"].pressure_state
     )

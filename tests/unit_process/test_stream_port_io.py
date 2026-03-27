@@ -20,7 +20,7 @@ from modular_simulation.unit_processes import (
     HeatExchanger,
     HeaterCooler,
     PFR,
-    ShortcutDistillation,
+    StagewiseDistillationColumn,
 )
 
 
@@ -31,9 +31,9 @@ def _attach(
         | CSTR
         | ComponentSeparator
         | FlashDrum
-        | ShortcutDistillation
         | HeatExchanger
         | PFR
+        | StagewiseDistillationColumn
     ),
 ) -> None:
     model.attach_system(cast(System, cast(object, SimpleNamespace(solver_options={}))))
@@ -294,39 +294,6 @@ def test_flash_drum_dual_outlets_map_nonstandard_attributes() -> None:
     assert liquid.mole_fractions == pytest.approx((0.2, 0.8))
 
 
-def test_shortcut_distillation_outlets_use_condenser_and_reboiler_conditions() -> None:
-    column = ShortcutDistillation(n_species=2)
-    inlet = StreamData(
-        temperature=360.0,
-        pressure=190000.0,
-        mole_fractions=(0.6, 0.4),
-        molar_flow_rate=20.0,
-    )
-    column.apply_inlet("inlet", inlet)
-
-    column.distillate_flow = 7.0
-    column.bottoms_flow = 13.0
-    column.distillate_composition = np.array([0.95, 0.05], dtype=np.float64)
-    column.bottoms_composition = np.array([0.2, 0.8], dtype=np.float64)
-    column.condenser_temperature = 325.0
-    column.condenser_pressure = 135000.0
-    column.reboiler_temperature = 385.0
-    column.reboiler_pressure = 160000.0
-
-    distillate = column.get_outlet_stream("distillate")
-    bottoms = column.get_outlet_stream("bottoms")
-
-    assert distillate.molar_flow_rate == pytest.approx(7.0)
-    assert distillate.temperature == pytest.approx(325.0)
-    assert distillate.pressure == pytest.approx(135000.0)
-    assert distillate.mole_fractions == pytest.approx((0.95, 0.05))
-
-    assert bottoms.molar_flow_rate == pytest.approx(13.0)
-    assert bottoms.temperature == pytest.approx(385.0)
-    assert bottoms.pressure == pytest.approx(160000.0)
-    assert bottoms.mole_fractions == pytest.approx((0.2, 0.8))
-
-
 def test_heat_exchanger_dual_inlet_and_dual_outlet_stream_io() -> None:
     hx = HeatExchanger(n_species=2)
 
@@ -374,6 +341,64 @@ def test_heat_exchanger_dual_inlet_and_dual_outlet_stream_io() -> None:
     assert cold_out.mole_fractions == pytest.approx((0.15, 0.85))
 
 
+def test_stagewise_distillation_column_multi_feed_and_reflux_stream_io() -> None:
+    column = StagewiseDistillationColumn(
+        n_species=3,
+        feed_stage_indices=(1, 3),
+        active_contact_height_m=4.0,
+        shell_diameter_m=1.2,
+        column_pressure_pa=170000.0,
+    )
+    _attach(column)
+
+    feed_1 = StreamData(
+        temperature=355.0,
+        pressure=170000.0,
+        mole_fractions=(0.8, 0.15, 0.05),
+        molar_flow_rate=4.0,
+    )
+    feed_2 = StreamData(
+        temperature=335.0,
+        pressure=170000.0,
+        mole_fractions=(0.1, 0.2, 0.7),
+        molar_flow_rate=6.0,
+    )
+    reflux_return = StreamData(
+        temperature=320.0,
+        pressure=170000.0,
+        mole_fractions=(0.3, 0.5, 0.2),
+        molar_flow_rate=2.0,
+    )
+    column.apply_inlet("feed_1", feed_1)
+    column.apply_inlet("feed_2", feed_2)
+    column.apply_inlet("reflux_return", reflux_return)
+    column.step(0.2)
+
+    distillate = column.get_outlet_stream("distillate")
+    bottoms = column.get_outlet_stream("bottoms")
+    reflux_outlet = column.get_outlet_stream("reflux_outlet")
+    feed_compositions = np.asarray(column.feed_compositions, dtype=np.float64).reshape(
+        column.n_feeds, column.n_species
+    )
+
+    assert tuple(feed_compositions[0]) == pytest.approx(feed_1.mole_fractions)
+    assert tuple(feed_compositions[1]) == pytest.approx(feed_2.mole_fractions)
+    assert column.feed_flows[0] == pytest.approx(feed_1.molar_flow_rate)
+    assert column.feed_flows[1] == pytest.approx(feed_2.molar_flow_rate)
+    assert column.reflux_return_flow == pytest.approx(reflux_return.molar_flow_rate)
+    assert tuple(column.reflux_return_composition) == pytest.approx(reflux_return.mole_fractions)
+
+    assert distillate.pressure == pytest.approx(column.column_pressure_pa)
+    assert bottoms.pressure == pytest.approx(column.column_pressure_pa)
+    assert reflux_outlet.pressure == pytest.approx(column.column_pressure_pa)
+    assert distillate.molar_flow_rate >= 0.0
+    assert bottoms.molar_flow_rate >= 0.0
+    assert reflux_outlet.molar_flow_rate >= 0.0
+    assert sum(distillate.mole_fractions) == pytest.approx(1.0)
+    assert sum(bottoms.mole_fractions) == pytest.approx(1.0)
+    assert sum(reflux_outlet.mole_fractions) == pytest.approx(1.0)
+
+
 @pytest.mark.parametrize(
     "unit",
     [
@@ -384,7 +409,7 @@ def test_heat_exchanger_dual_inlet_and_dual_outlet_stream_io() -> None:
             configured_split_fraction_targets=np.array([0.0, 0.0], dtype=np.float64),
         ),
         FlashDrum(n_species=2),
-        ShortcutDistillation(n_species=2),
+        StagewiseDistillationColumn(n_species=2),
         HeatExchanger(n_species=2),
         CSTR(n_species=2),
         PFR(n_species=2),
@@ -396,7 +421,7 @@ def test_invalid_port_names_raise_clear_errors(
         | ConversionReactor
         | ComponentSeparator
         | FlashDrum
-        | ShortcutDistillation
+        | StagewiseDistillationColumn
         | HeatExchanger
         | CSTR
         | PFR

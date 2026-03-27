@@ -31,22 +31,6 @@ _NON_PHYSICAL_OVERRIDES: dict[tuple[str, str], ControlSurfaceCategory] = {
         "ComponentSeparator",
         "configured_split_fraction_targets",
     ): ControlSurfaceCategory.CONFIGURED_ABSTRACT_SPECIFICATION,
-    (
-        "ShortcutDistillation",
-        "configured_light_key_distillate_recovery_target",
-    ): ControlSurfaceCategory.CONFIGURED_ABSTRACT_SPECIFICATION,
-    (
-        "ShortcutDistillation",
-        "configured_heavy_key_bottoms_recovery_target",
-    ): ControlSurfaceCategory.CONFIGURED_ABSTRACT_SPECIFICATION,
-    (
-        "ShortcutDistillation",
-        "configured_reflux_ratio_target",
-    ): ControlSurfaceCategory.CONFIGURED_ABSTRACT_SPECIFICATION,
-    (
-        "ShortcutDistillation",
-        "configured_minimum_reflux_ratio_factor",
-    ): ControlSurfaceCategory.CONFIGURED_ABSTRACT_SPECIFICATION,
 }
 
 

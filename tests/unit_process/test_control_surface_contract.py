@@ -18,7 +18,7 @@ from modular_simulation.unit_processes import (
     ConversionReactor,
     FlashDrum,
     HeaterCooler,
-    ShortcutDistillation,
+    StagewiseDistillationColumn,
 )
 
 
@@ -55,26 +55,6 @@ from modular_simulation.unit_processes import (
             "configured_split_fraction_targets",
             ControlSurfaceCategory.CONFIGURED_ABSTRACT_SPECIFICATION,
         ),
-        (
-            ShortcutDistillation(n_species=2, light_key_index=0, heavy_key_index=1),
-            "configured_light_key_distillate_recovery_target",
-            ControlSurfaceCategory.CONFIGURED_ABSTRACT_SPECIFICATION,
-        ),
-        (
-            ShortcutDistillation(n_species=2, light_key_index=0, heavy_key_index=1),
-            "configured_heavy_key_bottoms_recovery_target",
-            ControlSurfaceCategory.CONFIGURED_ABSTRACT_SPECIFICATION,
-        ),
-        (
-            ShortcutDistillation(n_species=2, light_key_index=0, heavy_key_index=1),
-            "configured_reflux_ratio_target",
-            ControlSurfaceCategory.CONFIGURED_ABSTRACT_SPECIFICATION,
-        ),
-        (
-            ShortcutDistillation(n_species=2, light_key_index=0, heavy_key_index=1),
-            "configured_minimum_reflux_ratio_factor",
-            ControlSurfaceCategory.CONFIGURED_ABSTRACT_SPECIFICATION,
-        ),
     ),
 )
 def test_control_surface_inventory_classification_matches_seed_audit(
@@ -85,19 +65,19 @@ def test_control_surface_inventory_classification_matches_seed_audit(
     assert get_control_surface_category(process_model, state_name) == expected_category
 
 
-def test_shortcut_distillation_no_longer_exposes_legacy_setpoint_names() -> None:
-    column = ShortcutDistillation(n_species=2, light_key_index=0, heavy_key_index=1)
+def test_stagewise_distillation_no_longer_exposes_legacy_setpoint_names() -> None:
+    column = StagewiseDistillationColumn(n_species=2)
 
     validate_no_banned_setpoint_names(column)
     assert "reflux_ratio_setpoint" not in column.state_list
 
 
-def test_shortcut_distillation_no_longer_exposes_configured_specs_in_boundary_view() -> None:
-    process_model = ShortcutDistillation(n_species=2, light_key_index=0, heavy_key_index=1)
+def test_stagewise_distillation_no_longer_exposes_configured_specs_in_boundary_view() -> None:
+    process_model = StagewiseDistillationColumn(n_species=2)
 
     validate_boundary_view_has_no_physical_actuators(process_model)
-    assert "configured_reflux_ratio_target" not in process_model.boundary_view.state_list
-    assert "configured_minimum_reflux_ratio_factor" not in process_model.boundary_view.state_list
+    assert "reflux_ratio" not in process_model.boundary_view.state_list
+    assert "boilup_ratio" not in process_model.boundary_view.state_list
 
 
 def test_component_separator_no_longer_exposes_configured_split_fraction_targets_in_boundary_view() -> (
@@ -126,19 +106,10 @@ def test_component_separator_no_longer_exposes_configured_split_fraction_targets
         (ComponentSeparator(n_species=2), "inlet_temperature"),
         (ComponentSeparator(n_species=2), "inlet_pressure"),
         (ComponentSeparator(n_species=2), "inlet_composition"),
-        (ShortcutDistillation(n_species=2, light_key_index=0, heavy_key_index=1), "inlet_flow"),
-        (
-            ShortcutDistillation(n_species=2, light_key_index=0, heavy_key_index=1),
-            "inlet_temperature",
-        ),
-        (
-            ShortcutDistillation(n_species=2, light_key_index=0, heavy_key_index=1),
-            "inlet_pressure",
-        ),
-        (
-            ShortcutDistillation(n_species=2, light_key_index=0, heavy_key_index=1),
-            "inlet_composition",
-        ),
+        (StagewiseDistillationColumn(n_species=2), "feed_flows"),
+        (StagewiseDistillationColumn(n_species=2), "feed_temperatures"),
+        (StagewiseDistillationColumn(n_species=2), "feed_pressures"),
+        (StagewiseDistillationColumn(n_species=2), "feed_compositions"),
     ),
 )
 def test_non_thermal_unit_inlet_like_surfaces_live_in_boundary_view(

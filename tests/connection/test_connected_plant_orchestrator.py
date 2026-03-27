@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -21,6 +22,10 @@ from modular_simulation.connection.runtime.runtime import (
 )
 from modular_simulation.connection.topology.subsystem_descriptor import SubsystemRuntimeDescriptor
 from modular_simulation.validation.exceptions import MeasurableConfigurationError
+from modular_simulation.connection.topology.unit_process_wiring import create_subsystem_for_unit
+from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
+from modular_simulation.thermodynamics.stream import StreamData
+from modular_simulation.unit_processes import StagewiseDistillationColumn
 
 
 @dataclass
@@ -546,4 +551,408 @@ def test_connected_plant_calculation_outputs_must_be_numeric() -> None:
 
     assert str(excinfo.value) == (
         "plant calculation 'non_numeric_output' output 'plant/not_numeric' must be numeric"
+    )
+
+
+def test_connected_plant_observables_include_runtime_stagewise_process_state_values() -> None:
+    context = SimulationRuntimeContext.create(species_names=["methanol", "ethanol", "water"])
+
+    column = StagewiseDistillationColumn(
+        n_species=3,
+        active_contact_height_m=6.0,
+        shell_diameter_m=1.2,
+        feed_stage_indices=(1, 4),
+        column_pressure_pa=165000.0,
+    )
+    subsystem = create_subsystem_for_unit(
+        unit=column,
+        unit_id="stage_col",
+        dt=0.1,
+        runtime_context=context,
+    )
+    cast(StagewiseDistillationColumn, subsystem.system.process_model).attach_system(
+        cast(Any, type("_S", (), {"solver_options": {}})())
+    )
+    column.apply_inlet(
+        "feed_1",
+        stream=StreamData(
+            temperature=350.0,
+            pressure=165000.0,
+            mole_fractions=(0.7, 0.2, 0.1),
+            molar_flow_rate=6.0,
+        ),
+    )
+    column.apply_inlet(
+        "feed_2",
+        stream=StreamData(
+            temperature=340.0,
+            pressure=165000.0,
+            mole_fractions=(0.1, 0.3, 0.6),
+            molar_flow_rate=4.5,
+        ),
+    )
+
+    runtime = ConnectionRuntimeOrchestrator(
+        hydraulic_solve_step=lambda *, network, macro_step_time_s: _hydraulic_result(),
+        transport_and_mixing_step=(
+            lambda *, network, hydraulic_result, macro_step_time_s: TransportAndMixingUpdate(
+                transport_results={}
+            )
+        ),
+        boundary_propagation_step=(
+            lambda *, network, hydraulic_result, transport_and_mixing_update, macro_step_time_s: {}
+        ),
+        runtime_context=context,
+    )
+    network = ConnectionNetwork(runtime_orchestrator=runtime)
+    network.add_process(
+        "stage_col",
+        inlet_ports=subsystem.descriptor.inlet_ports,
+        outlet_ports=subsystem.descriptor.outlet_ports,
+    )
+    network.add_boundary_source("feed_a")
+    network.add_boundary_source("feed_b")
+    network.add_boundary_sink("dist_prod")
+    network.add_boundary_sink("bot_prod")
+    _ = network.connect("feed_a", "stage_col.feed_1")
+    _ = network.connect("feed_b", "stage_col.feed_2")
+    _ = network.connect("stage_col.distillate", "dist_prod")
+    _ = network.connect("stage_col.bottoms", "bot_prod")
+    _ = network.compile()
+
+    orchestrator = ConnectedPlantOrchestrator(
+        subsystems=(subsystem,),
+        network=network,
+        runtime_orchestrator=runtime,
+        runtime_context=context,
+    )
+    _ = orchestrator.step(macro_step_time_s=0.2)
+
+    process_state_values = network.get_observability_snapshot()["observables"][
+        "process_state_values"
+    ]
+    assert process_state_values["stage_col/column_pressure_pa"] == pytest.approx(
+        column.column_pressure_pa
+    )
+    assert process_state_values["stage_col/active_contact_height_m"] == pytest.approx(
+        column.active_contact_height_m
+    )
+    assert process_state_values["stage_col/shell_diameter_m"] == pytest.approx(
+        column.shell_diameter_m
+    )
+    assert process_state_values["stage_col/distillate_flow_mol_s"] == pytest.approx(
+        column.distillate_flow
+    )
+    assert process_state_values["stage_col/bottoms_flow_mol_s"] == pytest.approx(
+        column.bottoms_flow
+    )
+    assert process_state_values["stage_col/reflux_return_flow_mol_s"] == pytest.approx(
+        column.reflux_return_flow
+    )
+    assert process_state_values["stage_col/distillate_withdrawal_flow_mol_s"] == pytest.approx(
+        column.distillate_withdrawal_flow
+    )
+    assert process_state_values["stage_col/bottoms_withdrawal_flow_mol_s"] == pytest.approx(
+        column.bottoms_withdrawal_flow
+    )
+    assert process_state_values["stage_col/feed_1/flow_mol_s"] == pytest.approx(
+        float(column.feed_flows[0])
+    )
+    assert process_state_values["stage_col/feed_2/flow_mol_s"] == pytest.approx(
+        float(column.feed_flows[1])
+    )
+    assert process_state_values["stage_col/feed_1/stage_index"] == pytest.approx(
+        float(column.feed_stage_indices[0])
+    )
+    assert process_state_values["stage_col/feed_2/stage_index"] == pytest.approx(
+        float(column.feed_stage_indices[1])
+    )
+
+    cas_ids = context.species_registry.cas_list
+    for idx, cas_id in enumerate(cas_ids):
+        assert process_state_values[
+            f"stage_col/distillate_mole_fraction/{cas_id}"
+        ] == pytest.approx(float(column.distillate_composition[idx]))
+        assert process_state_values[f"stage_col/bottoms_mole_fraction/{cas_id}"] == pytest.approx(
+            float(column.bottoms_composition[idx])
+        )
+        assert process_state_values[f"stage_col/feed_1/mole_fraction/{cas_id}"] == pytest.approx(
+            float(np.asarray(column.feed_compositions, dtype=np.float64).reshape(2, 3)[0, idx])
+        )
+        assert process_state_values[f"stage_col/feed_2/mole_fraction/{cas_id}"] == pytest.approx(
+            float(np.asarray(column.feed_compositions, dtype=np.float64).reshape(2, 3)[1, idx])
+        )
+
+
+def test_connected_plant_stagewise_direct_duty_changes_realized_phase_change_without_breaking_component_conservation() -> (
+    None
+):
+    context = SimulationRuntimeContext.create(species_names=["methanol", "ethanol", "water"])
+
+    def _run_case(
+        *, condenser_duty_request_w: float, reboiler_duty_request_w: float
+    ) -> StagewiseDistillationColumn:
+        column = StagewiseDistillationColumn(
+            n_species=3,
+            active_contact_height_m=6.0,
+            shell_diameter_m=1.2,
+            feed_stage_indices=(1, 4),
+            column_pressure_pa=165000.0,
+        )
+        subsystem = create_subsystem_for_unit(
+            unit=column,
+            unit_id="stage_col",
+            dt=0.1,
+            runtime_context=context,
+        )
+        cast(StagewiseDistillationColumn, subsystem.system.process_model).attach_system(
+            cast(Any, type("_S", (), {"solver_options": {}})())
+        )
+        column.apply_inlet(
+            "feed_1",
+            stream=StreamData(
+                temperature=350.0,
+                pressure=165000.0,
+                mole_fractions=(0.7, 0.2, 0.1),
+                molar_flow_rate=6.0,
+            ),
+        )
+        column.apply_inlet(
+            "feed_2",
+            stream=StreamData(
+                temperature=340.0,
+                pressure=165000.0,
+                mole_fractions=(0.1, 0.3, 0.6),
+                molar_flow_rate=4.5,
+            ),
+        )
+        column.condenser_duty_request_W = condenser_duty_request_w
+        column.reboiler_duty_request_W = reboiler_duty_request_w
+
+        runtime = ConnectionRuntimeOrchestrator(
+            hydraulic_solve_step=lambda *, network, macro_step_time_s: _hydraulic_result(),
+            transport_and_mixing_step=(
+                lambda *, network, hydraulic_result, macro_step_time_s: TransportAndMixingUpdate(
+                    transport_results={}
+                )
+            ),
+            boundary_propagation_step=(
+                lambda *,
+                network,
+                hydraulic_result,
+                transport_and_mixing_update,
+                macro_step_time_s: {}
+            ),
+            runtime_context=context,
+        )
+        network = ConnectionNetwork(runtime_orchestrator=runtime)
+        network.add_process(
+            "stage_col",
+            inlet_ports=subsystem.descriptor.inlet_ports,
+            outlet_ports=subsystem.descriptor.outlet_ports,
+        )
+        network.add_boundary_source("feed_a")
+        network.add_boundary_source("feed_b")
+        network.add_boundary_sink("dist_prod")
+        network.add_boundary_sink("bot_prod")
+        _ = network.connect("feed_a", "stage_col.feed_1")
+        _ = network.connect("feed_b", "stage_col.feed_2")
+        _ = network.connect("stage_col.distillate", "dist_prod")
+        _ = network.connect("stage_col.bottoms", "bot_prod")
+        _ = network.compile()
+
+        orchestrator = ConnectedPlantOrchestrator(
+            subsystems=(subsystem,),
+            network=network,
+            runtime_orchestrator=runtime,
+            runtime_context=context,
+        )
+        _ = orchestrator.step(macro_step_time_s=0.2)
+        return column
+
+    baseline = _run_case(condenser_duty_request_w=0.0, reboiler_duty_request_w=0.0)
+    duty_actuated = _run_case(condenser_duty_request_w=-15000.0, reboiler_duty_request_w=12000.0)
+
+    assert duty_actuated.realized_condensed_flow_mol_s > baseline.realized_condensed_flow_mol_s
+    assert (
+        duty_actuated.realized_reboiler_boilup_flow_mol_s
+        > baseline.realized_reboiler_boilup_flow_mol_s
+    )
+    assert duty_actuated.condenser_duty_W < 0.0
+    assert duty_actuated.reboiler_duty_W > 0.0
+    assert duty_actuated.realized_condensed_flow_mol_s == pytest.approx(0.5)
+    assert duty_actuated.realized_reboiler_boilup_flow_mol_s == pytest.approx(0.4)
+    assert duty_actuated.condenser_duty_W == pytest.approx(-15000.0)
+    assert duty_actuated.reboiler_duty_W == pytest.approx(12000.0)
+
+    baseline_total_moles = float(
+        np.sum(np.asarray(baseline.stage_component_moles, dtype=np.float64))
+        + np.sum(np.asarray(baseline.reflux_drum_component_moles, dtype=np.float64))
+        + np.sum(np.asarray(baseline.bottoms_sump_component_moles, dtype=np.float64))
+    )
+    duty_total_moles = float(
+        np.sum(np.asarray(duty_actuated.stage_component_moles, dtype=np.float64))
+        + np.sum(np.asarray(duty_actuated.reflux_drum_component_moles, dtype=np.float64))
+        + np.sum(np.asarray(duty_actuated.bottoms_sump_component_moles, dtype=np.float64))
+    )
+    assert duty_total_moles == pytest.approx(baseline_total_moles)
+
+    baseline_species_inventory = (
+        np.sum(
+            np.asarray(baseline.stage_component_moles, dtype=np.float64).reshape(
+                baseline.n_stages, baseline.n_species
+            ),
+            axis=0,
+        )
+        + np.asarray(baseline.reflux_drum_component_moles, dtype=np.float64)
+        + np.asarray(baseline.bottoms_sump_component_moles, dtype=np.float64)
+    )
+    duty_species_inventory = (
+        np.sum(
+            np.asarray(duty_actuated.stage_component_moles, dtype=np.float64).reshape(
+                duty_actuated.n_stages, duty_actuated.n_species
+            ),
+            axis=0,
+        )
+        + np.asarray(duty_actuated.reflux_drum_component_moles, dtype=np.float64)
+        + np.asarray(duty_actuated.bottoms_sump_component_moles, dtype=np.float64)
+    )
+    assert duty_species_inventory == pytest.approx(baseline_species_inventory)
+
+
+def test_connected_plant_stagewise_reflux_return_and_product_withdrawals_remain_owner_bounded_and_nonnegative() -> (
+    None
+):
+    context = SimulationRuntimeContext.create(species_names=["methanol", "ethanol", "water"])
+
+    column = StagewiseDistillationColumn(
+        n_species=3,
+        active_contact_height_m=6.0,
+        shell_diameter_m=1.2,
+        feed_stage_indices=(1, 4),
+        column_pressure_pa=165000.0,
+        reflux_drum_component_moles=np.array([0.3, 0.2, 0.1], dtype=np.float64),
+        bottoms_sump_component_moles=np.array([0.3, 0.2, 0.1], dtype=np.float64),
+    )
+    subsystem = create_subsystem_for_unit(
+        unit=column,
+        unit_id="stage_col",
+        dt=0.1,
+        runtime_context=context,
+    )
+    cast(StagewiseDistillationColumn, subsystem.system.process_model).attach_system(
+        cast(Any, type("_S", (), {"solver_options": {}})())
+    )
+    column.apply_inlet(
+        "feed_1",
+        stream=StreamData(
+            temperature=350.0,
+            pressure=165000.0,
+            mole_fractions=(0.7, 0.2, 0.1),
+            molar_flow_rate=6.0,
+        ),
+    )
+    column.apply_inlet(
+        "feed_2",
+        stream=StreamData(
+            temperature=340.0,
+            pressure=165000.0,
+            mole_fractions=(0.1, 0.3, 0.6),
+            molar_flow_rate=4.5,
+        ),
+    )
+    column.apply_inlet(
+        "reflux_return",
+        stream=StreamData(
+            temperature=330.0,
+            pressure=165000.0,
+            mole_fractions=(0.2, 0.3, 0.5),
+            molar_flow_rate=1.5,
+        ),
+    )
+    column.condenser_duty_request_W = -9000.0
+    column.reboiler_duty_request_W = 6000.0
+    column.distillate_withdrawal_flow = 5.0
+    column.bottoms_withdrawal_flow = 5.0
+
+    runtime = ConnectionRuntimeOrchestrator(
+        hydraulic_solve_step=lambda *, network, macro_step_time_s: _hydraulic_result(),
+        transport_and_mixing_step=(
+            lambda *, network, hydraulic_result, macro_step_time_s: TransportAndMixingUpdate(
+                transport_results={}
+            )
+        ),
+        boundary_propagation_step=(
+            lambda *, network, hydraulic_result, transport_and_mixing_update, macro_step_time_s: {}
+        ),
+        runtime_context=context,
+    )
+    network = ConnectionNetwork(runtime_orchestrator=runtime)
+    network.add_process(
+        "stage_col",
+        inlet_ports=subsystem.descriptor.inlet_ports,
+        outlet_ports=subsystem.descriptor.outlet_ports,
+    )
+    network.add_boundary_source("feed_a")
+    network.add_boundary_source("feed_b")
+    network.add_boundary_source("reflux_boundary")
+    network.add_boundary_sink("dist_prod")
+    network.add_boundary_sink("bot_prod")
+    network.add_boundary_sink("reflux_sink")
+    _ = network.connect("feed_a", "stage_col.feed_1")
+    _ = network.connect("feed_b", "stage_col.feed_2")
+    _ = network.connect("reflux_boundary", "stage_col.reflux_return")
+    _ = network.connect("stage_col.distillate", "dist_prod")
+    _ = network.connect("stage_col.bottoms", "bot_prod")
+    _ = network.connect("stage_col.reflux_outlet", "reflux_sink")
+    _ = network.compile()
+
+    orchestrator = ConnectedPlantOrchestrator(
+        subsystems=(subsystem,),
+        network=network,
+        runtime_orchestrator=runtime,
+        runtime_context=context,
+    )
+    _ = orchestrator.step(macro_step_time_s=0.2)
+
+    assert column.reflux_return_flow == pytest.approx(1.5)
+    assert tuple(column.reflux_return_composition) == pytest.approx((0.2, 0.3, 0.5))
+    assert 0.0 <= column.distillate_flow <= column.distillate_withdrawal_flow
+    assert 0.0 <= column.bottoms_flow <= column.bottoms_withdrawal_flow
+    assert column.reflux_outlet_flow >= 0.0
+    assert np.min(np.asarray(column.reflux_drum_component_moles, dtype=np.float64)) >= -1.0e-12
+    assert np.min(np.asarray(column.bottoms_sump_component_moles, dtype=np.float64)) >= -1.0e-12
+
+    reflux_drum_inventory = np.clip(
+        np.asarray(column.reflux_drum_component_moles, dtype=np.float64), 0.0, None
+    )
+    bottoms_sump_inventory = np.clip(
+        np.asarray(column.bottoms_sump_component_moles, dtype=np.float64), 0.0, None
+    )
+    drum_total = float(np.sum(reflux_drum_inventory))
+    sump_total = float(np.sum(bottoms_sump_inventory))
+    assert drum_total > 0.0
+    assert sump_total > 0.0
+
+    expected_drum_liquid = tuple((reflux_drum_inventory / drum_total).tolist())
+    expected_sump_liquid = tuple((bottoms_sump_inventory / sump_total).tolist())
+    assert column.get_outlet_stream("reflux_outlet").mole_fractions == pytest.approx(
+        expected_drum_liquid
+    )
+    assert column.get_outlet_stream("distillate").mole_fractions == pytest.approx(
+        expected_drum_liquid
+    )
+    assert column.get_outlet_stream("bottoms").mole_fractions == pytest.approx(expected_sump_liquid)
+
+    process_state_values = network.get_observability_snapshot()["observables"][
+        "process_state_values"
+    ]
+    assert process_state_values["stage_col/reflux_return_flow_mol_s"] == pytest.approx(
+        column.reflux_return_flow
+    )
+    assert process_state_values["stage_col/distillate_withdrawal_flow_mol_s"] == pytest.approx(
+        column.distillate_withdrawal_flow
+    )
+    assert process_state_values["stage_col/bottoms_withdrawal_flow_mol_s"] == pytest.approx(
+        column.bottoms_withdrawal_flow
     )

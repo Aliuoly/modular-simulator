@@ -787,14 +787,17 @@ class ConnectionRuntimeOrchestrator:
             return {
                 "published_measurements": {},
                 "plant_calculation_outputs": {},
+                "process_state_values": {},
             }
 
         observables = self._observability_provider.get_observability_observables()
         published_measurements = dict(observables.get("published_measurements", {}))
         plant_calculation_outputs = dict(observables.get("plant_calculation_outputs", {}))
+        process_state_values = dict(observables.get("process_state_values", {}))
         return {
             "published_measurements": published_measurements,
             "plant_calculation_outputs": plant_calculation_outputs,
+            "process_state_values": process_state_values,
         }
 
     def save_runtime_snapshot(self, *, network: ConnectionNetwork) -> Mapping[str, object]:

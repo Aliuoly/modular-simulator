@@ -143,6 +143,7 @@ class _FakeNetwork:
             "observables": {
                 "published_measurements": {},
                 "plant_calculation_outputs": {},
+                "process_state_values": {},
             },
         }
 
@@ -890,6 +891,7 @@ class TestObservabilitySnapshot:
         assert isinstance(observables, MappingABC)
         assert "published_measurements" in observables
         assert "plant_calculation_outputs" in observables
+        assert "process_state_values" in observables
 
     def test_get_observability_snapshot_distinct_from_save_checkpoint(
         self,
@@ -923,3 +925,127 @@ class TestObservabilitySnapshot:
             f"Policy fields found in session observability snapshot: "
             f"{set(snapshot.keys()) & forbidden_keys}"
         )
+
+    def test_get_observability_snapshot_forwards_runtime_stagewise_scalar_and_cas_values(
+        self,
+        session: PlantBackendSession,
+        fake_network: _FakeNetwork,
+    ) -> None:
+        expected_process_state_values = {
+            "stage_col/distillate_flow_mol_s": 12.34,
+            "stage_col/bottoms_flow_mol_s": 7.66,
+            "stage_col/condenser_duty_W": -25000.0,
+            "stage_col/reboiler_duty_W": 30000.0,
+            "stage_col/realized_condensed_flow_mol_s": 0.8,
+            "stage_col/realized_reboiler_boilup_flow_mol_s": 0.4,
+            "stage_col/distillate_mole_fraction/67-56-1": 0.8,
+            "stage_col/bottoms_mole_fraction/67-56-1": 0.2,
+            "stage_col/distillate_mole_fraction/64-17-5": 0.15,
+            "stage_col/bottoms_mole_fraction/64-17-5": 0.55,
+            "stage_col/distillate_mole_fraction/7732-18-5": 0.05,
+            "stage_col/bottoms_mole_fraction/7732-18-5": 0.25,
+        }
+
+        def _snapshot_with_runtime_stagewise_values() -> Mapping[str, object]:
+            return {
+                "schema": "observability/v1",
+                "graph_revision": "rev_123",
+                "runtime": {
+                    "simulation_time_s": 1.0,
+                    "macro_step_index": 4,
+                    "macro_step_active": False,
+                },
+                "queue": {
+                    "queued_request_ids": (),
+                    "queued_request_count": 0,
+                    "committed_idempotency_keys": (),
+                },
+                "observables": {
+                    "published_measurements": {},
+                    "plant_calculation_outputs": {},
+                    "process_state_values": expected_process_state_values,
+                },
+            }
+
+        fake_network.get_observability_snapshot = _snapshot_with_runtime_stagewise_values  # type: ignore[method-assign]
+
+        snapshot = session.get_observability_snapshot()
+        process_state_values = snapshot["observables"]["process_state_values"]
+
+        assert process_state_values == expected_process_state_values
+        assert process_state_values["stage_col/distillate_flow_mol_s"] == 12.34
+        assert process_state_values["stage_col/realized_condensed_flow_mol_s"] == 0.8
+        assert process_state_values["stage_col/distillate_mole_fraction/67-56-1"] == 0.8
+
+    def test_get_observability_snapshot_forwards_runtime_stagewise_process_state_values(
+        self,
+        session: PlantBackendSession,
+        fake_network: _FakeNetwork,
+    ) -> None:
+        expected_process_state_values = {
+            "stage_col/column_pressure_pa": 165000.0,
+            "stage_col/active_contact_height_m": 6.0,
+            "stage_col/shell_diameter_m": 1.2,
+            "stage_col/distillate_flow_mol_s": 4.0,
+            "stage_col/bottoms_flow_mol_s": 3.0,
+            "stage_col/condenser_duty_W": -30000.0,
+            "stage_col/reboiler_duty_W": 30000.0,
+            "stage_col/realized_condensed_flow_mol_s": 1.0,
+            "stage_col/realized_reboiler_boilup_flow_mol_s": 1.0,
+            "stage_col/reflux_return_flow_mol_s": 0.9,
+            "stage_col/distillate_withdrawal_flow_mol_s": 4.0,
+            "stage_col/bottoms_withdrawal_flow_mol_s": 3.0,
+            "stage_col/reflux_outlet_flow_mol_s": 0.8,
+            "stage_col/reflux_drum_holdup_mol": 120.0,
+            "stage_col/bottoms_sump_holdup_mol": 120.0,
+            "stage_col/stage_1/mole_fraction/67-56-1": 0.7,
+            "stage_col/stage_1/mole_fraction/64-17-5": 0.2,
+            "stage_col/stage_1/mole_fraction/7732-18-5": 0.1,
+            "stage_col/stage_4/mole_fraction/67-56-1": 0.1,
+            "stage_col/stage_4/mole_fraction/64-17-5": 0.3,
+            "stage_col/stage_4/mole_fraction/7732-18-5": 0.6,
+            "stage_col/feed_1/flow_mol_s": 6.0,
+            "stage_col/feed_1/temperature_K": 350.0,
+            "stage_col/feed_1/pressure_pa": 165000.0,
+            "stage_col/feed_1/stage_index": 1.0,
+            "stage_col/feed_1/mole_fraction/67-56-1": 0.7,
+            "stage_col/feed_1/mole_fraction/64-17-5": 0.2,
+            "stage_col/feed_1/mole_fraction/7732-18-5": 0.1,
+            "stage_col/feed_2/flow_mol_s": 4.5,
+            "stage_col/feed_2/temperature_K": 340.0,
+            "stage_col/feed_2/pressure_pa": 165000.0,
+            "stage_col/feed_2/stage_index": 4.0,
+            "stage_col/feed_2/mole_fraction/67-56-1": 0.1,
+            "stage_col/feed_2/mole_fraction/64-17-5": 0.3,
+            "stage_col/feed_2/mole_fraction/7732-18-5": 0.6,
+        }
+
+        def _snapshot_with_runtime_stagewise_values() -> Mapping[str, object]:
+            return {
+                "schema": "observability/v1",
+                "graph_revision": "rev_123",
+                "runtime": {
+                    "simulation_time_s": 1.0,
+                    "macro_step_index": 4,
+                    "macro_step_active": False,
+                },
+                "queue": {
+                    "queued_request_ids": (),
+                    "queued_request_count": 0,
+                    "committed_idempotency_keys": (),
+                },
+                "observables": {
+                    "published_measurements": {},
+                    "plant_calculation_outputs": {},
+                    "process_state_values": expected_process_state_values,
+                },
+            }
+
+        fake_network.get_observability_snapshot = _snapshot_with_runtime_stagewise_values  # type: ignore[method-assign]
+
+        snapshot = session.get_observability_snapshot()
+        process_state_values = snapshot["observables"]["process_state_values"]
+
+        assert process_state_values == expected_process_state_values
+        assert process_state_values["stage_col/column_pressure_pa"] == 165000.0
+        assert process_state_values["stage_col/stage_4/mole_fraction/7732-18-5"] == 0.6

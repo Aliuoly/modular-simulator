@@ -158,7 +158,11 @@ def test_no_current_start_allowlist_gains_new_foundation_items() -> None:
     """This pack does not add place_holding_tank or place_quality_control_lab to any
     current start's allowed_item_ids.  Both items have supported_start_ids = ()."""
     catalog = _build_start_catalog()
-    forbidden_new_items = ("place_holding_tank", "place_quality_control_lab")
+    forbidden_new_items = (
+        "place_holding_tank",
+        "place_quality_control_lab",
+        "place_shortcut_distillation_column",
+    )
     for start_id, definition in catalog.items():
         for forbidden in forbidden_new_items:
             assert forbidden not in definition.allowed_item_ids, (

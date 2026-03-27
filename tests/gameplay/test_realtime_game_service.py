@@ -336,6 +336,27 @@ def test_commands_do_not_require_or_accept_client_receipt_ids() -> None:
     assert _field(buy_result, "accepted") is True
 
 
+def test_build_translates_install_unit_failures_to_invalid_config() -> None:
+    service = _service_api()
+    error_type = _sandbox_error_type()
+
+    created = _create_session(service, mode_id="phase1_process_sandbox_v1")
+    session_id = _field(created, "session_id")
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    network = realtime_module._service()._active_session.runtime_bundle.backend_session.network
+
+    with patch.object(network, "add_process", side_effect=RuntimeError("boom")):
+        with pytest.raises(error_type) as exc_info:
+            service.build(
+                session_id=session_id,
+                item_id="place_heater_cooler",
+                config={"process_id": "heater_1"},
+                layout={"anchor_xy": (0.0, 0.0)},
+            )
+
+    assert exc_info.value.error_code == "invalid_config"
+
+
 def test_service_advances_from_wall_clock_without_explicit_tick_on_get_snapshot() -> None:
     """Service must own wall-clock progression: get_snapshot() advances without a prior tick().
 

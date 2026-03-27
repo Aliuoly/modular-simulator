@@ -95,6 +95,29 @@ def build_sandbox_catalog() -> dict[str, SandboxCatalogItemDefinition]:
             ),
         ),
         SandboxCatalogItemDefinition(
+            item_id="place_shortcut_distillation_column",
+            title="Stagewise distillation column (legacy item id)",
+            item_kind="unit_blueprint",
+            apply_kind="add_process",
+            default_config={
+                "unit_type": "StagewiseDistillationColumn",
+                "unit_module": "modular_simulation.unit_processes.separation.stagewise_distillation",
+                "constructor_payload": {
+                    "n_species": 3,
+                    "active_contact_height_m": 4.0,
+                    "shell_diameter_m": 1.0,
+                    "feed_stage_indices": (1,),
+                },
+            },
+            required_user_inputs=("process_id",),
+            supported_start_ids=(),
+            educational_summary=(
+                "legacy catalog id that instantiates the monolithic dynamic stagewise "
+                "distillation column with duty-limited condenser/reboiler surrogates and "
+                "explicit holdup-bounded reflux/product seams"
+            ),
+        ),
+        SandboxCatalogItemDefinition(
             item_id="place_merge_junction_2x1",
             title="Merge junction (2x1)",
             item_kind="junction_blueprint",

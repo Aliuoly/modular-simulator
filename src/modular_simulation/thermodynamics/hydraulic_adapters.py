@@ -15,7 +15,7 @@ _PIPE_RESISTANCE_BY_UNIT_NAME: dict[str, float] = {
     "PFR": 1.0e4,
     "ConversionReactor": 1.0e4,
     "FlashDrum": 5.0e3,
-    "ShortcutDistillation": 2.0e4,
+    "StagewiseDistillationColumn": 2.0e4,
     "ComponentSeparator": 5.0e3,
     "HeatExchanger": 5.0e3,
     "HoldingTank": 5.0e3,

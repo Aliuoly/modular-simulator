@@ -197,6 +197,17 @@ def test_new_foundation_items_are_unsupported_on_start_in_sandbox() -> None:
     assert qc_lab_exc.value.error_code == "unsupported_on_start"
 
 
+def test_shortcut_distillation_foundation_item_is_unsupported_on_topology_only_starts() -> None:
+    api = _session_api()
+    error_type = _sandbox_error_type()
+
+    api.start_sandbox()
+
+    with pytest.raises(error_type) as shortcut_exc:
+        api.install_catalog_item("place_shortcut_distillation_column", config={})
+    assert shortcut_exc.value.error_code == "unsupported_on_start"
+
+
 def test_install_requires_equipment_receipt_id_when_ledger_active() -> None:
     api = _session_api()
     economics = import_module("modular_simulation.gameplay.economics")
@@ -219,6 +230,20 @@ def test_install_requires_equipment_receipt_id_when_ledger_active() -> None:
     with pytest.raises(error_type) as missing_receipt:
         api.install_catalog_item("place_heater_cooler", config={})
     assert missing_receipt.value.error_code == "missing_equipment_receipt"
+
+
+def test_gameplay_surface_still_excludes_controller_installation() -> None:
+    realtime_service = import_module("modular_simulation.gameplay.realtime_service")
+
+    assert tuple(realtime_service.SUPPORTED_BUILD_ITEM_IDS) == (
+        "place_heater_cooler",
+        "place_flash_drum",
+        "build_process_line",
+    )
+    assert "install_pid_controller" not in realtime_service.SUPPORTED_BUILD_ITEM_IDS, (
+        "Controller proof remains deferred to ModularSimulator-9tr.6; "
+        "the current realtime gameplay surface must stay frozen to the build slice."
+    )
 
 
 def test_feed_load_rejection_codes_are_stable() -> None:
