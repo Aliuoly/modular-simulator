@@ -17,8 +17,6 @@ var _available_build_item_ids: Array = []
 var _available_research_ids: Array = []
 var _selected_build_index: int = 0
 var _build_counts_by_item_id: Dictionary = {}
-
-
 func _ready() -> void:
 	_session_store = get_node_or_null(session_store_path)
 	if _session_store == null:
@@ -44,15 +42,15 @@ func _on_snapshot_updated() -> void:
 
 
 func _apply_snapshot(snapshot: Dictionary) -> void:
-	var simulation_snapshot: Dictionary = snapshot.get("simulation_snapshot", {})
-	var progression_snapshot: Dictionary = simulation_snapshot.get("progression_snapshot", {})
+	var simulation_snapshot: Dictionary = _dictionary_or_empty(snapshot.get("simulation_snapshot", {}))
+	var progression_snapshot: Dictionary = _dictionary_or_empty(simulation_snapshot.get("progression_snapshot", {}))
 
 	if progression_snapshot.is_empty():
-		_available_build_item_ids = snapshot.get("supported_build_item_ids", [])
+		_available_build_item_ids = _array_or_empty(snapshot.get("supported_build_item_ids", []))
 		_available_research_ids = []
 	else:
-		_available_build_item_ids = progression_snapshot.get("available_item_ids", [])
-		_available_research_ids = progression_snapshot.get("available_research_ids", [])
+		_available_build_item_ids = _array_or_empty(progression_snapshot.get("available_item_ids", []))
+		_available_research_ids = _array_or_empty(progression_snapshot.get("available_research_ids", []))
 
 	if _selected_build_index >= _available_build_item_ids.size():
 		_selected_build_index = 0
@@ -131,11 +129,19 @@ func _on_submit_research_pressed() -> void:
 
 
 func _on_buy_feed_pressed() -> void:
-	var result: Dictionary = await _session_store.buy_feed("sweet_wet_gas", 10.0)
-	if bool(result.get("ok", false)):
-		status_label.text = "Bought sweet_wet_gas"
-	else:
-		status_label.text = "Buy feed failed: %s" % String(result.get("error_code", "unknown"))
+	if _session_store != null and String(_session_store.active_mode_id) == "heater_flash_guided_build_v1":
+		status_label.text = "Feed purchase unavailable in tutorial"
+		return
+
+	var feed_ids := _buy_feed_ids_for_snapshot(_session_store.latest_snapshot)
+	var last_error_code := "unknown"
+	for feed_id in feed_ids:
+		var result: Dictionary = await _session_store.buy_feed(feed_id, 10.0)
+		if bool(result.get("ok", false)):
+			status_label.text = "Bought %s" % feed_id
+			return
+		last_error_code = String(result.get("error_code", "unknown"))
+	status_label.text = "Buy feed failed: %s" % last_error_code
 
 
 func _on_sell_product_pressed() -> void:
@@ -174,3 +180,30 @@ func _process_id_for_item(item_id: String, count: int) -> String:
 			return "stabilizer_%d" % count
 		_:
 			return "%s_%d" % [item_id.replace("place_", "").replace("install_", ""), count]
+
+
+func _feed_id_for_snapshot(snapshot: Dictionary) -> String:
+	var simulation_snapshot: Dictionary = _dictionary_or_empty(snapshot.get("simulation_snapshot", {}))
+	var feed_inventory: Dictionary = _dictionary_or_empty(simulation_snapshot.get("feed_inventory_by_material_id", {}))
+	for feed_id in feed_inventory.keys():
+		return String(feed_id)
+	return "sweet_wet_gas"
+
+
+func _buy_feed_ids_for_snapshot(snapshot: Dictionary) -> Array:
+	var primary_feed_id := _feed_id_for_snapshot(snapshot)
+	if primary_feed_id == "feed":
+		return ["feed", "sweet_wet_gas"]
+	return ["sweet_wet_gas", "feed"]
+
+
+func _dictionary_or_empty(value: Variant) -> Dictionary:
+	if value is Dictionary:
+		return value
+	return {}
+
+
+func _array_or_empty(value: Variant) -> Array:
+	if value is Array:
+		return value
+	return []
