@@ -39,8 +39,14 @@ class SeedBackedStart:
 
 LEARNER_START_SCAFFOLDS: dict[str, LearnerStartScaffold] = {
     "phase1_process_sandbox_v1": LearnerStartScaffold(
-        named_feed_ids=("feed_a", "feed_b"),
-        named_sink_ids=("product_a", "product_b"),
+        named_feed_ids=("sweet_wet_gas",),
+        named_sink_ids=(
+            "separator_gas",
+            "unstabilized_condensate",
+            "dry_gas",
+            "ngl_liquids",
+            "stabilized_condensate",
+        ),
         preinstalled_unit_ids=(),
         preinstalled_junction_ids=(),
         preinstalled_line_ids=(),
@@ -119,15 +125,23 @@ def _build_from_metadata(
 
 def _build_phase1_process_sandbox() -> SeedBackedStart:
     definition = _catalog_entry("phase1_process_sandbox_v1")
-    heater_flash_module = import_module("examples.unit_process_flowsheet.easy_2_heater_flash")
-    dual_feed_module = import_module(
-        "examples.unit_process_flowsheet.easy_3_dual_feed_heat_exchanger"
+    gas_1_module = import_module("examples.unit_process_flowsheet.gas_1_inlet_separator")
+    gas_2_module = import_module("examples.unit_process_flowsheet.gas_2_teg_dehydration")
+    gas_3_module = import_module(
+        "examples.unit_process_flowsheet.gas_3_jt_low_temperature_separation"
     )
+    gas_4_module = import_module("examples.unit_process_flowsheet.gas_4_condensate_stabilizer")
     seed_instances_by_path = {
-        "examples/unit_process_flowsheet/easy_2_heater_flash.py": heater_flash_module.build_example_flowsheet(
+        "examples/unit_process_flowsheet/gas_1_inlet_separator.py": gas_1_module.build_example_flowsheet(
             dt=0.2
         ),
-        "examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py": dual_feed_module.build_example_flowsheet(
+        "examples/unit_process_flowsheet/gas_2_teg_dehydration.py": gas_2_module.build_example_flowsheet(
+            dt=0.2
+        ),
+        "examples/unit_process_flowsheet/gas_3_jt_low_temperature_separation.py": gas_3_module.build_example_flowsheet(
+            dt=0.2
+        ),
+        "examples/unit_process_flowsheet/gas_4_condensate_stabilizer.py": gas_4_module.build_example_flowsheet(
             dt=0.2
         ),
     }

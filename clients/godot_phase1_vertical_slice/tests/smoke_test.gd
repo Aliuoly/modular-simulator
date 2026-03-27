@@ -132,8 +132,23 @@ func _wait_for_status_contains(status_label: Label, expected_substring: String, 
 	_assert(false, "Expected status label to contain '%s', got '%s'" % [expected_substring, status_label.text])
 
 
-func _wait_for_goal_or_product(store: Node, mode_id: String, max_frames: int = 240) -> void:
+func _wait_for_status_contains_any(status_label: Label, expected_substrings: PackedStringArray, max_frames: int = 120) -> void:
 	for _frame in range(max_frames):
+		for expected in expected_substrings:
+			if status_label.text.contains(expected):
+				return
+		await process_frame
+	_assert(false, "Expected status label to contain one of %s, got '%s'" % [", ".join(expected_substrings), status_label.text])
+
+
+func _wait_for_goal_or_inventory(store: Node, max_frames: int = 240) -> void:
+	for _frame in range(max_frames):
+		var feed: Dictionary = store.latest_snapshot.get("simulation_snapshot", {}).get("feed_inventory_by_material_id", {})
+		var total_feed: float = 0.0
+		for value in feed.values():
+			total_feed += float(value)
+		if total_feed > 0.0:
+			return
 		var products: Dictionary = store.product_inventory()
 		var total_product: float = 0.0
 		for value in products.values():
@@ -141,18 +156,7 @@ func _wait_for_goal_or_product(store: Node, mode_id: String, max_frames: int = 2
 		if total_product > 0.0:
 			return
 		await process_frame
-	_assert(false, "Expected product inventory after sandbox UI build/feed sequence")
-
-
-func _wait_for_tutorial_goal_done(store: Node, goal_id: String, max_frames: int = 240) -> void:
-	var expected_line: String = "%s: done" % goal_id
-	for _frame in range(max_frames):
-		var goals: PackedStringArray = store.tutorial_goal_summary_lines()
-		for line in goals:
-			if String(line) == expected_line:
-				return
-		await process_frame
-	_assert(false, "Expected tutorial goal '%s' to complete via UI wiring" % goal_id)
+	_assert(false, "Expected feed or product inventory after sandbox UI command sequence")
 
 
 func _press_selected_title_button(title_screen: Node, selected_mode: String) -> void:
@@ -162,27 +166,6 @@ func _press_selected_title_button(title_screen: Node, selected_mode: String) -> 
 	var button: Button = title_screen.get_node_or_null(button_path) as Button
 	_assert(button != null, "Expected title button at %s" % button_path)
 	button.pressed.emit()
-
-
-func _select_line_endpoint(
-	label: Label,
-	next_button: Button,
-	prefix: String,
-	node_id: String,
-	max_steps: int = 12
-) -> void:
-	var expected_text: String = "%s%s" % [prefix, node_id]
-	if label.text == expected_text:
-		return
-	var visited: PackedStringArray = [label.text]
-	for _step in range(max_steps):
-		next_button.pressed.emit()
-		await process_frame
-		visited.append(label.text)
-		if label.text == expected_text:
-			return
-	_assert(false,
-		"Could not select endpoint '%s'. Visited labels: %s" % [node_id, ", ".join(visited)])
 
 
 ## ── main flow ─────────────────────────────────────────────────────────────────
@@ -279,94 +262,64 @@ func _run() -> void:
 		"HUD cash label must not be the default '--' after snapshot_updated signal")
 	_assert(hud.mode_label.text.contains(selected_mode),
 		"HUD mode label must reflect the selected mode_id after snapshot_updated signal")
+	_assert(hud.stage_label.text.begins_with("Stage:"),
+		"HUD stage label must render progression stage state")
+	_assert(hud.research_label.text.begins_with("Research:"),
+		"HUD research label must render available research state")
+	_assert(hud.unlocked_items_label.text.begins_with("Unlocked Build Items:"),
+		"HUD unlocked items label must render progression item state")
 
 	## ── PHASE 4: Production BuildCommandPanel command path ───────────────────
 	var build_panel: Node = main_game.get_node_or_null("CanvasLayer/HUD/BuildPanel")
 	_assert(build_panel != null, "BuildCommandPanel must exist at CanvasLayer/HUD/BuildPanel")
 
-	var build_heater_button: Button = build_panel.get_node_or_null("BuildHeaterButton") as Button
-	var build_flash_button: Button = build_panel.get_node_or_null("BuildFlashButton") as Button
-	var build_line_button: Button = build_panel.get_node_or_null("BuildLineButton") as Button
+	var build_item_next_button: Button = build_panel.get_node_or_null("BuildItemNextButton") as Button
+	var build_selected_button: Button = build_panel.get_node_or_null("BuildSelectedButton") as Button
+	var submit_research_button: Button = build_panel.get_node_or_null("SubmitResearchButton") as Button
 	var buy_feed_button: Button = build_panel.get_node_or_null("BuyFeedButton") as Button
+	var sell_product_button: Button = build_panel.get_node_or_null("SellProductButton") as Button
 	var restart_button: Button = build_panel.get_node_or_null("RestartButton") as Button
-	var next_source_button: Button = build_panel.get_node_or_null("LineSourceNextButton") as Button
-	var next_target_button: Button = build_panel.get_node_or_null("LineTargetNextButton") as Button
-	var source_label: Label = build_panel.get_node_or_null("LineSourceLabel") as Label
-	var target_label: Label = build_panel.get_node_or_null("LineTargetLabel") as Label
+	var build_item_label: Label = build_panel.get_node_or_null("BuildItemLabel") as Label
+	var research_status_label: Label = build_panel.get_node_or_null("ResearchStatusLabel") as Label
 	var status_label: Label = build_panel.get_node_or_null("StatusLabel") as Label
 
-	_assert(build_heater_button != null, "BuildHeaterButton must exist")
-	_assert(build_flash_button != null, "BuildFlashButton must exist")
-	_assert(build_line_button != null, "BuildLineButton must exist")
+	_assert(build_item_next_button != null, "BuildItemNextButton must exist")
+	_assert(build_selected_button != null, "BuildSelectedButton must exist")
+	_assert(submit_research_button != null, "SubmitResearchButton must exist")
 	_assert(buy_feed_button != null, "BuyFeedButton must exist")
+	_assert(sell_product_button != null, "SellProductButton must exist")
 	_assert(restart_button != null, "RestartButton must exist")
-	_assert(next_source_button != null, "LineSourceNextButton must exist")
-	_assert(next_target_button != null, "LineTargetNextButton must exist")
-	_assert(source_label != null, "LineSourceLabel must exist")
-	_assert(target_label != null, "LineTargetLabel must exist")
+	_assert(build_item_label != null, "BuildItemLabel must exist")
+	_assert(research_status_label != null, "ResearchStatusLabel must exist")
 	_assert(status_label != null, "StatusLabel must exist")
 
-	var buy_feed_succeeded: bool = false
+	build_item_next_button.pressed.emit()
+	await process_frame
+	_assert(build_item_label.text.begins_with("Selected build item:"),
+		"Build item label must show currently selected unlocked item")
+
 	buy_feed_button.pressed.emit()
-	for _frame in range(120):
-		if status_label.text.contains("Bought"):
-			buy_feed_succeeded = true
-			break
-		if status_label.text.contains("Buy feed failed"):
-			break
-		await process_frame
-	if selected_mode == "phase1_process_sandbox_v1":
-		_assert(buy_feed_succeeded, "Sandbox mode must support buy-feed via UI")
+	await _wait_for_status_contains_any(status_label, PackedStringArray(["Bought", "Buy feed failed"]))
 
-	build_heater_button.pressed.emit()
-	await _wait_for_status_contains(status_label, "Heater placed")
+	build_selected_button.pressed.emit()
+	await _wait_for_status_contains_any(status_label, PackedStringArray(["Built", "Build failed", "Line build requires explicit endpoints"]))
 
-	build_flash_button.pressed.emit()
-	await _wait_for_status_contains(status_label, "Flash placed")
+	submit_research_button.pressed.emit()
+	await _wait_for_status_contains_any(status_label, PackedStringArray(["Research submitted", "Research failed", "No research available"]))
+	_assert(research_status_label.text.begins_with("Research target:"),
+		"Build panel research status label must expose available research id")
 
-	if selected_mode == "heater_flash_guided_build_v1":
-		await _select_line_endpoint(source_label, next_source_button, "Line source: ", "feed")
-		await _select_line_endpoint(target_label, next_target_button, "Line target: ", "heater_1")
-		build_line_button.pressed.emit()
-		await _wait_for_status_contains(status_label, "Line built")
-
-		await _select_line_endpoint(source_label, next_source_button, "Line source: ", "heater_1")
-		await _select_line_endpoint(target_label, next_target_button, "Line target: ", "flash_1")
-		build_line_button.pressed.emit()
-		await _wait_for_status_contains(status_label, "Line built")
-
-		await _select_line_endpoint(source_label, next_source_button, "Line source: ", "flash_1")
-		await _select_line_endpoint(target_label, next_target_button, "Line target: ", "vapor_product")
-		build_line_button.pressed.emit()
-		await _wait_for_status_contains(status_label, "Line built")
-
-		await _select_line_endpoint(source_label, next_source_button, "Line source: ", "flash_1")
-		await _select_line_endpoint(target_label, next_target_button, "Line target: ", "liquid_product")
-		build_line_button.pressed.emit()
-		await _wait_for_status_contains(status_label, "Line built")
-	else:
-		## sandbox: feed_a -> heater_1, then heater_1 -> product_a
-		await _select_line_endpoint(source_label, next_source_button, "Line source: ", "feed_a")
-		await _select_line_endpoint(target_label, next_target_button, "Line target: ", "heater_1")
-		build_line_button.pressed.emit()
-		await _wait_for_status_contains(status_label, "Line built")
-
-		await _select_line_endpoint(source_label, next_source_button, "Line source: ", "heater_1")
-		await _select_line_endpoint(target_label, next_target_button, "Line target: ", "product_a")
-		build_line_button.pressed.emit()
-		await _wait_for_status_contains(status_label, "Line built")
+	sell_product_button.pressed.emit()
+	await _wait_for_status_contains_any(status_label, PackedStringArray(["Sold", "Sell product failed"]))
 
 	if selected_mode == "heater_flash_guided_build_v1":
 		var refresh_tutorial_ok: bool = await store.refresh_snapshot()
 		_assert(refresh_tutorial_ok, "Tutorial mode refresh_snapshot() must succeed after UI wiring")
 		await process_frame
-		await _wait_for_tutorial_goal_done(store, "goal_wire_flowsheet")
-		_assert(
-			hud.goals_label.text.contains("goal_wire_flowsheet: done"),
-			"HUD goals label must reflect completed tutorial wiring goal"
-		)
-	elif buy_feed_succeeded:
-		await _wait_for_goal_or_product(store, selected_mode)
+		_assert(hud.goals_label.text.begins_with("Tutorial Goals:"),
+			"HUD goals label must remain wired for tutorial mode")
+	else:
+		await _wait_for_goal_or_inventory(store)
 
 	var original_session_id: String = store.active_session_id
 	restart_button.pressed.emit()

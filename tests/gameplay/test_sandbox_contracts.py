@@ -110,6 +110,7 @@ def test_simulation_session_snapshot_fields_and_types_are_frozen() -> None:
             "feed_inventory_by_material_id",
             "product_inventory_by_product_id",
             "tutorial_goal_status_by_id",
+            "progression_snapshot",
         }
     )
     module = _contracts_module()
@@ -124,6 +125,7 @@ def test_simulation_session_snapshot_fields_and_types_are_frozen() -> None:
         "feed_inventory_by_material_id": Mapping[str, float],
         "product_inventory_by_product_id": Mapping[str, float],
         "tutorial_goal_status_by_id": Mapping[str, getattr(module, "TutorialGoalStatus")],
+        "progression_snapshot": getattr(module, "ProgressionSnapshot") | None,
     }
 
 
@@ -187,6 +189,32 @@ def test_simulation_result_contracts_are_frozen() -> None:
         "feed_consumption_by_material_id": Mapping[str, float],
         "product_production_by_product_id": Mapping[str, float],
         "published_signal_values_by_id": Mapping[str, float],
+    }
+
+    assert _attribute_names("ResearchSubmissionResult") == frozenset(
+        {"success", "reason_code", "snapshot"}
+    )
+    assert _resolved_type_hints("ResearchSubmissionResult") == {
+        "success": bool,
+        "reason_code": str | None,
+        "snapshot": getattr(module, "SimulationSessionSnapshot"),
+    }
+
+
+def test_progression_snapshot_fields_and_types_are_frozen() -> None:
+    assert _attribute_names("ProgressionSnapshot") == frozenset(
+        {
+            "active_stage_id",
+            "unlocked_stage_ids",
+            "available_item_ids",
+            "available_research_ids",
+        }
+    )
+    assert _resolved_type_hints("ProgressionSnapshot") == {
+        "active_stage_id": str | None,
+        "unlocked_stage_ids": tuple[str, ...],
+        "available_item_ids": tuple[str, ...],
+        "available_research_ids": tuple[str, ...],
     }
 
 

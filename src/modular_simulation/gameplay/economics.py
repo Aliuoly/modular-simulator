@@ -34,6 +34,16 @@ _LANG_ANCHOR_PURCHASE_COST_BY_ITEM_ID: dict[str, float] = {
     "install_line_pump": 20.0,
     "install_line_valve": 12.0,
     "install_line_heat_actuator": 18.0,
+    "place_inlet_gas_separator": 32.0,
+    "place_teg_contactor": 42.0,
+    "place_rich_glycol_flash_tank": 32.0,
+    "place_lean_rich_glycol_exchanger": 58.0,
+    "place_teg_regenerator": 76.0,
+    "install_glycol_circulation_pump": 20.0,
+    "place_gas_gas_exchanger": 58.0,
+    "install_jt_valve": 12.0,
+    "place_low_temperature_separator": 32.0,
+    "place_condensate_stabilizer": 76.0,
 }
 
 _INSTRUMENT_FIXED_PRICE_BY_ITEM_ID: dict[str, float] = {
@@ -49,11 +59,17 @@ _JUNCTION_FIXED_PRICE_BY_ITEM_ID: dict[str, float] = {
 _FEED_PRICE_BY_MATERIAL_ID: dict[str, float] = {
     "feed_a": 2.0,
     "feed_b": 3.0,
+    "sweet_wet_gas": 2.5,
 }
 
 _PRODUCT_SALE_PRICE_BY_PRODUCT_ID: dict[str, float] = {
     "product_a": 8.0,
     "product_b": 12.0,
+    "separator_gas": 6.0,
+    "unstabilized_condensate": 8.0,
+    "dry_gas": 9.0,
+    "ngl_liquids": 12.0,
+    "stabilized_condensate": 10.0,
 }
 
 
@@ -192,6 +208,64 @@ def _quote_equipment_amount(
     )
 
 
+def _quote_feed_amount(material_id: str, *, quantity_mol: float) -> tuple[float, tuple[str, ...]]:
+    quantity = _require_positive_quantity(quantity_mol=quantity_mol)
+    unit_price = _FEED_PRICE_BY_MATERIAL_ID.get(material_id)
+    if unit_price is None:
+        raise SandboxRequestError(
+            error_code="unknown_material",
+            message=f"Unknown feed material id: {material_id!r}",
+        )
+    return unit_price * quantity, ("feed_purchase_price_table",)
+
+
+def _quote_product_sale_amount(
+    product_id: str, *, quantity_mol: float
+) -> tuple[float, tuple[str, ...]]:
+    quantity = _require_positive_quantity(quantity_mol=quantity_mol)
+    unit_price = _PRODUCT_SALE_PRICE_BY_PRODUCT_ID.get(product_id)
+    if unit_price is None:
+        raise SandboxRequestError(
+            error_code="unknown_product",
+            message=f"Unknown product id: {product_id!r}",
+        )
+    return unit_price * quantity, ("product_sale_price_table",)
+
+
+def _quote_with_default_pricing_policy(
+    *,
+    subject_kind: str,
+    subject_id: str,
+    config: Mapping[str, object] | None = None,
+    quantity_mol: float | None = None,
+) -> tuple[float, tuple[str, ...]]:
+    if subject_kind == "equipment":
+        if config is None:
+            raise SandboxRequestError(
+                error_code="invalid_config",
+                message="config must be a Mapping, got 'NoneType'.",
+            )
+        return _quote_equipment_amount(subject_id, config=config)
+    if subject_kind == "feed":
+        if quantity_mol is None:
+            raise SandboxRequestError(
+                error_code="invalid_quantity",
+                message="quantity_mol must be provided for feed quotes.",
+            )
+        return _quote_feed_amount(subject_id, quantity_mol=quantity_mol)
+    if subject_kind == "product_sale":
+        if quantity_mol is None:
+            raise SandboxRequestError(
+                error_code="invalid_quantity",
+                message="quantity_mol must be provided for product sale quotes.",
+            )
+        return _quote_product_sale_amount(subject_id, quantity_mol=quantity_mol)
+    raise SandboxRequestError(
+        error_code="invalid_config",
+        message=f"Unknown pricing subject_kind: {subject_kind!r}",
+    )
+
+
 def open_cash_ledger(*, initial_cash: float | None = None) -> CashLedgerSnapshot:
     starting_cash = _DEFAULT_SANDBOX_STARTING_CASH if initial_cash is None else float(initial_cash)
     ledger = CashLedgerSnapshot(
@@ -207,7 +281,11 @@ def open_cash_ledger(*, initial_cash: float | None = None) -> CashLedgerSnapshot
 
 def quote_equipment_purchase(item_id: str, *, config: Mapping[str, object]) -> EconomicQuote:
     state = _require_runtime_state()
-    amount, applied_rule_ids = _quote_equipment_amount(item_id, config=config)
+    amount, applied_rule_ids = _quote_with_default_pricing_policy(
+        subject_kind="equipment",
+        subject_id=item_id,
+        config=config,
+    )
     return EconomicQuote(
         subject_id=item_id,
         subject_kind="equipment",
@@ -243,19 +321,16 @@ def record_equipment_purchase(
 
 def quote_feed_purchase(material_id: str, *, quantity_mol: float) -> EconomicQuote:
     state = _require_runtime_state()
-    quantity = _require_positive_quantity(quantity_mol=quantity_mol)
-    unit_price = _FEED_PRICE_BY_MATERIAL_ID.get(material_id)
-    if unit_price is None:
-        raise SandboxRequestError(
-            error_code="unknown_material",
-            message=f"Unknown feed material id: {material_id!r}",
-        )
-    amount = unit_price * quantity
+    amount, applied_rule_ids = _quote_with_default_pricing_policy(
+        subject_kind="feed",
+        subject_id=material_id,
+        quantity_mol=quantity_mol,
+    )
     return EconomicQuote(
         subject_id=material_id,
         subject_kind="feed",
         quoted_amount=amount,
-        applied_rule_ids=("feed_purchase_price_table",),
+        applied_rule_ids=applied_rule_ids,
         affordable=state.ledger.cash_balance >= amount,
     )
 
@@ -285,19 +360,16 @@ def record_feed_purchase(material_id: str, *, quantity_mol: float) -> FeedPurcha
 
 def quote_product_sale(product_id: str, *, quantity_mol: float) -> EconomicQuote:
     _require_runtime_state()
-    quantity = _require_positive_quantity(quantity_mol=quantity_mol)
-    unit_price = _PRODUCT_SALE_PRICE_BY_PRODUCT_ID.get(product_id)
-    if unit_price is None:
-        raise SandboxRequestError(
-            error_code="unknown_product",
-            message=f"Unknown product id: {product_id!r}",
-        )
-    amount = unit_price * quantity
+    amount, applied_rule_ids = _quote_with_default_pricing_policy(
+        subject_kind="product_sale",
+        subject_id=product_id,
+        quantity_mol=quantity_mol,
+    )
     return EconomicQuote(
         subject_id=product_id,
         subject_kind="product_sale",
         quoted_amount=amount,
-        applied_rule_ids=("product_sale_price_table",),
+        applied_rule_ids=applied_rule_ids,
         affordable=True,
     )
 
@@ -456,7 +528,11 @@ class CashLedgerRuntime:
         self, item_id: str, *, config: Mapping[str, object]
     ) -> EconomicQuote:
         state = self._require_state()
-        amount, applied_rule_ids = _quote_equipment_amount(item_id, config=config)
+        amount, applied_rule_ids = _quote_with_default_pricing_policy(
+            subject_kind="equipment",
+            subject_id=item_id,
+            config=config,
+        )
         return EconomicQuote(
             subject_id=item_id,
             subject_kind="equipment",
@@ -489,19 +565,16 @@ class CashLedgerRuntime:
 
     def quote_feed_purchase(self, material_id: str, *, quantity_mol: float) -> EconomicQuote:
         state = self._require_state()
-        quantity = _require_positive_quantity(quantity_mol=quantity_mol)
-        unit_price = _FEED_PRICE_BY_MATERIAL_ID.get(material_id)
-        if unit_price is None:
-            raise SandboxRequestError(
-                error_code="unknown_material",
-                message=f"Unknown feed material id: {material_id!r}",
-            )
-        amount = unit_price * quantity
+        amount, applied_rule_ids = _quote_with_default_pricing_policy(
+            subject_kind="feed",
+            subject_id=material_id,
+            quantity_mol=quantity_mol,
+        )
         return EconomicQuote(
             subject_id=material_id,
             subject_kind="feed",
             quoted_amount=amount,
-            applied_rule_ids=("feed_purchase_price_table",),
+            applied_rule_ids=applied_rule_ids,
             affordable=state.ledger.cash_balance >= amount,
         )
 
@@ -528,19 +601,16 @@ class CashLedgerRuntime:
 
     def quote_product_sale(self, product_id: str, *, quantity_mol: float) -> EconomicQuote:
         self._require_state()
-        quantity = _require_positive_quantity(quantity_mol=quantity_mol)
-        unit_price = _PRODUCT_SALE_PRICE_BY_PRODUCT_ID.get(product_id)
-        if unit_price is None:
-            raise SandboxRequestError(
-                error_code="unknown_product",
-                message=f"Unknown product id: {product_id!r}",
-            )
-        amount = unit_price * quantity
+        amount, applied_rule_ids = _quote_with_default_pricing_policy(
+            subject_kind="product_sale",
+            subject_id=product_id,
+            quantity_mol=quantity_mol,
+        )
         return EconomicQuote(
             subject_id=product_id,
             subject_kind="product_sale",
             quoted_amount=amount,
-            applied_rule_ids=("product_sale_price_table",),
+            applied_rule_ids=applied_rule_ids,
             affordable=True,
         )
 

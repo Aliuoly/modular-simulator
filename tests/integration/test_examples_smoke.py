@@ -25,7 +25,23 @@ from examples.unit_process_flowsheet.easy_2_heater_flash import (
 from examples.unit_process_flowsheet.easy_3_dual_feed_heat_exchanger import (
     run_example as run_dual_feed_exchanger_example,
 )
+from examples.unit_process_flowsheet.gas_1_inlet_separator import (
+    build_example_flowsheet as build_gas_1,
+)
+from examples.unit_process_flowsheet.gas_2_teg_dehydration import (
+    build_example_flowsheet as build_gas_2,
+)
+from examples.unit_process_flowsheet.gas_3_jt_low_temperature_separation import (
+    build_example_flowsheet as build_gas_3,
+)
+from examples.unit_process_flowsheet.gas_4_condensate_stabilizer import (
+    build_example_flowsheet as build_gas_4,
+)
 from examples.van_de_vusse_cstr.run_simulation import run_demo as run_van_de_vusse_demo
+from modular_simulation.gameplay.sandbox_session import (
+    SandboxSessionRuntime,
+    _SANDBOX_UNLOCKED_PROGRESSION,
+)
 
 
 def test_quickstart_two_process_command_path_smoke() -> None:
@@ -141,3 +157,116 @@ def test_curated_two_tank_comparison_smoke() -> None:
     assert max_abs_error_b < 1.0e-2
     assert monotonic_decay_a is True
     assert monotonic_decay_b is True
+
+
+def test_gas_example_stage_topologies_smoke() -> None:
+    gas_1 = build_gas_1(dt=0.2)
+    gas_2 = build_gas_2(dt=0.2)
+    gas_3 = build_gas_3(dt=0.2)
+    gas_4 = build_gas_4(dt=0.2)
+
+    # Stage 1 has the separator outputs required for research mix.
+    gas_1.run(steps=2, dt=0.2)
+    assert "separator_gas" in gas_1._sinks
+    assert "unstabilized_condensate" in gas_1._sinks
+
+    # Stage 2 contains dehydration package proxies and dry-gas sink.
+    gas_2.run(steps=2, dt=0.2)
+    assert "dry_gas" in gas_2._sinks
+    assert "teg_contactor" in gas_2._units
+    assert "rich_flash" in gas_2._units
+    assert "lean_rich_exchanger" in gas_2._units
+    assert "teg_regenerator" in gas_2._units
+    glycol_loop = next(conn for conn in gas_2._connections if conn.line_id == "glycol_loop")
+    assert glycol_loop.pump is not None
+    assert glycol_loop.pump.id == "glycol_pump"
+    assert glycol_loop.source == "lean_rich_exchanger.cold_outlet"
+    assert glycol_loop.target == "teg_regenerator.inlet"
+
+    teg_to_dry = next(conn for conn in gas_2._connections if conn.target == "dry_gas.inlet")
+    assert teg_to_dry.source == "teg_contactor.outlet_1"
+
+    # Stage 3 demonstrates JT/LTS proxy chain.
+    gas_3.run(steps=2, dt=0.2)
+    assert "ngl_liquids" in gas_3._sinks
+    assert "gas_gas_exchanger" in gas_3._units
+    assert "low_temperature_separator" in gas_3._units
+    jt_to_lts = next(conn for conn in gas_3._connections if conn.line_id == "jt_lts_feed")
+    assert jt_to_lts.valve is not None
+    assert jt_to_lts.valve.id == "jt_valve"
+    assert jt_to_lts.source == "gas_gas_exchanger.hot_outlet"
+    assert jt_to_lts.target == "low_temperature_separator.inlet"
+
+    teg_to_hx = next(
+        conn for conn in gas_3._connections if conn.target == "gas_gas_exchanger.hot_inlet"
+    )
+    assert teg_to_hx.source == "teg_contactor.outlet_1"
+
+    # Stage 4 demonstrates condensate stabilization proxy wiring.
+    assert "stabilized_condensate" in gas_4._sinks
+    assert "condensate_stabilizer" in gas_4._units
+    stab_feed = next(
+        conn for conn in gas_4._connections if conn.target == "condensate_stabilizer.feed_1"
+    )
+    assert stab_feed.source == "inlet_separator.liquid_outlet"
+
+
+def test_stage3_runtime_reachability_produces_ngl_liquids_post_unlock() -> None:
+    runtime = SandboxSessionRuntime()
+    runtime.start_sandbox()
+    runtime._state.progression_snapshot = _SANDBOX_UNLOCKED_PROGRESSION
+
+    for item_id, config in (
+        ("place_inlet_gas_separator", {"process_id": "inlet_separator"}),
+        ("place_teg_contactor", {"process_id": "teg_contactor"}),
+        ("place_gas_gas_exchanger", {"process_id": "gas_gas_exchanger"}),
+        (
+            "place_low_temperature_separator",
+            {"process_id": "low_temperature_separator"},
+        ),
+        (
+            "build_process_line",
+            {"source": "sweet_wet_gas", "target": "inlet_separator.inlet", "line_id": "a"},
+        ),
+        (
+            "build_process_line",
+            {
+                "source": "inlet_separator.vapor_outlet",
+                "target": "teg_contactor.inlet",
+                "line_id": "b",
+            },
+        ),
+        (
+            "build_process_line",
+            {
+                "source": "teg_contactor.outlet_1",
+                "target": "gas_gas_exchanger.hot_inlet",
+                "line_id": "c",
+            },
+        ),
+        (
+            "build_process_line",
+            {
+                "source": "gas_gas_exchanger.hot_outlet",
+                "target": "low_temperature_separator.inlet",
+                "line_id": "d",
+            },
+        ),
+        (
+            "install_jt_valve",
+            {"line_id": "d", "valve_id": "jt_1"},
+        ),
+        (
+            "build_process_line",
+            {
+                "source": "low_temperature_separator.liquid_outlet",
+                "target": "ngl_liquids",
+                "line_id": "e",
+            },
+        ),
+    ):
+        runtime.install_catalog_item(item_id, config=config, equipment_receipt_id="receipt")
+
+    runtime.load_feed_inventory("sweet_wet_gas", 10.0, procurement_receipt_id="feed")
+    step = runtime.advance(1.0)
+    assert step.product_production_by_product_id.get("ngl_liquids", 0.0) > 0.0

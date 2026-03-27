@@ -70,6 +70,18 @@ text = "Product: --"
 layout_mode = 2
 text = "Signals: --"
 
+[node name="StageLabel" type="Label" parent="CanvasLayer/HUD/VBox"]
+layout_mode = 2
+text = "Stage: --"
+
+[node name="ResearchLabel" type="Label" parent="CanvasLayer/HUD/VBox"]
+layout_mode = 2
+text = "Research: --"
+
+[node name="UnlockedItemsLabel" type="Label" parent="CanvasLayer/HUD/VBox"]
+layout_mode = 2
+text = "Unlocked Build Items: --"
+
 [node name="GoalsLabel" type="Label" parent="CanvasLayer/HUD/VBox"]
 layout_mode = 2
 text = "Tutorial Goals: --"
@@ -96,41 +108,33 @@ session_store_path = NodePath("/root/Bootstrap/SessionStore")
 layout_mode = 2
 text = "Ready"
 
-[node name="BuildHeaterButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
+[node name="BuildItemLabel" type="Label" parent="CanvasLayer/HUD/BuildPanel"]
 layout_mode = 2
-text = "Build Heater"
+text = "Selected build item: --"
 
-[node name="BuildFlashButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
+[node name="BuildItemNextButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
 layout_mode = 2
-text = "Build Flash"
+text = "Next Build Item"
 
-[node name="BuildLineButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
+[node name="BuildSelectedButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
 layout_mode = 2
-text = "Build Line"
+text = "Build Selected Item"
 
-[node name="LineSourceLabel" type="Label" parent="CanvasLayer/HUD/BuildPanel"]
+[node name="ResearchStatusLabel" type="Label" parent="CanvasLayer/HUD/BuildPanel"]
 layout_mode = 2
-text = "Line source: n/a"
+text = "Research target: --"
 
-[node name="LineSourceNextButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
+[node name="SubmitResearchButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
 layout_mode = 2
-text = "Next Source"
-
-[node name="LineTargetLabel" type="Label" parent="CanvasLayer/HUD/BuildPanel"]
-layout_mode = 2
-text = "Line target: n/a"
-
-[node name="LineTargetNextButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
-layout_mode = 2
-text = "Next Target"
+text = "Submit Research"
 
 [node name="BuyFeedButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
 layout_mode = 2
-text = "Buy Feed"
+text = "Buy Sweet Wet Gas"
 
 [node name="SellProductButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
 layout_mode = 2
-text = "Sell Product"
+text = "Sell Separator Gas"
 
 [node name="RestartButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
 layout_mode = 2

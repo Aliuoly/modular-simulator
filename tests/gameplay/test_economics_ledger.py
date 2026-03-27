@@ -206,6 +206,66 @@ def test_module_level_api_remains_compatible_with_handoff_registration() -> None
             ("lang_factor_fluid_processing", "six_tenths_scaling"),
         ),
         (
+            "place_inlet_gas_separator",
+            {},
+            185.6,
+            ("lang_factor_fluid_processing", "six_tenths_scaling"),
+        ),
+        (
+            "place_teg_contactor",
+            {},
+            243.6,
+            ("lang_factor_fluid_processing", "six_tenths_scaling"),
+        ),
+        (
+            "place_rich_glycol_flash_tank",
+            {},
+            185.6,
+            ("lang_factor_fluid_processing", "six_tenths_scaling"),
+        ),
+        (
+            "place_lean_rich_glycol_exchanger",
+            {},
+            336.4,
+            ("lang_factor_fluid_processing", "six_tenths_scaling"),
+        ),
+        (
+            "place_teg_regenerator",
+            {},
+            440.8,
+            ("lang_factor_fluid_processing", "six_tenths_scaling"),
+        ),
+        (
+            "install_glycol_circulation_pump",
+            {},
+            116.0,
+            ("lang_factor_fluid_processing", "six_tenths_scaling"),
+        ),
+        (
+            "place_gas_gas_exchanger",
+            {},
+            336.4,
+            ("lang_factor_fluid_processing", "six_tenths_scaling"),
+        ),
+        (
+            "install_jt_valve",
+            {},
+            69.6,
+            ("lang_factor_fluid_processing", "six_tenths_scaling"),
+        ),
+        (
+            "place_low_temperature_separator",
+            {},
+            185.6,
+            ("lang_factor_fluid_processing", "six_tenths_scaling"),
+        ),
+        (
+            "place_condensate_stabilizer",
+            {},
+            440.8,
+            ("lang_factor_fluid_processing", "six_tenths_scaling"),
+        ),
+        (
             "install_sampled_delayed_sensor",
             {},
             35.0,
@@ -277,6 +337,36 @@ def test_feed_and_product_quotes_freeze_price_tables() -> None:
     assert product_b.subject_kind == "product_sale"
     assert product_b.quoted_amount == pytest.approx(18.0)
     assert product_b.applied_rule_ids == ("product_sale_price_table",)
+
+    sweet_wet_gas = api.quote_feed_purchase("sweet_wet_gas", quantity_mol=4.0)
+    assert sweet_wet_gas.subject_kind == "feed"
+    assert sweet_wet_gas.quoted_amount == pytest.approx(10.0)
+    assert sweet_wet_gas.applied_rule_ids == ("feed_purchase_price_table",)
+
+    separator_gas = api.quote_product_sale("separator_gas", quantity_mol=1.0)
+    assert separator_gas.subject_kind == "product_sale"
+    assert separator_gas.quoted_amount == pytest.approx(6.0)
+    assert separator_gas.applied_rule_ids == ("product_sale_price_table",)
+
+    unstabilized_condensate = api.quote_product_sale("unstabilized_condensate", quantity_mol=1.0)
+    assert unstabilized_condensate.subject_kind == "product_sale"
+    assert unstabilized_condensate.quoted_amount == pytest.approx(8.0)
+    assert unstabilized_condensate.applied_rule_ids == ("product_sale_price_table",)
+
+    dry_gas = api.quote_product_sale("dry_gas", quantity_mol=1.0)
+    assert dry_gas.subject_kind == "product_sale"
+    assert dry_gas.quoted_amount == pytest.approx(9.0)
+    assert dry_gas.applied_rule_ids == ("product_sale_price_table",)
+
+    ngl_liquids = api.quote_product_sale("ngl_liquids", quantity_mol=1.0)
+    assert ngl_liquids.subject_kind == "product_sale"
+    assert ngl_liquids.quoted_amount == pytest.approx(12.0)
+    assert ngl_liquids.applied_rule_ids == ("product_sale_price_table",)
+
+    stabilized_condensate = api.quote_product_sale("stabilized_condensate", quantity_mol=1.0)
+    assert stabilized_condensate.subject_kind == "product_sale"
+    assert stabilized_condensate.quoted_amount == pytest.approx(10.0)
+    assert stabilized_condensate.applied_rule_ids == ("product_sale_price_table",)
 
 
 def test_operating_costs_use_exact_frozen_formulas_and_rule_names() -> None:
@@ -400,7 +490,9 @@ def test_cash_balance_transitions_include_single_use_withdrawal_sale_handoff() -
     assert after_feed.cash_balance == pytest.approx(1_954.0)
     assert after_feed.feed_procurement_spent == pytest.approx(4.0)
 
-    session.load_feed_inventory("feed_a", 2.0, procurement_receipt_id=feed_receipt.receipt_id)
+    session.load_feed_inventory(
+        "sweet_wet_gas", 2.0, procurement_receipt_id=feed_receipt.receipt_id
+    )
     step = session.advance(1.0)
 
     op = api.record_operating_costs(
@@ -412,9 +504,14 @@ def test_cash_balance_transitions_include_single_use_withdrawal_sale_handoff() -
     assert after_op.cash_balance == pytest.approx(1_953.995)
     assert after_op.operating_costs_paid == pytest.approx(0.005)
 
-    withdrawal = session.withdraw_product_inventory("product_a", 0.2)
-    sale = api.record_product_sale(withdrawal.withdrawal_id)
-    assert sale.withdrawal_id == withdrawal.withdrawal_id
+    api.register_product_withdrawal_handoff(
+        "withdrawal-1",
+        product_id="product_a",
+        quantity_mol=0.2,
+    )
+    withdrawal_id = "withdrawal-1"
+    sale = api.record_product_sale(withdrawal_id)
+    assert sale.withdrawal_id == withdrawal_id
     assert sale.gross_revenue == pytest.approx(1.6)
 
     after_sale = api.get_cash_ledger()
@@ -422,5 +519,83 @@ def test_cash_balance_transitions_include_single_use_withdrawal_sale_handoff() -
     assert after_sale.product_sales_received == pytest.approx(1.6)
 
     with pytest.raises(error_type) as replay:
-        api.record_product_sale(withdrawal.withdrawal_id)
+        api.record_product_sale(withdrawal_id)
     assert replay.value.error_code == "unknown_withdrawal_id"
+
+
+def test_module_level_quote_callers_share_default_pricing_policy_seam() -> None:
+    economics = import_module("modular_simulation.gameplay.economics")
+    api = _economics_api()
+    api.open_cash_ledger(initial_cash=100.0)
+
+    calls: list[tuple[str, str]] = []
+
+    def _fake_pricing_seam(
+        *, subject_kind: str, subject_id: str, **_: object
+    ) -> tuple[float, tuple[str, ...]]:
+        calls.append((subject_kind, subject_id))
+        if subject_kind == "equipment":
+            return 11.0, ("equipment_rule",)
+        if subject_kind == "feed":
+            return 13.0, ("feed_rule",)
+        if subject_kind == "product_sale":
+            return 17.0, ("product_rule",)
+        raise AssertionError(f"unexpected subject_kind {subject_kind!r}")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(economics, "_quote_with_default_pricing_policy", _fake_pricing_seam)
+
+        equipment = api.quote_equipment_purchase("place_heater_cooler", config={})
+        feed = api.quote_feed_purchase("feed_a", quantity_mol=1.0)
+        product = api.quote_product_sale("product_a", quantity_mol=1.0)
+
+    assert equipment.quoted_amount == pytest.approx(11.0)
+    assert equipment.applied_rule_ids == ("equipment_rule",)
+    assert feed.quoted_amount == pytest.approx(13.0)
+    assert feed.applied_rule_ids == ("feed_rule",)
+    assert product.quoted_amount == pytest.approx(17.0)
+    assert product.applied_rule_ids == ("product_rule",)
+    assert calls == [
+        ("equipment", "place_heater_cooler"),
+        ("feed", "feed_a"),
+        ("product_sale", "product_a"),
+    ]
+
+
+def test_runtime_quote_callers_share_default_pricing_policy_seam() -> None:
+    economics = import_module("modular_simulation.gameplay.economics")
+    runtime = economics.CashLedgerRuntime()
+    runtime.open_cash_ledger(initial_cash=100.0)
+
+    calls: list[tuple[str, str]] = []
+
+    def _fake_pricing_seam(
+        *, subject_kind: str, subject_id: str, **_: object
+    ) -> tuple[float, tuple[str, ...]]:
+        calls.append((subject_kind, subject_id))
+        if subject_kind == "equipment":
+            return 21.0, ("equipment_rule_rt",)
+        if subject_kind == "feed":
+            return 23.0, ("feed_rule_rt",)
+        if subject_kind == "product_sale":
+            return 27.0, ("product_rule_rt",)
+        raise AssertionError(f"unexpected subject_kind {subject_kind!r}")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(economics, "_quote_with_default_pricing_policy", _fake_pricing_seam)
+
+        equipment = runtime.quote_equipment_purchase("place_heater_cooler", config={})
+        feed = runtime.quote_feed_purchase("feed_a", quantity_mol=1.0)
+        product = runtime.quote_product_sale("product_a", quantity_mol=1.0)
+
+    assert equipment.quoted_amount == pytest.approx(21.0)
+    assert equipment.applied_rule_ids == ("equipment_rule_rt",)
+    assert feed.quoted_amount == pytest.approx(23.0)
+    assert feed.applied_rule_ids == ("feed_rule_rt",)
+    assert product.quoted_amount == pytest.approx(27.0)
+    assert product.applied_rule_ids == ("product_rule_rt",)
+    assert calls == [
+        ("equipment", "place_heater_cooler"),
+        ("feed", "feed_a"),
+        ("product_sale", "product_a"),
+    ]
