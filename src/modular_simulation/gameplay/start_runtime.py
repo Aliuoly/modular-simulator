@@ -20,6 +20,22 @@ MODE_TO_START_ID: dict[str, str] = {
     "heater_flash_guided_build_v1": "heater_flash_tutorial_start_v1",
 }
 
+_BOUNDARY_SOURCE_BY_MODE: dict[str, tuple[str, ...]] = {
+    "phase1_process_sandbox_v1": ("sweet_wet_gas",),
+    "heater_flash_guided_build_v1": ("feed",),
+}
+
+_BOUNDARY_SINK_BY_MODE: dict[str, tuple[str, ...]] = {
+    "phase1_process_sandbox_v1": (
+        "separator_gas",
+        "unstabilized_condensate",
+        "dry_gas",
+        "ngl_liquids",
+        "stabilized_condensate",
+    ),
+    "heater_flash_guided_build_v1": ("vapor_product", "liquid_product"),
+}
+
 
 @dataclass(frozen=True)
 class StartRuntimeBundle:
@@ -45,9 +61,9 @@ def create_start_runtime_bundle(*, mode_id: str) -> StartRuntimeBundle:
     scaffold = LEARNER_START_SCAFFOLDS[start_id]
 
     network = ConnectionNetwork()
-    for feed_id in scaffold.named_feed_ids:
+    for feed_id in _BOUNDARY_SOURCE_BY_MODE.get(mode_id, scaffold.named_feed_ids):
         network.add_boundary_source(feed_id)
-    for sink_id in scaffold.named_sink_ids:
+    for sink_id in _BOUNDARY_SINK_BY_MODE.get(mode_id, scaffold.named_sink_ids):
         network.add_boundary_sink(sink_id)
 
     backend_session = PlantBackendSession(network=network)

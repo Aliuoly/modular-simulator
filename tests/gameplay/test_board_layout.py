@@ -4,6 +4,9 @@ import inspect
 from importlib import import_module
 from typing import Any, Mapping, cast
 from unittest.mock import MagicMock
+from unittest.mock import patch
+
+import pytest
 
 
 def _as_mapping(obj: object) -> Mapping[str, object] | None:
@@ -65,7 +68,7 @@ def _service_api() -> Any:
     )
 
 
-def test_board_layout_tracks_unit_anchor_positions_for_heater_and_flash() -> None:
+def test_board_layout_tracks_unit_anchor_positions_for_gas_starter_units() -> None:
     service = _service_api()
 
     created = service.create_session(mode_id="phase1_process_sandbox_v1")
@@ -73,14 +76,14 @@ def test_board_layout_tracks_unit_anchor_positions_for_heater_and_flash() -> Non
 
     service.build(
         session_id=session_id,
-        item_id="place_heater_cooler",
-        config={"process_id": "heater_1"},
+        item_id="place_inlet_gas_separator",
+        config={"process_id": "separator_1"},
         layout={"anchor_xy": (2.0, 3.0)},
     )
     service.build(
         session_id=session_id,
-        item_id="place_flash_drum",
-        config={"process_id": "flash_1"},
+        item_id="place_teg_contactor",
+        config={"process_id": "contactor_1"},
         layout={"anchor_xy": (6.0, 7.5)},
     )
 
@@ -88,8 +91,8 @@ def test_board_layout_tracks_unit_anchor_positions_for_heater_and_flash() -> Non
     board_layout = _field(snapshot, "board_layout")
 
     unit_entities = _field(board_layout, "unit_entities_by_process_id")
-    assert _field(_field(unit_entities, "heater_1"), "anchor_xy") == (2.0, 3.0)
-    assert _field(_field(unit_entities, "flash_1"), "anchor_xy") == (6.0, 7.5)
+    assert _field(_field(unit_entities, "separator_1"), "anchor_xy") == (2.0, 3.0)
+    assert _field(_field(unit_entities, "contactor_1"), "anchor_xy") == (6.0, 7.5)
 
 
 def test_board_layout_tracks_line_anchor_links_and_render_path_metadata() -> None:
@@ -101,7 +104,7 @@ def test_board_layout_tracks_line_anchor_links_and_render_path_metadata() -> Non
     build_result = service.build(
         session_id=session_id,
         item_id="build_process_line",
-        config={"source": "feed_a", "target": "product_a"},
+        config={"source": "sweet_wet_gas", "target": "separator_gas"},
         layout={"path_xy": ((0.0, 0.0), (1.0, 0.5), (2.0, 1.0))},
     )
 
@@ -110,8 +113,8 @@ def test_board_layout_tracks_line_anchor_links_and_render_path_metadata() -> Non
     line_entities = _field(board_layout, "line_entities_by_line_id")
     line_entity = next(iter(_require_mapping(line_entities).values()))
 
-    assert _field(line_entity, "source") == "feed_a"
-    assert _field(line_entity, "target") == "product_a"
+    assert _field(line_entity, "source") == "sweet_wet_gas"
+    assert _field(line_entity, "target") == "separator_gas"
     assert tuple(cast(Any, _field(line_entity, "path_xy"))) == (
         (0.0, 0.0),
         (1.0, 0.5),
@@ -131,3 +134,28 @@ def test_board_layout_payload_is_separate_from_topology_payload() -> None:
 
     assert board_layout is not topology
     assert "board_layout" not in _require_mapping(topology)
+
+
+def test_rejected_build_does_not_mutate_board_layout_or_topology() -> None:
+    service_module = import_module("modular_simulation.gameplay.realtime_service")
+    economics_module = import_module("modular_simulation.gameplay.economics")
+    error_type = getattr(service_module, "SandboxRequestError")
+
+    with patch.object(economics_module, "_DEFAULT_SANDBOX_STARTING_CASH", 10.0):
+        service = _service_api()
+        created = service.create_session(mode_id="phase1_process_sandbox_v1")
+        session_id = _field(created, "session_id")
+
+        before = service.get_snapshot(session_id=session_id)
+        with pytest.raises(error_type) as exc_info:
+            service.build(
+                session_id=session_id,
+                item_id="place_inlet_gas_separator",
+                config={"process_id": "separator_1"},
+                layout={"anchor_xy": (0.0, 0.0)},
+            )
+        assert exc_info.value.error_code == "insufficient_cash"
+
+        after = service.get_snapshot(session_id=session_id)
+        assert _field(before, "board_layout") == _field(after, "board_layout")
+        assert _field(before, "topology") == _field(after, "topology")

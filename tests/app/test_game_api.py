@@ -16,9 +16,12 @@ SUPPORTED_MODE_IDS = [
 
 SUPPORTED_BUILD_ITEM_IDS_BY_MODE_ID = {
     "phase1_process_sandbox_v1": [
-        "place_heater_cooler",
-        "place_flash_drum",
-        "place_heat_exchanger",
+        "place_inlet_gas_separator",
+        "place_teg_contactor",
+        "place_rich_glycol_flash_tank",
+        "place_lean_rich_glycol_exchanger",
+        "place_teg_regenerator",
+        "install_glycol_circulation_pump",
         "build_process_line",
     ],
     "heater_flash_guided_build_v1": [
@@ -67,7 +70,7 @@ def _wait_for_product_inventory(
     client: TestClient,
     session_id: str,
     *,
-    minimum_product_a_mol: float,
+    minimum_separator_gas_mol: float,
     timeout_s: float = 2.0,
 ) -> dict[str, Any]:
     deadline = time() + timeout_s
@@ -77,10 +80,145 @@ def _wait_for_product_inventory(
         assert snapshot.status_code == 200
         latest = snapshot.json()
         product_inventory = latest["simulation_snapshot"]["product_inventory_by_product_id"]
-        if product_inventory.get("product_a", 0.0) >= minimum_product_a_mol:
+        if product_inventory.get("separator_gas", 0.0) >= minimum_separator_gas_mol:
             return latest
         sleep(0.05)
     return latest
+
+
+def _build_min_separator_path(client: TestClient, session_id: str) -> None:
+    assert (
+        client.post(
+            f"/game/sessions/{session_id}/commands/build",
+            json={
+                "item_id": "place_inlet_gas_separator",
+                "config": {"process_id": "separator_1"},
+                "layout": {"anchor_xy": [0.0, 0.0]},
+            },
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/game/sessions/{session_id}/commands/build",
+            json={
+                "item_id": "build_process_line",
+                "config": {"source": "sweet_wet_gas", "target": "separator_1.inlet"},
+                "layout": {"path_xy": [[0.0, 0.0], [1.0, 0.0]]},
+            },
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/game/sessions/{session_id}/commands/build",
+            json={
+                "item_id": "build_process_line",
+                "config": {"source": "separator_1.vapor_outlet", "target": "separator_gas"},
+                "layout": {"path_xy": [[1.0, 0.0], [2.0, 0.0]]},
+            },
+        ).status_code
+        == 200
+    )
+
+
+def _build_starter_research_path(client: TestClient, session_id: str) -> None:
+    _build_min_separator_path(client, session_id)
+    assert (
+        client.post(
+            f"/game/sessions/{session_id}/commands/build",
+            json={
+                "item_id": "place_teg_contactor",
+                "config": {"process_id": "contactor_1"},
+                "layout": {"anchor_xy": [3.0, 0.0]},
+            },
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/game/sessions/{session_id}/commands/build",
+            json={
+                "item_id": "build_process_line",
+                "config": {
+                    "source": "separator_1.liquid_outlet",
+                    "target": "unstabilized_condensate",
+                },
+                "layout": {"path_xy": [[1.0, 0.0], [1.0, -1.0]]},
+            },
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/game/sessions/{session_id}/commands/build",
+            json={
+                "item_id": "build_process_line",
+                "config": {"source": "separator_1.vapor_outlet", "target": "contactor_1.inlet"},
+                "layout": {"path_xy": [[2.0, 0.0], [3.0, 0.0]]},
+            },
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            f"/game/sessions/{session_id}/commands/build",
+            json={
+                "item_id": "build_process_line",
+                "config": {"source": "contactor_1.outlet_1", "target": "dry_gas"},
+                "layout": {"path_xy": [[3.0, 0.0], [4.0, 0.0]]},
+            },
+        ).status_code
+        == 200
+    )
+    for item_id, process_id, xy in (
+        ("place_rich_glycol_flash_tank", "rgf_1", [3.0, 1.0]),
+        ("place_lean_rich_glycol_exchanger", "lre_1", [4.0, 1.0]),
+        ("place_teg_regenerator", "reg_1", [5.0, 1.0]),
+    ):
+        assert (
+            client.post(
+                f"/game/sessions/{session_id}/commands/build",
+                json={
+                    "item_id": item_id,
+                    "config": {"process_id": process_id},
+                    "layout": {"anchor_xy": xy},
+                },
+            ).status_code
+            == 200
+        )
+    snapshot = client.get(f"/game/sessions/{session_id}/snapshot")
+    assert snapshot.status_code == 200
+    line_entities = snapshot.json()["board_layout"]["line_entities_by_line_id"]
+    source_to_line_id = {entity["source"]: line_id for line_id, entity in line_entities.items()}
+    first_line_id = source_to_line_id["sweet_wet_gas"]
+    assert (
+        client.post(
+            f"/game/sessions/{session_id}/commands/build",
+            json={
+                "item_id": "install_glycol_circulation_pump",
+                "config": {"line_id": first_line_id, "pump_id": "glycol_pump_1"},
+                "layout": {},
+            },
+        ).status_code
+        == 200
+    )
+    for source, target, path in (
+        ("separator_1.liquid_outlet", "rgf_1.inlet", [[1.0, 0.0], [3.0, 1.0]]),
+        ("rgf_1.liquid_outlet", "lre_1.hot_inlet", [[3.0, 1.0], [4.0, 1.0]]),
+        ("lre_1.hot_outlet", "reg_1.inlet", [[4.0, 1.0], [5.0, 1.0]]),
+    ):
+        assert (
+            client.post(
+                f"/game/sessions/{session_id}/commands/build",
+                json={
+                    "item_id": "build_process_line",
+                    "config": {"source": source, "target": target},
+                    "layout": {"path_xy": path},
+                },
+            ).status_code
+            == 200
+        )
 
 
 def test_bootstrap_contract_is_frozen() -> None:
@@ -148,26 +286,20 @@ def test_successful_command_routes_return_200_with_exact_payload_shape() -> None
 
     command_responses = [
         client.post(
-            f"/game/sessions/{session_id}/commands/build",
-            json={
-                "item_id": "place_heater_cooler",
-                "config": {"process_id": "heater_1"},
-                "layout": {"anchor_xy": [0.0, 0.0]},
-            },
-        ),
-        client.post(
             f"/game/sessions/{session_id}/commands/buy-feed",
-            json={"material_id": "feed_a", "quantity_mol": 2.0},
+            json={"material_id": "sweet_wet_gas", "quantity_mol": 2.0},
         ),
     ]
 
-    _wait_for_product_inventory(client, session_id, minimum_product_a_mol=0.01)
+    _build_min_separator_path(client, session_id)
+
+    _wait_for_product_inventory(client, session_id, minimum_separator_gas_mol=0.01)
 
     command_responses.extend(
         (
             client.post(
                 f"/game/sessions/{session_id}/commands/sell-product",
-                json={"product_id": "product_a", "quantity_mol": 0.01},
+                json={"product_id": "separator_gas", "quantity_mol": 0.01},
             ),
             client.post(f"/game/sessions/{session_id}/restart"),
         )
@@ -190,16 +322,16 @@ def test_build_route_accepts_widened_add_process_items_in_sandbox() -> None:
     assert create.status_code == 201
     session_id = create.json()["session_id"]
 
-    build_heat_exchanger = client.post(
+    build_separator = client.post(
         f"/game/sessions/{session_id}/commands/build",
         json={
-            "item_id": "place_heat_exchanger",
-            "config": {"process_id": "heat_exchanger_1"},
+            "item_id": "place_inlet_gas_separator",
+            "config": {"process_id": "separator_1"},
             "layout": {"anchor_xy": [1.0, 0.0]},
         },
     )
-    assert build_heat_exchanger.status_code == 200
-    assert set(build_heat_exchanger.json()) == {"accepted", "message", "snapshot"}
+    assert build_separator.status_code == 200
+    assert set(build_separator.json()) == {"accepted", "message", "snapshot"}
 
 
 def test_build_route_accepts_explicit_named_endpoints_for_public_line_contract() -> None:
@@ -210,9 +342,7 @@ def test_build_route_accepts_explicit_named_endpoints_for_public_line_contract()
     session_id = create.json()["session_id"]
 
     for item_id, process_id, anchor_xy in (
-        ("place_heater_cooler", "heater_1", [0.0, 0.0]),
-        ("place_flash_drum", "flash_1", [4.0, 0.0]),
-        ("place_heat_exchanger", "heat_exchanger_1", [2.0, 2.0]),
+        ("place_inlet_gas_separator", "separator_1", [0.0, 0.0]),
     ):
         placed = client.post(
             f"/game/sessions/{session_id}/commands/build",
@@ -225,15 +355,9 @@ def test_build_route_accepts_explicit_named_endpoints_for_public_line_contract()
         assert placed.status_code == 200
 
     for source, target in (
-        ("feed_a", "heater_1.inlet"),
-        ("heater_1.outlet", "product_a"),
-        ("feed_a", "flash_1.inlet"),
-        ("flash_1.vapor_outlet", "product_a"),
-        ("flash_1.liquid_outlet", "product_b"),
-        ("feed_a", "heat_exchanger_1.hot_inlet"),
-        ("feed_b", "heat_exchanger_1.cold_inlet"),
-        ("heat_exchanger_1.hot_outlet", "product_a"),
-        ("heat_exchanger_1.cold_outlet", "product_b"),
+        ("sweet_wet_gas", "separator_1.inlet"),
+        ("separator_1.vapor_outlet", "separator_gas"),
+        ("separator_1.liquid_outlet", "unstabilized_condensate"),
     ):
         built = client.post(
             f"/game/sessions/{session_id}/commands/build",
@@ -249,18 +373,14 @@ def test_build_route_accepts_explicit_named_endpoints_for_public_line_contract()
 @pytest.mark.parametrize(
     ("source", "target"),
     [
-        ("feed_a", "heater_1"),
-        ("feed_a", "flash_1"),
-        ("feed_a", "heat_exchanger_1"),
-        ("heater_1", "product_a"),
-        ("flash_1", "product_a"),
-        ("heat_exchanger_1", "product_a"),
-        ("heater_1..outlet", "product_a"),
-        ("ghost_1.outlet", "product_a"),
-        ("feed_a", "ghost_product"),
-        ("heater_1.ghost_port", "product_a"),
-        ("heater_1.inlet", "product_a"),
-        ("feed_a", "heater_1.outlet"),
+        ("separator_1", "separator_gas"),
+        ("sweet_wet_gas", "separator_1"),
+        ("separator_1..outlet", "separator_gas"),
+        ("ghost_1.outlet", "separator_gas"),
+        ("sweet_wet_gas", "ghost_product"),
+        ("separator_1.ghost_port", "separator_gas"),
+        ("separator_1.inlet", "separator_gas"),
+        ("sweet_wet_gas", "separator_1.outlet"),
     ],
 )
 def test_build_route_rejects_invalid_line_endpoints_with_stable_invalid_config_json(
@@ -272,15 +392,15 @@ def test_build_route_rejects_invalid_line_endpoints_with_stable_invalid_config_j
     assert create.status_code == 201
     session_id = create.json()["session_id"]
 
-    place_heater = client.post(
+    place_separator = client.post(
         f"/game/sessions/{session_id}/commands/build",
         json={
-            "item_id": "place_heater_cooler",
-            "config": {"process_id": "heater_1"},
+            "item_id": "place_inlet_gas_separator",
+            "config": {"process_id": "separator_1"},
             "layout": {"anchor_xy": [0.0, 0.0]},
         },
     )
-    assert place_heater.status_code == 200
+    assert place_separator.status_code == 200
 
     rejected = client.post(
         f"/game/sessions/{session_id}/commands/build",
@@ -301,16 +421,39 @@ def test_build_route_rejects_invalid_line_endpoints_with_stable_invalid_config_j
     "deferred_item_id",
     [
         "place_component_separator",
-        "install_sampled_delayed_sensor",
-        "install_pid_controller",
-        "install_line_pump",
-        "install_line_valve",
-        "install_line_heat_actuator",
         "place_merge_junction_2x1",
         "place_split_junction_1x2",
     ],
 )
-def test_deferred_build_items_stay_unknown_item_in_api_for_current_slice(
+def test_deferred_build_items_are_unknown_item_in_api_for_current_slice(
+    deferred_item_id: str,
+) -> None:
+    client = _client()
+
+    create = client.post("/game/sessions", json={"mode_id": "phase1_process_sandbox_v1"})
+    assert create.status_code == 201
+    session_id = create.json()["session_id"]
+
+    rejected = client.post(
+        f"/game/sessions/{session_id}/commands/build",
+        json={"item_id": deferred_item_id, "config": {}, "layout": {}},
+    )
+    assert rejected.status_code == 400
+    payload = rejected.json()
+    _assert_stable_error_payload(payload)
+    assert payload["error_code"] == "unknown_item"
+
+
+@pytest.mark.parametrize(
+    "deferred_item_id",
+    [
+        "install_sampled_delayed_sensor",
+        "install_pid_controller",
+        "install_line_pump",
+        "install_line_valve",
+    ],
+)
+def test_deferred_install_items_stay_unknown_item_in_api_for_current_slice(
     deferred_item_id: str,
 ) -> None:
     client = _client()
@@ -368,6 +511,8 @@ def test_pause_and_resume_routes_do_not_exist() -> None:
     assert create.status_code == 201
     session_id = create.json()["session_id"]
 
+    _build_min_separator_path(client, session_id)
+
     pause = client.post(f"/game/sessions/{session_id}/pause")
     resume = client.post(f"/game/sessions/{session_id}/resume")
 
@@ -411,18 +556,19 @@ def test_buy_feed_and_sell_product_payloads_remain_without_tank_id() -> None:
     # buy-feed: exact payload shape without tank_id succeeds
     buy = client.post(
         f"/game/sessions/{session_id}/commands/buy-feed",
-        json={"material_id": "feed_a", "quantity_mol": 1.0},
+        json={"material_id": "sweet_wet_gas", "quantity_mol": 1.0},
     )
     assert buy.status_code == 200
     buy_payload = buy.json()
     assert set(buy_payload) == {"accepted", "message", "snapshot"}
 
-    _wait_for_product_inventory(client, session_id, minimum_product_a_mol=0.01)
+    _build_min_separator_path(client, session_id)
+    _wait_for_product_inventory(client, session_id, minimum_separator_gas_mol=0.01)
 
     # sell-product: exact payload shape without tank_id succeeds
     sell = client.post(
         f"/game/sessions/{session_id}/commands/sell-product",
-        json={"product_id": "product_a", "quantity_mol": 0.01},
+        json={"product_id": "separator_gas", "quantity_mol": 0.01},
     )
     assert sell.status_code == 200
     sell_payload = sell.json()
@@ -492,18 +638,127 @@ def test_buy_feed_and_sell_product_routes_do_not_forward_tank_id() -> None:
 
         buy = client.post(
             "/game/sessions/session-test/commands/buy-feed",
-            json={"material_id": "feed_a", "quantity_mol": 1.0, "tank_id": "tank_1"},
+            json={"material_id": "sweet_wet_gas", "quantity_mol": 1.0, "tank_id": "tank_1"},
         )
         sell = client.post(
             "/game/sessions/session-test/commands/sell-product",
-            json={"product_id": "product_a", "quantity_mol": 0.5, "tank_id": "tank_2"},
+            json={"product_id": "separator_gas", "quantity_mol": 0.5, "tank_id": "tank_2"},
         )
 
     assert buy.status_code == 200
     assert sell.status_code == 200
     assert buy_calls == [
-        {"session_id": "session-test", "material_id": "feed_a", "quantity_mol": 1.0}
+        {"session_id": "session-test", "material_id": "sweet_wet_gas", "quantity_mol": 1.0}
     ]
     assert sell_calls == [
-        {"session_id": "session-test", "product_id": "product_a", "quantity_mol": 0.5}
+        {"session_id": "session-test", "product_id": "separator_gas", "quantity_mol": 0.5}
     ]
+
+
+def test_submit_research_route_contract_is_present() -> None:
+    client = _client()
+    create = client.post("/game/sessions", json={"mode_id": "phase1_process_sandbox_v1"})
+    assert create.status_code == 201
+    session_id = create.json()["session_id"]
+
+    response = client.post(
+        f"/game/sessions/{session_id}/commands/submit-research",
+        json={
+            "research_id": "unlock_cold_recovery_train_v1",
+            "submitted_quantities_by_product_id": {
+                "separator_gas": 20.0,
+                "unstabilized_condensate": 10.0,
+                "dry_gas": 20.0,
+            },
+        },
+    )
+    assert response.status_code == 409
+    _assert_stable_error_payload(response.json())
+    assert response.json()["error_code"] == "insufficient_product_inventory"
+
+
+def test_submit_research_route_rejection_statuses_are_stable() -> None:
+    client = _client()
+
+    missing = client.post(
+        "/game/sessions/does-not-exist/commands/submit-research",
+        json={
+            "research_id": "unlock_cold_recovery_train_v1",
+            "submitted_quantities_by_product_id": {
+                "separator_gas": 20.0,
+                "unstabilized_condensate": 10.0,
+                "dry_gas": 20.0,
+            },
+        },
+    )
+    assert missing.status_code == 404
+    _assert_stable_error_payload(missing.json())
+    assert missing.json()["error_code"] == "unknown_session"
+
+    create = client.post("/game/sessions", json={"mode_id": "phase1_process_sandbox_v1"})
+    assert create.status_code == 201
+    session_id = create.json()["session_id"]
+
+    unknown = client.post(
+        f"/game/sessions/{session_id}/commands/submit-research",
+        json={
+            "research_id": "unknown_research",
+            "submitted_quantities_by_product_id": {
+                "separator_gas": 20.0,
+                "unstabilized_condensate": 10.0,
+                "dry_gas": 20.0,
+            },
+        },
+    )
+    assert unknown.status_code == 400
+    _assert_stable_error_payload(unknown.json())
+    assert unknown.json()["error_code"] == "unknown_research_unlock"
+
+    invalid_payload = client.post(
+        f"/game/sessions/{session_id}/commands/submit-research",
+        json={"research_id": "unlock_cold_recovery_train_v1"},
+    )
+    assert invalid_payload.status_code == 400
+    _assert_stable_error_payload(invalid_payload.json())
+    assert invalid_payload.json()["error_code"] == "invalid_quantity"
+
+
+def test_submit_research_route_success_returns_command_envelope() -> None:
+    client = _client()
+    realtime_module = import_module("modular_simulation.gameplay.realtime_service")
+    economics_module = import_module("modular_simulation.gameplay.economics")
+
+    with patch.object(economics_module, "_DEFAULT_SANDBOX_STARTING_CASH", 5_000.0):
+        with patch.object(realtime_module, "_monotonic", return_value=0.0):
+            create = client.post("/game/sessions", json={"mode_id": "phase1_process_sandbox_v1"})
+        assert create.status_code == 201
+        session_id = create.json()["session_id"]
+
+        _build_starter_research_path(client, session_id)
+
+        with patch.object(realtime_module, "_monotonic", return_value=0.0):
+            assert (
+                client.post(
+                    f"/game/sessions/{session_id}/commands/buy-feed",
+                    json={"material_id": "sweet_wet_gas", "quantity_mol": 120.0},
+                ).status_code
+                == 200
+            )
+
+        with patch.object(realtime_module, "_monotonic", return_value=120.0):
+            _wait_for_product_inventory(client, session_id, minimum_separator_gas_mol=20.0)
+
+            response = client.post(
+                f"/game/sessions/{session_id}/commands/submit-research",
+                json={
+                    "research_id": "unlock_cold_recovery_train_v1",
+                    "submitted_quantities_by_product_id": {
+                        "separator_gas": 20.0,
+                        "unstabilized_condensate": 10.0,
+                        "dry_gas": 20.0,
+                    },
+                },
+            )
+    assert response.status_code == 200
+    payload = response.json()
+    assert set(payload) == {"accepted", "message", "snapshot"}

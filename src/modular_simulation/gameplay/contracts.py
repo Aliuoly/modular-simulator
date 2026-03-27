@@ -89,6 +89,14 @@ class TutorialGoalStatus:
 
 
 @dataclass(frozen=True)
+class ProgressionSnapshot:
+    active_stage_id: str | None
+    unlocked_stage_ids: tuple[str, ...]
+    available_item_ids: tuple[str, ...]
+    available_research_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class SimulationSessionSnapshot:
     session_kind: Literal["sandbox", "tutorial"]
     active_start_id: str
@@ -99,6 +107,7 @@ class SimulationSessionSnapshot:
     feed_inventory_by_material_id: Mapping[str, float]
     product_inventory_by_product_id: Mapping[str, float]
     tutorial_goal_status_by_id: Mapping[str, TutorialGoalStatus]
+    progression_snapshot: ProgressionSnapshot | None
 
 
 @dataclass(frozen=True)
@@ -130,6 +139,13 @@ class SimulationAdvanceResult:
     feed_consumption_by_material_id: Mapping[str, float]
     product_production_by_product_id: Mapping[str, float]
     published_signal_values_by_id: Mapping[str, float]
+
+
+@dataclass(frozen=True)
+class ResearchSubmissionResult:
+    success: bool
+    reason_code: str | None
+    snapshot: SimulationSessionSnapshot
 
 
 @dataclass(frozen=True)
