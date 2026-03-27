@@ -42,6 +42,15 @@ PUBLIC_BUILD_FAMILY_MATRIX: tuple[tuple[str, str], ...] = (
     ("line", "connect_configure_line"),
 )
 
+# Legacy frozen live-surface export retained for compatibility with
+# gameplay-slice guards that still import the module-level constant.
+# The authoritative public build surface is mode-specific via bootstrap/snapshot.
+SUPPORTED_BUILD_ITEM_IDS: tuple[str, ...] = (
+    "place_heater_cooler",
+    "place_flash_drum",
+    "build_process_line",
+)
+
 DEFERRED_PUBLIC_BUILD_ITEM_IDS: frozenset[str] = frozenset({"place_component_separator"})
 
 ADD_PROCESS_METADATA_KEYS: frozenset[str] = frozenset(
