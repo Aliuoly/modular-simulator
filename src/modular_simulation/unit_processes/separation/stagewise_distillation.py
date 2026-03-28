@@ -745,14 +745,15 @@ class StagewiseDistillationColumn(ProcessModel):
             inventory_limit_mol_s=min(vapor_flow, maximum_vapor_capacity_flow),
             expects_negative_duty=True,
         )
+        support_available_mol = max(0.0, float(np.sum(sump_moles)))
+        support_time_constant_s = 4.0
+        support_limited_flow = support_available_mol / support_time_constant_s
+
         reboiler_duty_w, realized_reboiler_boilup_flow = _realized_phase_change_flow_from_duty(
             duty_request_w=reboiler_duty_request_w,
             latent_heat_j_per_mol=reboiler_latent,
             fallback_flow_mol_s=0.6 * vapor_flow,
-            inventory_limit_mol_s=min(
-                float(np.sum(np.clip(sump_moles, 0.0, None))),
-                maximum_vapor_capacity_flow,
-            ),
+            inventory_limit_mol_s=min(support_limited_flow, maximum_vapor_capacity_flow),
             expects_negative_duty=False,
         )
         distillate_withdrawal_request = max(0.0, float(u[u_map["distillate_withdrawal_flow"]]))

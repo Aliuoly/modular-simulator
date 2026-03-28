@@ -1163,8 +1163,8 @@ def test_direct_duty_readouts_match_realized_q_over_lambda_after_clipping() -> N
     assert float(algebraic[params.algebraic_map["condenser_duty_W"]]) == pytest.approx(-30000.0)
     assert float(
         algebraic[params.algebraic_map["realized_reboiler_boilup_flow_mol_s"]]
-    ) == pytest.approx(0.3)
-    assert float(algebraic[params.algebraic_map["reboiler_duty_W"]]) == pytest.approx(9000.0)
+    ) == pytest.approx(0.075)
+    assert float(algebraic[params.algebraic_map["reboiler_duty_W"]]) == pytest.approx(2250.0)
 
 
 def test_wrong_sign_direct_duty_requests_do_not_drive_phase_change() -> None:
@@ -1231,6 +1231,147 @@ def test_reboiler_duty_request_increases_realized_boilup_and_is_nonnegative() ->
     )
     assert float(low_alg[low_map["reboiler_duty_W"]]) >= 0.0
     assert float(high_alg[high_map["reboiler_duty_W"]]) >= 0.0
+
+
+def test_reboiler_nonlimiting_regime_follows_requested_q_over_lambda() -> None:
+    column = StagewiseDistillationColumn(
+        n_species=3,
+        stage_vapor_flow_mol_s=12.0,
+        bottoms_sump_component_moles=np.array([40.0, 40.0, 40.0], dtype=np.float64),
+    )
+    _attach(column)
+
+    column.reboiler_duty_request_W = 60000.0
+
+    algebraic = _compute_algebraic(column)
+    algebraic_map = column._params.algebraic_map
+
+    assert float(algebraic[algebraic_map["realized_reboiler_boilup_flow_mol_s"]]) == pytest.approx(
+        2.0
+    )
+    assert float(algebraic[algebraic_map["reboiler_duty_W"]]) == pytest.approx(60000.0)
+
+
+def test_reboiler_support_limited_regime_clips_boilup_and_realized_duty() -> None:
+    column = StagewiseDistillationColumn(
+        n_species=3,
+        stage_vapor_flow_mol_s=50.0,
+        bottoms_sump_component_moles=np.array([0.2, 0.2, 0.0], dtype=np.float64),
+    )
+    _attach(column)
+
+    column.reboiler_duty_request_W = 30000.0
+
+    algebraic = _compute_algebraic(column)
+    algebraic_map = column._params.algebraic_map
+
+    assert float(algebraic[algebraic_map["realized_reboiler_boilup_flow_mol_s"]]) == pytest.approx(
+        0.1
+    )
+    assert float(algebraic[algebraic_map["reboiler_duty_W"]]) == pytest.approx(3000.0)
+
+
+def test_reboiler_support_available_uses_total_sum_for_mixed_sign_sump_states() -> None:
+    column = StagewiseDistillationColumn(
+        n_species=3,
+        stage_vapor_flow_mol_s=50.0,
+        bottoms_sump_component_moles=np.array([1.0, -0.9, 0.0], dtype=np.float64),
+    )
+    _attach(column)
+
+    column.reboiler_duty_request_W = 30000.0
+
+    algebraic = _compute_algebraic(column)
+    algebraic_map = column._params.algebraic_map
+
+    assert float(algebraic[algebraic_map["realized_reboiler_boilup_flow_mol_s"]]) == pytest.approx(
+        0.025
+    )
+    assert float(algebraic[algebraic_map["reboiler_duty_W"]]) == pytest.approx(750.0)
+
+
+def test_bottoms_withdrawal_reduces_later_support_limited_boilup_via_sump_ownership() -> None:
+    baseline = StagewiseDistillationColumn(
+        n_species=3,
+        stage_liquid_flow_mol_s=0.1,
+        stage_vapor_flow_mol_s=50.0,
+        bottoms_sump_component_moles=np.array([0.4, 0.4, 0.0], dtype=np.float64),
+    )
+    with_withdrawal = StagewiseDistillationColumn(
+        n_species=3,
+        stage_liquid_flow_mol_s=0.1,
+        stage_vapor_flow_mol_s=50.0,
+        bottoms_sump_component_moles=np.array([0.4, 0.4, 0.0], dtype=np.float64),
+    )
+    _attach(baseline)
+    _attach(with_withdrawal)
+
+    baseline.reboiler_duty_request_W = 30000.0
+    with_withdrawal.reboiler_duty_request_W = 30000.0
+    with_withdrawal.bottoms_withdrawal_flow = 0.1
+
+    for _ in range(4):
+        baseline.step(0.1)
+        with_withdrawal.step(0.1)
+
+    baseline_alg = _compute_algebraic(baseline)
+    withdrawal_alg = _compute_algebraic(with_withdrawal)
+    baseline_map = baseline._params.algebraic_map
+    withdrawal_map = with_withdrawal._params.algebraic_map
+
+    baseline_boilup = float(baseline_alg[baseline_map["realized_reboiler_boilup_flow_mol_s"]])
+    withdrawal_boilup = float(withdrawal_alg[withdrawal_map["realized_reboiler_boilup_flow_mol_s"]])
+
+    assert withdrawal_boilup < baseline_boilup
+    assert (
+        np.min(np.asarray(with_withdrawal.bottoms_sump_component_moles, dtype=np.float64))
+        >= -1.0e-12
+    )
+
+
+def test_stagewise_column_does_not_add_public_circulation_seam_or_boundary_fields() -> None:
+    column = StagewiseDistillationColumn(n_species=3, feed_stage_indices=(1, 2))
+    _attach(column)
+
+    assert column.ports.inlets == ("feed_1", "feed_2", "reflux_return")
+    assert column.ports.outlets == ("distillate", "bottoms", "reflux_outlet")
+
+    boundary_states = set(column.boundary_view.state_list)
+    assert "reboiler_duty_request_W" in boundary_states
+    assert "bottoms_withdrawal_flow" in boundary_states
+    assert all("circulation" not in state for state in boundary_states)
+
+
+def test_reboiler_support_limited_q_over_lambda_behavior_is_pressure_insensitive() -> None:
+    low_pressure = StagewiseDistillationColumn(
+        n_species=3,
+        column_pressure_pa=120000.0,
+        stage_vapor_flow_mol_s=50.0,
+        bottoms_sump_component_moles=np.array([0.2, 0.2, 0.0], dtype=np.float64),
+    )
+    high_pressure = StagewiseDistillationColumn(
+        n_species=3,
+        column_pressure_pa=250000.0,
+        stage_vapor_flow_mol_s=50.0,
+        bottoms_sump_component_moles=np.array([0.2, 0.2, 0.0], dtype=np.float64),
+    )
+    _attach(low_pressure)
+    _attach(high_pressure)
+
+    low_pressure.reboiler_duty_request_W = 30000.0
+    high_pressure.reboiler_duty_request_W = 30000.0
+
+    low_alg = _compute_algebraic(low_pressure)
+    high_alg = _compute_algebraic(high_pressure)
+    low_map = low_pressure._params.algebraic_map
+    high_map = high_pressure._params.algebraic_map
+
+    assert float(low_alg[low_map["realized_reboiler_boilup_flow_mol_s"]]) == pytest.approx(
+        float(high_alg[high_map["realized_reboiler_boilup_flow_mol_s"]])
+    )
+    assert float(low_alg[low_map["reboiler_duty_W"]]) == pytest.approx(
+        float(high_alg[high_map["reboiler_duty_W"]])
+    )
 
 
 def test_direct_duty_phase_change_paths_follow_realized_q_over_lambda_in_rhs() -> None:
@@ -1313,7 +1454,7 @@ def test_direct_duty_phase_change_paths_follow_realized_q_over_lambda_in_rhs() -
     ) == pytest.approx(1.0)
     assert float(
         active_alg[params.algebraic_map["realized_reboiler_boilup_flow_mol_s"]]
-    ) == pytest.approx(0.3)
+    ) == pytest.approx(0.075)
     assert float(wrong_alg[params.algebraic_map["realized_condensed_flow_mol_s"]]) == pytest.approx(
         0.0
     )
