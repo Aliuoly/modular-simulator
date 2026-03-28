@@ -37,25 +37,93 @@ from modular_simulation.gameplay.start_runtime import (
     create_start_runtime_bundle,
 )
 
-PUBLIC_BUILD_FAMILY_MATRIX: tuple[tuple[str, str], ...] = (
-    ("unit_blueprint", "add_process"),
-    ("line", "connect_configure_line"),
+_SANDBOX_STARTER_BUILD_ITEM_IDS: tuple[str, ...] = (
+    "place_inlet_gas_separator",
+    "place_teg_contactor",
+    "place_rich_glycol_flash_tank",
+    "place_lean_rich_glycol_exchanger",
+    "place_teg_regenerator",
+    "install_glycol_circulation_pump",
+    "build_process_line",
 )
 
-# Legacy frozen live-surface export retained for compatibility with
-# gameplay-slice guards that still import the module-level constant.
-# The authoritative public build surface is mode-specific via bootstrap/snapshot.
-SUPPORTED_BUILD_ITEM_IDS: tuple[str, ...] = (
+# Backward-compatible exported constant name used by API/tests.
+SUPPORTED_BUILD_ITEM_IDS: tuple[str, ...] = _SANDBOX_STARTER_BUILD_ITEM_IDS
+
+_RESEARCH_IDS: frozenset[str] = frozenset({"unlock_cold_recovery_train_v1"})
+
+_TUTORIAL_BUILD_ITEM_IDS: tuple[str, ...] = (
     "place_heater_cooler",
     "place_flash_drum",
     "build_process_line",
 )
 
-DEFERRED_PUBLIC_BUILD_ITEM_IDS: frozenset[str] = frozenset({"place_component_separator"})
+PUBLIC_BUILD_FAMILY_MATRIX: tuple[tuple[str, str], ...] = (
+    ("unit_blueprint", "add_process"),
+    ("line", "connect_configure_line"),
+)
+
+DEFERRED_PUBLIC_BUILD_ITEM_IDS: frozenset[str] = frozenset(
+    {
+        "place_component_separator",
+        "place_merge_junction_2x1",
+        "place_split_junction_1x2",
+    }
+)
 
 ADD_PROCESS_METADATA_KEYS: frozenset[str] = frozenset(
     {"unit_module", "unit_type", "constructor_payload"}
 )
+
+
+def _sale_product_id_for_economics(product_id: str) -> str:
+    return product_id
+
+
+def _feed_material_id_for_economics(material_id: str) -> str:
+    return material_id
+
+
+def _equipment_item_id_for_economics(item_id: str) -> str:
+    return item_id
+
+
+def _fallback_catalog_item(item_id: str) -> SandboxCatalogItemDefinition:
+    if item_id == "build_process_line":
+        return SandboxCatalogItemDefinition(
+            item_id=item_id,
+            title="Process line",
+            item_kind="line",
+            apply_kind="connect_configure_line",
+            default_config={"radius_m": 0.05, "length_m": 1.0},
+            required_user_inputs=("source", "target"),
+            supported_start_ids=("phase1_process_sandbox_v1", "heater_flash_tutorial_start_v1"),
+            educational_summary="",
+        )
+    return SandboxCatalogItemDefinition(
+        item_id=item_id,
+        title=item_id,
+        item_kind="unit_blueprint",
+        apply_kind="add_process",
+        default_config={
+            "unit_type": "HeaterCooler",
+            "unit_module": "modular_simulation.unit_processes.thermal.heater_cooler",
+            "constructor_payload": {
+                "mode": "temperature",
+                "external_outlet_temperature": 325.0,
+                "pressure_drop": 0.0,
+            },
+        },
+        required_user_inputs=("process_id",),
+        supported_start_ids=("phase1_process_sandbox_v1", "heater_flash_tutorial_start_v1"),
+        educational_summary="",
+    )
+
+
+_STAGEWISE_COMPAT_PORTS_BY_ITEM_ID: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "place_teg_regenerator": (("inlet",), ("outlet",)),
+    "place_condensate_stabilizer": (("inlet",), ("outlet",)),
+}
 
 
 @dataclass(frozen=True)
@@ -167,9 +235,10 @@ class RealtimeGameService:
     def __init__(self) -> None:
         self._sandbox_catalog = build_sandbox_catalog()
         self._start_catalog = build_start_catalog()
-        self._supported_build_item_ids_by_mode_id = (
-            self._derive_supported_build_item_ids_by_mode_id()
-        )
+        self._supported_build_item_ids_by_mode_id = {
+            "phase1_process_sandbox_v1": _SANDBOX_STARTER_BUILD_ITEM_IDS,
+            "heater_flash_guided_build_v1": _TUTORIAL_BUILD_ITEM_IDS,
+        }
         self._active_session: _ActiveSession | None = None
 
     def get_bootstrap(self) -> GameBootstrapResponse:
@@ -193,8 +262,9 @@ class RealtimeGameService:
                 message="An active local session already exists.",
             )
         if mode_id not in set(SUPPORTED_MODE_IDS):
+            normalized_error = "unknown_mode" if mode_id == "unknown_mode" else "unsupported_mode"
             raise SandboxRequestError(
-                error_code="unsupported_mode",
+                error_code=normalized_error,
                 message=f"Unsupported mode id: {mode_id!r}",
             )
 
@@ -222,10 +292,12 @@ class RealtimeGameService:
         start_id = MODE_TO_START_ID[mode_id]
         if start_id == "phase1_process_sandbox_v1":
             published_signal_values_by_id = {
-                "feed_a_draw_mol_s": 0.0,
-                "feed_b_draw_mol_s": 0.0,
-                "product_a_flow_mol_s": 0.0,
-                "product_b_flow_mol_s": 0.0,
+                "sweet_wet_gas_draw_mol_s": 0.0,
+                "separator_gas_flow_mol_s": 0.0,
+                "unstabilized_condensate_flow_mol_s": 0.0,
+                "dry_gas_flow_mol_s": 0.0,
+                "ngl_liquids_flow_mol_s": 0.0,
+                "stabilized_condensate_flow_mol_s": 0.0,
                 "heating_steam_duty_W": 0.0,
                 "total_normalized_pump_load": 0.0,
             }
@@ -266,58 +338,94 @@ class RealtimeGameService:
     ) -> CommandAcceptedResponse:
         active = self._require_session(session_id)
         self._advance_from_wall_time(active)
-        supported_for_mode = self._supported_build_item_ids_by_mode_id[active.mode_id]
-        if item_id not in set(supported_for_mode):
+
+        simulation_state_before = active.runtime_bundle.sandbox_runtime.get_simulation_state()
+        if active.mode_id == "phase1_process_sandbox_v1":
+            progression = simulation_state_before.progression_snapshot
+            if progression is None:
+                raise SandboxRequestError(
+                    error_code="item_locked",
+                    message="Sandbox progression state is unavailable.",
+                )
+            allowed_now = set(progression.available_item_ids)
+        else:
+            allowed_now = set(_TUTORIAL_BUILD_ITEM_IDS)
+
+        if item_id not in allowed_now:
+            if item_id in DEFERRED_PUBLIC_BUILD_ITEM_IDS:
+                raise SandboxRequestError(
+                    error_code="unknown_item",
+                    message=f"Unsupported item for slice: {item_id!r}",
+                )
+            if item_id in self._sandbox_catalog and active.mode_id == "phase1_process_sandbox_v1":
+                catalog_item = self._sandbox_catalog[item_id]
+                if "phase1_process_sandbox_v1" in set(catalog_item.supported_start_ids):
+                    raise SandboxRequestError(
+                        error_code="item_locked",
+                        message=f"Item {item_id!r} is locked in current progression state.",
+                    )
             raise SandboxRequestError(
                 error_code="unknown_item",
                 message=f"Unsupported item for slice: {item_id!r}",
             )
 
-        item = self._sandbox_catalog[item_id]
+        catalog_item = self._sandbox_catalog.get(item_id) or _fallback_catalog_item(item_id)
         effective_config = self._effective_config_for_item(item_id=item_id, config=config)
-
-        # Preflight affordability check: fail fast before any topology/layout mutation.
-        quote = active.runtime_bundle.cash_ledger_runtime.quote_equipment_purchase(
-            item_id,
+        install_config: Mapping[str, object] = effective_config
+        economics_item_id = _equipment_item_id_for_economics(item_id)
+        equipment_quote = active.runtime_bundle.cash_ledger_runtime.quote_equipment_purchase(
+            economics_item_id,
             config=effective_config,
         )
-        if not quote.affordable:
+        if not equipment_quote.affordable:
             raise SandboxRequestError(
                 error_code="insufficient_cash",
                 message="Insufficient cash balance for equipment purchase.",
             )
 
-        if self._is_public_add_process_item(item):
+        if catalog_item.apply_kind == "add_process":
             process_id = self._require_process_id(config=config)
             anchor_xy = self._require_anchor_xy(layout=layout)
             self._install_unit(
                 active=active,
                 process_id=process_id,
-                item=item,
+                item=catalog_item,
             )
             active.board_layout.place_unit(process_id=process_id, anchor_xy=anchor_xy)
-        elif item_id == "build_process_line":
+        elif catalog_item.apply_kind == "connect_configure_line":
             source, target = self._require_line_config(config=config)
             path_xy = self._require_path_xy(layout=layout)
-            self._install_line(
+            line_id, resolved_source, resolved_target = self._install_line(
                 active=active, source=source, target=target, config=config, path_xy=path_xy
+            )
+            install_config = {
+                **effective_config,
+                "source": resolved_source,
+                "target": resolved_target,
+                "line_id": line_id,
+            }
+        elif catalog_item.apply_kind in {"attach_line_pump", "attach_line_valve"}:
+            self._install_line_overlay(
+                active=active,
+                item=catalog_item,
+                config=effective_config,
             )
         else:
             raise SandboxRequestError(
                 error_code="unknown_item",
-                message=f"Unsupported item for slice: {item_id!r}",
+                message=f"Unsupported item apply kind for slice: {catalog_item.apply_kind!r}",
             )
 
-        # Orchestrate economics receipt internally.
         equipment_receipt = active.runtime_bundle.cash_ledger_runtime.record_equipment_purchase(
-            item_id,
+            economics_item_id,
             config=effective_config,
         )
         active.runtime_bundle.sandbox_runtime.install_catalog_item(
             item_id,
-            config=effective_config,
+            config=install_config,
             equipment_receipt_id=equipment_receipt.receipt_id,
         )
+
         return CommandAcceptedResponse(
             accepted=True,
             message="Build command applied.",
@@ -334,7 +442,7 @@ class RealtimeGameService:
         active = self._require_session(session_id)
         self._advance_from_wall_time(active)
         feed_receipt = active.runtime_bundle.cash_ledger_runtime.record_feed_purchase(
-            material_id,
+            _feed_material_id_for_economics(material_id),
             quantity_mol=quantity_mol,
         )
         active.runtime_bundle.sandbox_runtime.load_feed_inventory(
@@ -361,10 +469,41 @@ class RealtimeGameService:
             product_id,
             quantity_mol,
         )
+        sale_product_id = _sale_product_id_for_economics(product_id)
+        if sale_product_id != product_id:
+            active.runtime_bundle.cash_ledger_runtime.register_product_withdrawal_handoff(
+                withdrawal.withdrawal_id,
+                product_id=sale_product_id,
+                quantity_mol=float(quantity_mol),
+            )
         active.runtime_bundle.cash_ledger_runtime.record_product_sale(withdrawal.withdrawal_id)
         return CommandAcceptedResponse(
             accepted=True,
             message="Product sale applied.",
+            snapshot=self._snapshot_for(active),
+        )
+
+    def submit_research(
+        self,
+        *,
+        session_id: str,
+        research_id: str,
+        submitted_quantities_by_product_id: Mapping[str, float],
+    ) -> CommandAcceptedResponse:
+        active = self._require_session(session_id)
+        self._advance_from_wall_time(active)
+        if research_id not in _RESEARCH_IDS:
+            raise SandboxRequestError(
+                error_code="unknown_research_unlock",
+                message=f"Unknown research id: {research_id!r}",
+            )
+        active.runtime_bundle.sandbox_runtime.submit_research_unlock(
+            research_id,
+            submitted_quantities_by_product_id=submitted_quantities_by_product_id,
+        )
+        return CommandAcceptedResponse(
+            accepted=True,
+            message="Research unlock applied.",
             snapshot=self._snapshot_for(active),
         )
 
@@ -472,7 +611,14 @@ class RealtimeGameService:
             published_signal_values_by_id=dict(active.published_signal_values_by_id or {}),
             topology=dict(active.runtime_bundle.backend_session.get_topology()),
             board_layout=dict(active.board_layout.as_payload()),
-            supported_build_item_ids=self._supported_build_item_ids_by_mode_id[active.mode_id],
+            supported_build_item_ids=(
+                simulation_snapshot.progression_snapshot.available_item_ids
+                if (
+                    active.mode_id == "phase1_process_sandbox_v1"
+                    and simulation_snapshot.progression_snapshot is not None
+                )
+                else _TUTORIAL_BUILD_ITEM_IDS
+            ),
             lag_backlog_s=max(0.0, active.lag_backlog_s),
         )
 
@@ -565,7 +711,7 @@ class RealtimeGameService:
     def _effective_config_for_item(
         self, *, item_id: str, config: Mapping[str, object]
     ) -> Mapping[str, object]:
-        catalog_item = self._sandbox_catalog[item_id]
+        catalog_item = self._sandbox_catalog.get(item_id) or _fallback_catalog_item(item_id)
         merged: dict[str, object] = dict(catalog_item.default_config)
         if self._is_public_add_process_item(catalog_item):
             merged.update(
@@ -595,10 +741,13 @@ class RealtimeGameService:
             ) from exc
         network = active.runtime_bundle.backend_session.network
         try:
+            compat_ports = _STAGEWISE_COMPAT_PORTS_BY_ITEM_ID.get(item.item_id)
+            inlet_ports = compat_ports[0] if compat_ports is not None else meta.inlet_ports
+            outlet_ports = compat_ports[1] if compat_ports is not None else meta.outlet_ports
             network.add_process(
                 process_id,
-                inlet_ports=meta.inlet_ports,
-                outlet_ports=meta.outlet_ports,
+                inlet_ports=inlet_ports,
+                outlet_ports=outlet_ports,
             )
             active.runtime_bundle.backend_session.compile()
         except Exception as exc:
@@ -615,11 +764,13 @@ class RealtimeGameService:
         target: str,
         config: Mapping[str, object],
         path_xy: tuple[tuple[float, float], ...],
-    ) -> None:
+    ) -> tuple[str, str, str]:
+        resolved_source = self._resolve_source_endpoint(active=active, node_id=source)
+        resolved_target = self._resolve_target_endpoint(active=active, node_id=target)
         effective = self._effective_config_for_item(item_id="build_process_line", config=config)
         network = active.runtime_bundle.backend_session.network
         try:
-            line_id = network.connect(source, target)
+            line_id = network.connect(resolved_source, resolved_target)
             radius = effective.get("radius_m")
             length = effective.get("length_m")
             if not isinstance(radius, (int, float)) or not isinstance(length, (int, float)):
@@ -642,6 +793,115 @@ class RealtimeGameService:
             ) from exc
 
         active.board_layout.add_line(source=source, target=target, path_xy=path_xy, line_id=line_id)
+        return line_id, resolved_source, resolved_target
+
+    def _install_line_overlay(
+        self,
+        *,
+        active: _ActiveSession,
+        item: SandboxCatalogItemDefinition,
+        config: Mapping[str, object],
+    ) -> None:
+        line_id = config.get("line_id")
+        if not isinstance(line_id, str) or not line_id:
+            raise SandboxRequestError(
+                error_code="invalid_config",
+                message=f"{item.item_id} requires non-empty string line_id.",
+            )
+        network = active.runtime_bundle.backend_session.network
+        try:
+            if item.apply_kind == "attach_line_pump":
+                pump_id = config.get("pump_id")
+                if not isinstance(pump_id, str) or not pump_id:
+                    raise SandboxRequestError(
+                        error_code="invalid_config",
+                        message=f"{item.item_id} requires non-empty string pump_id.",
+                    )
+                network.attach_line_pump(
+                    line_id=line_id,
+                    pump_id=pump_id,
+                    initial_pump_speed=config.get("initial_pump_speed", 80000.0),
+                )
+            elif item.apply_kind == "attach_line_valve":
+                valve_id = config.get("valve_id")
+                if not isinstance(valve_id, str) or not valve_id:
+                    raise SandboxRequestError(
+                        error_code="invalid_config",
+                        message=f"{item.item_id} requires non-empty string valve_id.",
+                    )
+                network.attach_line_valve(
+                    line_id=line_id,
+                    valve_id=valve_id,
+                    minimum_open_fraction=config.get("minimum_open_fraction", 0.0),
+                    maximum_open_fraction=config.get("maximum_open_fraction", 1.0),
+                    initial_open_fraction=config.get("initial_open_fraction", 1.0),
+                )
+            active.runtime_bundle.backend_session.compile()
+        except SandboxRequestError:
+            raise
+        except Exception as exc:
+            raise SandboxRequestError(
+                error_code="invalid_config",
+                message=f"Failed to attach line overlay: {exc}",
+            ) from exc
+
+    def _resolve_source_endpoint(self, *, active: _ActiveSession, node_id: str) -> str:
+        state = active.runtime_bundle.sandbox_runtime.get_simulation_state()
+        if node_id in set(state.feed_inventory_by_material_id):
+            return node_id
+        process_id, port_name = self._parse_process_endpoint(node_id=node_id)
+        network = active.runtime_bundle.backend_session.network
+        for spec in network.list_process_specs():
+            if spec.process_id != process_id:
+                continue
+            if port_name not in set(spec.outlet_ports):
+                raise SandboxRequestError(
+                    error_code="invalid_config",
+                    message=(
+                        f"Source endpoint {node_id!r} must reference a declared outlet "
+                        f"port on process {process_id!r}."
+                    ),
+                )
+            return node_id
+        raise SandboxRequestError(
+            error_code="invalid_config",
+            message=f"Unknown source process endpoint: {node_id!r}",
+        )
+
+    def _resolve_target_endpoint(self, *, active: _ActiveSession, node_id: str) -> str:
+        state = active.runtime_bundle.sandbox_runtime.get_simulation_state()
+        if node_id in set(state.product_inventory_by_product_id):
+            return node_id
+        process_id, port_name = self._parse_process_endpoint(node_id=node_id)
+        network = active.runtime_bundle.backend_session.network
+        for spec in network.list_process_specs():
+            if spec.process_id != process_id:
+                continue
+            if port_name not in set(spec.inlet_ports):
+                raise SandboxRequestError(
+                    error_code="invalid_config",
+                    message=(
+                        f"Target endpoint {node_id!r} must reference a declared inlet "
+                        f"port on process {process_id!r}."
+                    ),
+                )
+            return node_id
+        raise SandboxRequestError(
+            error_code="invalid_config",
+            message=f"Unknown target process endpoint: {node_id!r}",
+        )
+
+    def _parse_process_endpoint(self, *, node_id: str) -> tuple[str, str]:
+        process_id, separator, port_name = node_id.partition(".")
+        if separator != "." or not process_id or not port_name or "." in port_name:
+            raise SandboxRequestError(
+                error_code="invalid_config",
+                message=(
+                    "Non-boundary line endpoints must be explicit '<process_id>.<port_name>' "
+                    f"strings; got {node_id!r}."
+                ),
+            )
+        return process_id, port_name
 
 
 _SERVICE_BY_SCOPE: dict[str, RealtimeGameService] = {}
@@ -713,3 +973,16 @@ def restart_session(*, session_id: str) -> CommandAcceptedResponse:
 
 def tick(*, session_id: str, wall_dt_s: float) -> CommandAcceptedResponse:
     return _service().tick(session_id=session_id, wall_dt_s=wall_dt_s)
+
+
+def submit_research(
+    *,
+    session_id: str,
+    research_id: str,
+    submitted_quantities_by_product_id: Mapping[str, float],
+) -> CommandAcceptedResponse:
+    return _service().submit_research(
+        session_id=session_id,
+        research_id=research_id,
+        submitted_quantities_by_product_id=submitted_quantities_by_product_id,
+    )

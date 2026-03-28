@@ -9,15 +9,14 @@
 - **Primary**: Chemical engineering students and instructors who need a grounded, simulation-accurate process backend for learning and classroom tooling.
 - **Secondary**: Contributors experimenting with process-control design and flowsheet modeling.
 
-## Phase-1 Teaching Scope
+## Phase-1 Teaching Scope (Current Live Slice)
 
-Phase 1 is intentionally narrow and aligns with the existing continuous-process simulation capabilities. It covers three teaching tracks:
+The current playable phase-1 slice is intentionally narrow and gas-first:
 
-1. **Topology and separation basics** — flowsheet wiring with explicit boundary feeds and boundary sinks, named junction topology, and unit-process composition (heater, flash, heat exchanger).
-2. **Reactor dynamics, sensing, and control** — reactor models, closed-loop PID control, sensor noise and delays, and instrumented control loops.
-3. **Recycle, purge, and process-design tradeoffs** — explicit recycle return edges, named junction branching, recycle loop validation, purge streams, and material balance tradeoffs.
+1. **Main sandbox (`phase1_process_sandbox_v1`)** — sweet-wet-gas progression with staged unlocks: inlet separation + TEG dehydration at start, then a batched mixed-product research unlock for JT/low-temperature separation and condensate stabilization.
+2. **Guided tutorial (`heater_flash_guided_build_v1`)** — unchanged heater/flash onboarding flow.
 
-These tracks fit the existing continuous-process runtime and draw from both canonical examples and reference-backed reactor/control examples. They do not require new simulation-core capabilities.
+The main sandbox uses real gas-processing names with explicit educational proxies (for example, TEG contactor and regenerator names mapped to currently available unit substrates) and keeps buy/sell commands tank-free in this slice.
 
 ## Substrate Layers
 
@@ -46,8 +45,11 @@ The canonical examples are the best starting points for the underlying simulatio
 
 | Example | Teaching track |
 | --- | --- |
-| `examples/unit_process_flowsheet/easy_2_heater_flash.py` | Topology and separation basics |
-| `examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py` | Topology and separation basics |
+| `examples/unit_process_flowsheet/gas_1_inlet_separator.py` | Gas starter reachability (`separator_gas`, `unstabilized_condensate`) |
+| `examples/unit_process_flowsheet/gas_2_teg_dehydration.py` | Gas starter reachability (`dry_gas`) |
+| `examples/unit_process_flowsheet/gas_3_jt_low_temperature_separation.py` | Post-unlock reachability (`ngl_liquids`) |
+| `examples/unit_process_flowsheet/gas_4_condensate_stabilizer.py` | Post-unlock reachability (`stabilized_condensate`) |
+| `examples/unit_process_flowsheet/easy_2_heater_flash.py` | Guided tutorial seed |
 | `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` | Recycle, purge, and process-design tradeoffs |
 | `examples/connection_layer/two_tank_reaction_comparison.py` | Reactor dynamics and connected-plant fidelity |
 
@@ -70,7 +72,7 @@ These topics may be addressed in later packs that explicitly opt into them.
 
 This repository now includes the simulation substrate plus the first higher-level gameplay layers:
 
-- Phase-1 sandbox build catalog and tutorial challenges (one sandbox start, build/buy primitives, and guided challenge starts layered on canonical and reference-backed examples).
+- Phase-1 gas-first sandbox progression and tutorial challenges (one gas-first sandbox start plus guided heater/flash tutorial).
 - Sandbox session and heuristic economics layer (inventory-backed simulation session, separate economics ledger, and named engineering-economics rulebook APIs).
 - Realtime service and HTTP game API transport seam for client-facing commands/snapshots.
 - Godot phase-1 vertical-slice client that consumes those APIs.

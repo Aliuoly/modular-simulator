@@ -13,41 +13,19 @@ The first playable slice SHALL compose the existing sandbox-session, economics-l
 ### Requirement: The First Playable Scope Is Narrow And Explicit
 The first playable slice SHALL support exactly the free-play sandbox `phase1_process_sandbox_v1` and the guided tutorial `heater_flash_guided_build_v1`.
 
-For `phase1_process_sandbox_v1`, the client-facing playable build list SHALL advertise exactly `place_heater_cooler`, `place_flash_drum`, `place_heat_exchanger`, and `build_process_line`.
+`heater_flash_guided_build_v1` remains the client/service mode id and SHALL continue to map to the start-catalog record `heater_flash_tutorial_start_v1`, rather than reusing the start id directly in the client surface.
+
+For `phase1_process_sandbox_v1`, bootstrap SHALL advertise exactly these initial starter-batch build items: `place_inlet_gas_separator`, `place_teg_contactor`, `place_rich_glycol_flash_tank`, `place_lean_rich_glycol_exchanger`, `place_teg_regenerator`, `install_glycol_circulation_pump`, and `build_process_line`.
 
 For `heater_flash_guided_build_v1`, the client-facing playable build list SHALL continue to advertise exactly `place_heater_cooler`, `place_flash_drum`, and `build_process_line`.
 
-#### Scenario: Reactor and recycle client flows stay deferred
-- **WHEN** a contributor inspects the playable client scope for the first slice
-- **THEN** the reactor-control and recycle/purge tutorials are not treated as required client flows for the first slice
-
-#### Scenario: Sandbox build list widens to public add-process units
-- **WHEN** a client requests bootstrap metadata or the current sandbox snapshot for `phase1_process_sandbox_v1`
-- **THEN** the supported build-item list is exactly `place_heater_cooler`, `place_flash_drum`, `place_heat_exchanger`, and `build_process_line`.
+#### Scenario: Main-world slice starts on the gas-first starter batch
+- **WHEN** a contributor inspects the playable client scope for the default sandbox
+- **THEN** the initial main-world build affordances are the starter-batch gas items plus process lines rather than the old heater/flash sandbox set
 
 #### Scenario: Heater/flash tutorial build list stays narrow
 - **WHEN** a client requests bootstrap metadata or the current snapshot for `heater_flash_guided_build_v1`
 - **THEN** the supported build-item list remains exactly `place_heater_cooler`, `place_flash_drum`, and `build_process_line`.
-
-#### Scenario: Deferred non-line families stay hidden from the client build surface
-- **WHEN** a client inspects the currently advertised playable build items after 6ei
-- **THEN** `place_component_separator`, `install_sampled_delayed_sensor`, `install_pid_controller`, `install_line_pump`, `install_line_valve`, `install_line_heat_actuator`, `place_merge_junction_2x1`, and `place_split_junction_1x2` are not advertised as playable build items in this pack.
-
-### Requirement: Public Line Commands Use Explicit Endpoint Strings
-Client line-building commands SHALL keep the existing route and top-level JSON shape while using explicit endpoint strings for non-boundary nodes.
-
-This line contract remains topology-only in the current playable slice; successful wiring does not itself claim runtime heater, flash, exchanger, or hydraulic behavior.
-
-#### Scenario: Client wiring uses exact endpoint names on the existing build route
-- **WHEN** a client submits `build_process_line` for a feed/product boundary
-- **THEN** bare boundary ids remain valid
-- **AND WHEN** the client submits `build_process_line` for a public unit endpoint
-- **THEN** the request uses exact endpoint strings like `heater_1.inlet`, `flash_1.vapor_outlet`, `heat_exchanger_1.hot_inlet`, or `heat_exchanger_1.cold_outlet` on the same existing JSON build route.
-
-#### Scenario: Invalid endpoint strings return stable JSON and HTTP 400
-- **WHEN** a client submits `build_process_line` with a malformed endpoint string, unknown endpoint id, unknown port name, wrong-direction port, or bare non-boundary process id
-- **THEN** the HTTP bridge responds with JSON `{error_code, message}` on the stable invalid-request path
-- **AND** the response status is HTTP `400`.
 
 ### Requirement: Sessions Run Continuously Without Pause
 Playable sessions SHALL be always-running once created, SHALL use a configurable fixed simulation step, and SHALL not expose a pause or resume affordance.
@@ -61,11 +39,44 @@ Playable sessions SHALL be always-running once created, SHALL use a configurable
 - **THEN** the Godot client renders at 60 FPS independently of the service’s fixed simulation update cadence
 
 ### Requirement: The Slice Exposes An Explicit HTTP Session API
-The first playable slice SHALL expose exactly these HTTP endpoints for the Godot client: `GET /game/bootstrap`, `POST /game/sessions`, `GET /game/sessions/{session_id}/snapshot`, `POST /game/sessions/{session_id}/commands/build`, `POST /game/sessions/{session_id}/commands/buy-feed`, `POST /game/sessions/{session_id}/commands/sell-product`, and `POST /game/sessions/{session_id}/restart`.
+The first playable slice SHALL expose exactly these HTTP endpoints for the Godot client: `GET /game/bootstrap`, `POST /game/sessions`, `GET /game/sessions/{session_id}/snapshot`, `POST /game/sessions/{session_id}/commands/build`, `POST /game/sessions/{session_id}/commands/buy-feed`, `POST /game/sessions/{session_id}/commands/sell-product`, `POST /game/sessions/{session_id}/commands/submit-research`, and `POST /game/sessions/{session_id}/restart`.
 
-#### Scenario: HTTP surface is fixed for the first slice
+`POST /game/sessions/{session_id}/commands/buy-feed` SHALL keep the existing payload shape:
+- `material_id: string`
+- `quantity_mol: number`
+
+`POST /game/sessions/{session_id}/commands/sell-product` SHALL keep the existing payload shape:
+- `product_id: string`
+- `quantity_mol: number`
+
+Neither route SHALL require or publish a public `tank_id` field in this pack.
+
+`POST /game/sessions/{session_id}/commands/submit-research` SHALL accept exactly this JSON payload shape:
+- `research_id: string`
+- `submitted_quantities_by_product_id: {product_id: quantity_mol}`
+
+On success, the route SHALL return HTTP `200` with the same `{"accepted", "message", "snapshot"}` command envelope used by the existing build/buy-feed/sell-product/restart commands.
+
+On rejection, the route SHALL return the stable error JSON `{"error_code", "message"}` with these status semantics:
+- `404` for `unknown_session`
+- `409` for `research_not_available`, `research_unavailable_for_session`, and `insufficient_product_inventory`
+- `400` for invalid payload shape, `unknown_research_unlock`, and `invalid_quantity`
+
+#### Scenario: Research submission is part of the fixed HTTP surface
 - **WHEN** a contributor inspects the backend-facing client bridge for the playable slice
-- **THEN** those exact routes exist and no `pause`, `resume`, or `step-on-demand` route is required for the playable slice
+- **THEN** the research submission route exists as part of the stable first-slice command set
+
+#### Scenario: Research route payload and status semantics are frozen
+- **WHEN** a client submits research through the HTTP bridge
+- **THEN** the request body keys, success envelope, and rejection status behavior match the frozen contract above
+
+#### Scenario: Unknown session remains a stable research-route transport error
+- **WHEN** a client submits any slice command, including `submit-research`, against a nonexistent session id
+- **THEN** the service returns `404` with stable error JSON `{"error_code", "message"}` and `error_code = "unknown_session"`
+
+#### Scenario: Buy and sell routes stay direct and tank-free in the narrow slice
+- **WHEN** a client submits buy-feed or sell-product commands in this pack
+- **THEN** the request uses only the frozen material/product id plus quantity payloads and does not require a public `tank_id` or sale-spec field
 
 ### Requirement: The Slice Advertises Granular Simulation Step Presets
 The playable slice SHALL let the session start with an optional `simulation_dt_s`, SHALL advertise the presets `1/60`, `1/30`, and `1/20` seconds, and SHALL use `1/60` when the client omits `simulation_dt_s`.
@@ -90,11 +101,18 @@ The first playable slice SHALL allow exactly one active local session per backen
 - **THEN** the service rejects the request with `error_code="session_already_active"`
 
 ### Requirement: The Client Consumes A Combined Authoritative Snapshot
-The game service SHALL expose a combined authoritative snapshot for the client that includes gameplay state, economics state, topology state, and render-layout state together.
+The game service SHALL expose a combined authoritative snapshot for the client that includes gameplay state, economics state, progression state, topology state, and render-layout state together.
 
-#### Scenario: Snapshot includes gameplay and world-render data together
-- **WHEN** a client requests the latest slice snapshot
-- **THEN** the response includes the current simulation session state, cash-ledger state, latest published signals, topology payload, board-layout payload, and lag diagnostics in one service-owned snapshot
+#### Scenario: Snapshot carries current unlock state and current buildable items
+- **WHEN** a client requests the latest slice snapshot for the default sandbox
+- **THEN** the response includes progression state through the authoritative gameplay snapshot and the top-level `supported_build_item_ids` reflects the currently unlocked build items rather than a static process-wide constant
+
+### Requirement: Rejected Build Commands Are Atomic For The Playable Slice
+The playable slice SHALL reject locked or otherwise invalid build commands before topology, board layout, or ledger state changes are committed.
+
+#### Scenario: Locked build rejection leaves authoritative state unchanged
+- **WHEN** a client submits a build command for a main-world item that is valid for `phase1_process_sandbox_v1` but not yet unlocked
+- **THEN** the service returns HTTP `409` with stable error JSON `{"error_code", "message"}`, uses `error_code = "item_locked"`, and a subsequent snapshot shows unchanged topology, unchanged board layout, and unchanged cash relative to the pre-request snapshot
 
 ### Requirement: The Slice Exposes Stable JSON Error Responses
 Rejected playable-slice API requests SHALL return JSON error payloads with stable `error_code` and `message` fields, including widened add-process metadata failures.
@@ -119,7 +137,7 @@ The playable-slice HTTP bridge SHALL translate invalid runtime-authoritative uni
 Successful playable-slice command endpoints SHALL return exactly `accepted`, `message`, and `snapshot` fields.
 
 #### Scenario: Successful command responses use one contract
-- **WHEN** a build, buy-feed, sell-product, or restart command succeeds
+- **WHEN** a build, buy-feed, sell-product, submit-research, or restart command succeeds
 - **THEN** the HTTP response body includes exactly `accepted: true`, `message: str`, and `snapshot: GameSnapshot`
 
 ### Requirement: HTTP Status Semantics Are Stable
@@ -128,7 +146,7 @@ The playable-slice HTTP bridge SHALL use stable success and rejection statuses f
 #### Scenario: Success statuses are consistent
 - **WHEN** a client creates a session
 - **THEN** the service responds with HTTP `201`
-- **AND WHEN** a client fetches a snapshot or submits a successful build, buy-feed, sell-product, or restart command
+- **AND WHEN** a client fetches a snapshot or submits a successful build, buy-feed, sell-product, submit-research, or restart command
 - **THEN** the service responds with HTTP `200`
 
 #### Scenario: Error statuses are consistent
@@ -154,11 +172,11 @@ The first playable slice SHALL ship with a Godot 4 client that uses a fixed non-
 - **THEN** the camera remains fixed and the player cannot freely rotate it
 
 ### Requirement: The Godot HUD Exposes The Current Slice State
-The client SHALL surface the state needed to play the slice: cash, feed inventory, product inventory, published signals, tutorial goals when applicable, and the supported build/feed/sell/restart commands.
+The client SHALL surface the state needed to play the slice: cash, feed inventory, product inventory, published signals, progression state for the main sandbox, tutorial goals when applicable, and the supported build/feed/sell/research/restart commands.
 
-#### Scenario: Tutorial mode surfaces guided progression
-- **WHEN** the player is in `heater_flash_guided_build_v1`
-- **THEN** the HUD shows the current tutorial goals and completion progress derived from the authoritative backend snapshot
+#### Scenario: Main sandbox HUD surfaces stage progress
+- **WHEN** the player is in `phase1_process_sandbox_v1`
+- **THEN** the HUD shows the current gas-processing stage, the currently available mixed-product research unlock, and the currently unlocked build items derived from the authoritative backend snapshot
 
 ### Requirement: The First Slice Is Local And Ephemeral
 The first playable slice SHALL support session start and restart locally, and SHALL not promise player-facing save/resume across process restarts.

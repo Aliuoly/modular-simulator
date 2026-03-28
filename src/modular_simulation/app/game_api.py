@@ -14,6 +14,7 @@ from modular_simulation.gameplay.realtime_service import (
     get_bootstrap,
     get_snapshot,
     restart_session,
+    submit_research,
     sell_product,
 )
 from modular_simulation.gameplay.start_runtime import SUPPORTED_MODE_IDS
@@ -33,6 +34,9 @@ def _status_for_error_code(error_code: str) -> int:
         "session_already_active",
         "insufficient_cash",
         "insufficient_product_inventory",
+        "item_locked",
+        "research_not_available",
+        "research_unavailable_for_session",
     }:
         return 409
     return 400
@@ -163,6 +167,29 @@ def create_app() -> FastAPI:
             session_id=session_id,
             product_id=product_id,
             quantity_mol=float(quantity_mol),
+        )
+        return _as_payload(accepted)
+
+    @app.post("/game/sessions/{session_id}/commands/submit-research")
+    async def submit_research_route(session_id: str, payload: Mapping[str, object]) -> object:
+        research_id = payload.get("research_id")
+        submitted = payload.get("submitted_quantities_by_product_id")
+        if not isinstance(research_id, str) or not research_id:
+            raise _ApiError(
+                error_code="unknown_research_unlock",
+                message="research_id is required",
+                status_code=400,
+            )
+        if not isinstance(submitted, Mapping):
+            raise _ApiError(
+                error_code="invalid_quantity",
+                message="submitted_quantities_by_product_id must be an object",
+                status_code=400,
+            )
+        accepted = submit_research(
+            session_id=session_id,
+            research_id=research_id,
+            submitted_quantities_by_product_id=cast(Mapping[str, float], submitted),
         )
         return _as_payload(accepted)
 

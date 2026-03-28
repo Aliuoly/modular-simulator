@@ -11,6 +11,13 @@ The current slice supports exactly these mode ids:
 
 No additional modes are in scope for this playable slice.
 
+## Gas-First Progression Notes
+
+- `phase1_process_sandbox_v1` starts on the gas-first starter batch (`place_inlet_gas_separator`, `place_teg_contactor`, `place_rich_glycol_flash_tank`, `place_lean_rich_glycol_exchanger`, `place_teg_regenerator`, `install_glycol_circulation_pump`, `build_process_line`).
+- The sandbox HUD/snapshot exposes progression state (`active_stage_id`, unlocked stages, currently unlocked build items, available research ids).
+- The research command is part of the slice: `POST /game/sessions/{session_id}/commands/submit-research` with payload `{research_id, submitted_quantities_by_product_id}`.
+- `buy-feed` and `sell-product` remain direct id+quantity commands in this slice (no public `tank_id` payload).
+
 ## Architecture Positioning
 
 - `PlantBackendSession` remains the low-level simulation/topology substrate.
@@ -85,3 +92,7 @@ In some headless/dummy-renderer runs, Godot may print non-fatal `mesh_get_surfac
 
 - Treat this as non-blocking unless the smoke exits non-zero or assertions fail.
 - Use smoke exit code and explicit assertion failures as the pass/fail source of truth.
+
+## Known Local Blocker
+
+If `godot4` is not installed in the local environment, the headless smoke command cannot run and will fail with command-not-found. Treat this as an environment blocker, not a gameplay contract failure.

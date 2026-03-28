@@ -1,7 +1,4 @@
-"""Phase-1 sandbox build catalog.
-
-Returns a dict keyed by item_id containing SandboxCatalogItemDefinition records.
-"""
+"""Phase-1 sandbox build catalog."""
 
 from __future__ import annotations
 
@@ -9,8 +6,165 @@ from modular_simulation.gameplay.contracts import SandboxCatalogItemDefinition
 
 
 def build_sandbox_catalog() -> dict[str, SandboxCatalogItemDefinition]:
-    """Return the frozen phase-1 sandbox build catalog."""
     entries = [
+        SandboxCatalogItemDefinition(
+            item_id="place_inlet_gas_separator",
+            title="Inlet gas separator",
+            item_kind="unit_blueprint",
+            apply_kind="add_process",
+            default_config={
+                "unit_type": "FlashDrum",
+                "unit_module": "modular_simulation.unit_processes.separation.flash_drum",
+                "constructor_payload": {
+                    "thermal_mode": "isothermal",
+                    "imposed_pressure": 600000.0,
+                    "imposed_temperature": 305.0,
+                },
+            },
+            required_user_inputs=("process_id",),
+            supported_start_ids=("phase1_process_sandbox_v1",),
+            educational_summary="educational proxy for inlet three-phase style separation",
+        ),
+        SandboxCatalogItemDefinition(
+            item_id="place_teg_contactor",
+            title="TEG contactor",
+            item_kind="unit_blueprint",
+            apply_kind="add_process",
+            default_config={
+                "unit_type": "ComponentSeparator",
+                "unit_module": "modular_simulation.unit_processes.separation.component_separator",
+                "constructor_payload": {},
+            },
+            required_user_inputs=("process_id",),
+            supported_start_ids=("phase1_process_sandbox_v1",),
+            educational_summary="educational proxy for TEG dehydration contactor behavior",
+        ),
+        SandboxCatalogItemDefinition(
+            item_id="place_rich_glycol_flash_tank",
+            title="Rich glycol flash tank",
+            item_kind="unit_blueprint",
+            apply_kind="add_process",
+            default_config={
+                "unit_type": "FlashDrum",
+                "unit_module": "modular_simulation.unit_processes.separation.flash_drum",
+                "constructor_payload": {
+                    "thermal_mode": "isothermal",
+                    "imposed_pressure": 250000.0,
+                    "imposed_temperature": 320.0,
+                },
+            },
+            required_user_inputs=("process_id",),
+            supported_start_ids=("phase1_process_sandbox_v1",),
+            educational_summary="educational proxy for rich glycol degassing support",
+        ),
+        SandboxCatalogItemDefinition(
+            item_id="place_lean_rich_glycol_exchanger",
+            title="Lean/rich glycol exchanger",
+            item_kind="unit_blueprint",
+            apply_kind="add_process",
+            default_config={
+                "unit_type": "HeatExchanger",
+                "unit_module": "modular_simulation.unit_processes.thermal.heat_exchanger",
+                "constructor_payload": {"flow_arrangement": "counter", "ua": 7500.0},
+            },
+            required_user_inputs=("process_id",),
+            supported_start_ids=("phase1_process_sandbox_v1",),
+            educational_summary="educational proxy for glycol thermal integration",
+        ),
+        SandboxCatalogItemDefinition(
+            item_id="place_teg_regenerator",
+            title="TEG regenerator",
+            item_kind="unit_blueprint",
+            apply_kind="add_process",
+            default_config={
+                "unit_type": "StagewiseDistillationColumn",
+                "unit_module": "modular_simulation.unit_processes.separation.stagewise_distillation",
+                "constructor_payload": {
+                    "n_species": 2,
+                    "active_contact_height_m": 4.0,
+                    "shell_diameter_m": 1.0,
+                    "feed_stage_indices": (1,),
+                },
+            },
+            required_user_inputs=("process_id",),
+            supported_start_ids=("phase1_process_sandbox_v1",),
+            educational_summary="educational proxy for TEG regeneration",
+        ),
+        SandboxCatalogItemDefinition(
+            item_id="install_glycol_circulation_pump",
+            title="Glycol circulation pump",
+            item_kind="line_overlay",
+            apply_kind="attach_line_pump",
+            default_config={"initial_pump_speed": 80000.0},
+            required_user_inputs=("line_id", "pump_id"),
+            supported_start_ids=("phase1_process_sandbox_v1",),
+            educational_summary="line-owned educational proxy for glycol circulation",
+        ),
+        SandboxCatalogItemDefinition(
+            item_id="place_gas_gas_exchanger",
+            title="Gas-gas exchanger",
+            item_kind="unit_blueprint",
+            apply_kind="add_process",
+            default_config={
+                "unit_type": "HeatExchanger",
+                "unit_module": "modular_simulation.unit_processes.thermal.heat_exchanger",
+                "constructor_payload": {"flow_arrangement": "counter", "ua": 9000.0},
+            },
+            required_user_inputs=("process_id",),
+            supported_start_ids=("phase1_process_sandbox_v1",),
+            educational_summary="educational proxy for pre-JT cold recovery",
+        ),
+        SandboxCatalogItemDefinition(
+            item_id="install_jt_valve",
+            title="JT valve",
+            item_kind="line_overlay",
+            apply_kind="attach_line_valve",
+            default_config={
+                "minimum_open_fraction": 0.0,
+                "maximum_open_fraction": 1.0,
+                "initial_open_fraction": 1.0,
+            },
+            required_user_inputs=("line_id", "valve_id"),
+            supported_start_ids=("phase1_process_sandbox_v1",),
+            educational_summary="line-owned educational proxy for JT throttling",
+        ),
+        SandboxCatalogItemDefinition(
+            item_id="place_low_temperature_separator",
+            title="Low-temperature separator",
+            item_kind="unit_blueprint",
+            apply_kind="add_process",
+            default_config={
+                "unit_type": "FlashDrum",
+                "unit_module": "modular_simulation.unit_processes.separation.flash_drum",
+                "constructor_payload": {
+                    "thermal_mode": "isothermal",
+                    "imposed_pressure": 250000.0,
+                    "imposed_temperature": 250.0,
+                },
+            },
+            required_user_inputs=("process_id",),
+            supported_start_ids=("phase1_process_sandbox_v1",),
+            educational_summary="educational proxy for JT low-temperature separation",
+        ),
+        SandboxCatalogItemDefinition(
+            item_id="place_condensate_stabilizer",
+            title="Condensate stabilizer",
+            item_kind="unit_blueprint",
+            apply_kind="add_process",
+            default_config={
+                "unit_type": "StagewiseDistillationColumn",
+                "unit_module": "modular_simulation.unit_processes.separation.stagewise_distillation",
+                "constructor_payload": {
+                    "n_species": 2,
+                    "active_contact_height_m": 4.0,
+                    "shell_diameter_m": 1.0,
+                    "feed_stage_indices": (1,),
+                },
+            },
+            required_user_inputs=("process_id",),
+            supported_start_ids=("phase1_process_sandbox_v1",),
+            educational_summary="educational proxy for condensate stabilization",
+        ),
         SandboxCatalogItemDefinition(
             item_id="place_heater_cooler",
             title="Heater/cooler unit",
@@ -26,13 +180,8 @@ def build_sandbox_catalog() -> dict[str, SandboxCatalogItemDefinition]:
                 },
             },
             required_user_inputs=("process_id",),
-            supported_start_ids=(
-                "phase1_process_sandbox_v1",
-                "heater_flash_tutorial_start_v1",
-            ),
-            educational_summary=(
-                "single-inlet single-outlet heater/cooler with explicit outlet-temperature boundary"
-            ),
+            supported_start_ids=("heater_flash_tutorial_start_v1",),
+            educational_summary="single-inlet single-outlet heater/cooler",
         ),
         SandboxCatalogItemDefinition(
             item_id="place_flash_drum",
@@ -49,13 +198,8 @@ def build_sandbox_catalog() -> dict[str, SandboxCatalogItemDefinition]:
                 },
             },
             required_user_inputs=("process_id",),
-            supported_start_ids=(
-                "phase1_process_sandbox_v1",
-                "heater_flash_tutorial_start_v1",
-            ),
-            educational_summary=(
-                "two-product flash separator with explicit imposed pressure and temperature boundaries"
-            ),
+            supported_start_ids=("heater_flash_tutorial_start_v1",),
+            educational_summary="two-product flash separator with explicit boundaries",
         ),
         SandboxCatalogItemDefinition(
             item_id="place_heat_exchanger",
@@ -65,13 +209,10 @@ def build_sandbox_catalog() -> dict[str, SandboxCatalogItemDefinition]:
             default_config={
                 "unit_type": "HeatExchanger",
                 "unit_module": "modular_simulation.unit_processes.thermal.heat_exchanger",
-                "constructor_payload": {
-                    "flow_arrangement": "counter",
-                    "ua": 7500.0,
-                },
+                "constructor_payload": {"flow_arrangement": "counter", "ua": 7500.0},
             },
             required_user_inputs=("process_id",),
-            supported_start_ids=("phase1_process_sandbox_v1",),
+            supported_start_ids=("heater_flash_tutorial_start_v1",),
             educational_summary=(
                 "counter-current dual-stream heat exchanger with explicit UA parameter"
             ),
@@ -152,35 +293,20 @@ def build_sandbox_catalog() -> dict[str, SandboxCatalogItemDefinition]:
             title="Process line",
             item_kind="line",
             apply_kind="connect_configure_line",
-            default_config={
-                "radius_m": 0.05,
-                "length_m": 1.0,
-            },
+            default_config={"radius_m": 0.05, "length_m": 1.0},
             required_user_inputs=("source", "target"),
-            supported_start_ids=(
-                "phase1_process_sandbox_v1",
-                "heater_flash_tutorial_start_v1",
-            ),
-            educational_summary=(
-                "explicit process line with geometry-owned pressure-loss implications"
-            ),
+            supported_start_ids=("phase1_process_sandbox_v1", "heater_flash_tutorial_start_v1"),
+            educational_summary="explicit process line with geometry-owned pressure-loss implications",
         ),
         SandboxCatalogItemDefinition(
             item_id="install_line_pump",
             title="Line pump overlay",
             item_kind="line_overlay",
             apply_kind="attach_line_pump",
-            default_config={
-                "initial_pump_speed": 80000.0,
-            },
+            default_config={"initial_pump_speed": 80000.0},
             required_user_inputs=("line_id", "pump_id"),
-            supported_start_ids=(
-                "phase1_process_sandbox_v1",
-                "recycle_purge_tutorial_start_v1",
-            ),
-            educational_summary=(
-                "line-owned hydraulic boost overlay, not a stand-alone unit family"
-            ),
+            supported_start_ids=("recycle_purge_tutorial_start_v1",),
+            educational_summary="line-owned hydraulic boost overlay",
         ),
         SandboxCatalogItemDefinition(
             item_id="install_line_valve",
@@ -193,27 +319,8 @@ def build_sandbox_catalog() -> dict[str, SandboxCatalogItemDefinition]:
                 "initial_open_fraction": 1.0,
             },
             required_user_inputs=("line_id", "valve_id"),
-            supported_start_ids=(
-                "phase1_process_sandbox_v1",
-                "recycle_purge_tutorial_start_v1",
-            ),
-            educational_summary=(
-                "line-owned throttling valve using the existing runtime/control surface"
-            ),
-        ),
-        SandboxCatalogItemDefinition(
-            item_id="install_line_heat_actuator",
-            title="Line heat-actuator overlay",
-            item_kind="line_overlay",
-            apply_kind="attach_line_heat_actuator",
-            default_config={
-                "initial_heat_rate": 0.0,
-            },
-            required_user_inputs=("line_id", "heat_actuator_id"),
-            supported_start_ids=("phase1_process_sandbox_v1",),
-            educational_summary=(
-                "line-owned heat actuator overlay using the explicit heat-actuator substrate"
-            ),
+            supported_start_ids=("recycle_purge_tutorial_start_v1",),
+            educational_summary="line-owned throttling valve",
         ),
         SandboxCatalogItemDefinition(
             item_id="install_sampled_delayed_sensor",
@@ -223,19 +330,11 @@ def build_sandbox_catalog() -> dict[str, SandboxCatalogItemDefinition]:
             default_config={
                 "sensor_type": "SampledDelayedSensor",
                 "sensor_module": "modular_simulation.components.sensors.sampled_delayed_sensor",
-                "sensor_config": {
-                    "sampling_period": 0.2,
-                    "deadtime": 0.0,
-                },
+                "sensor_config": {"sampling_period": 0.2, "deadtime": 0.0},
             },
             required_user_inputs=("sensor_id", "signal_key"),
-            supported_start_ids=(
-                "phase1_process_sandbox_v1",
-                "reactor_control_tutorial_start_v1",
-            ),
-            educational_summary=(
-                "sampled and delayed measurement point for instrumentation tutorials and controller feedback"
-            ),
+            supported_start_ids=("reactor_control_tutorial_start_v1",),
+            educational_summary="sampled and delayed measurement point",
         ),
         SandboxCatalogItemDefinition(
             item_id="install_pid_controller",
@@ -245,20 +344,11 @@ def build_sandbox_catalog() -> dict[str, SandboxCatalogItemDefinition]:
             default_config={
                 "controller_type": "PIDController",
                 "controller_module": "modular_simulation.components.control_system.controllers",
-                "controller_config": {
-                    "Kp": 1.0,
-                    "Ti": 5.0,
-                    "Td": 0.0,
-                },
+                "controller_config": {"Kp": 1.0, "Ti": 5.0, "Td": 0.0},
             },
             required_user_inputs=("controller_id", "signal_key", "actuator_tag"),
-            supported_start_ids=(
-                "phase1_process_sandbox_v1",
-                "reactor_control_tutorial_start_v1",
-            ),
-            educational_summary=(
-                "standard PID controller bound through the existing runtime wiring APIs"
-            ),
+            supported_start_ids=("reactor_control_tutorial_start_v1",),
+            educational_summary="standard PID controller",
         ),
         SandboxCatalogItemDefinition(
             item_id="place_holding_tank",
@@ -272,9 +362,7 @@ def build_sandbox_catalog() -> dict[str, SandboxCatalogItemDefinition]:
             },
             required_user_inputs=("process_id",),
             supported_start_ids=(),
-            educational_summary=(
-                "single-inlet single-outlet buffer vessel for future tank-mediated material holdup and transfer"
-            ),
+            educational_summary="buffer vessel for future work",
         ),
         SandboxCatalogItemDefinition(
             item_id="place_quality_control_lab",
@@ -288,9 +376,7 @@ def build_sandbox_catalog() -> dict[str, SandboxCatalogItemDefinition]:
             },
             required_user_inputs=("process_id", "tracked_component_id"),
             supported_start_ids=(),
-            educational_summary=(
-                "process-stream quality gate that counts accepted moles toward later research progress and rejects off-spec material to disposal"
-            ),
+            educational_summary="quality gate for future work",
         ),
     ]
     return {entry.item_id: entry for entry in entries}
