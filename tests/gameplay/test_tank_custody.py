@@ -133,8 +133,12 @@ def test_supported_build_item_ids_unchanged_after_ownership_cleanup() -> None:
     from modular_simulation.gameplay import realtime_service
 
     assert tuple(realtime_service.SUPPORTED_BUILD_ITEM_IDS) == (
-        "place_heater_cooler",
-        "place_flash_drum",
+        "place_inlet_gas_separator",
+        "place_teg_contactor",
+        "place_rich_glycol_flash_tank",
+        "place_lean_rich_glycol_exchanger",
+        "place_teg_regenerator",
+        "install_glycol_circulation_pump",
         "build_process_line",
     ), (
         "SUPPORTED_BUILD_ITEM_IDS changed after ownership cleanup. "
