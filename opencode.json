@@ -1,6 +1,24 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "default_agent": "hybrid-orchestrator",
+  "mcp": {
+    "jcodemunch": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "--with",
+        "jcodemunch-mcp[watch]",
+        "jcodemunch-mcp",
+        "serve",
+        "--watcher",
+        "--watcher-path",
+        ".",
+        "--watcher-extra-ignore",
+        ".worktree/**",
+        ".worktrees/**"
+      ]
+    }
+  },
   "agent": {
     "build": {
       "disable": true

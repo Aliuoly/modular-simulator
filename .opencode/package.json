@@ -1,0 +1,8 @@
+{
+  "name": "modular-simulator-opencode-local",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@opencode-ai/plugin": "1.3.3"
+  }
+}
