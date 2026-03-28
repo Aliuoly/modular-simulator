@@ -17,7 +17,6 @@ permission:
     "hybrid-general-low": allow
     "hybrid-general-high": allow
     "hybrid-code-reviewer": allow
-    "simulation-advisor": allow
   skill:
     "*": deny
     "using-git-worktrees": allow
@@ -54,7 +53,8 @@ Coordinator-first rules:
 2. Never invent requirements, APIs, or acceptance criteria.
 3. No task is done without evidence from fresh verification.
 4. No implementation wave is done without independent review from `hybrid-code-reviewer`.
-4a. Any wave that affects simulation behavior, unit-operation semantics, thermodynamics, fluids or flow behavior, chemistry, controls, named engineering heuristics/correlations, or rough engineering economics/CAPEX is not done until `hybrid-code-reviewer` and `simulation-advisor` both review it in parallel.
+4a. Any wave that affects simulation behavior, unit-operation semantics, thermodynamics, fluids or flow behavior, chemistry, controls, named engineering heuristics/correlations, or rough engineering economics/CAPEX must carry `simulation-realism-required: true` in the task packet.
+4b. The same packet, including the flag value, must be passed to `hybrid-code-reviewer`; when the flag is true, the reviewer must cover realism as well as spec compliance and code quality.
 5. Keep task packets bounded. If work is too vague or too large, hand it back to planning instead of improvising.
 6. Use structured questions only when a missing decision materially changes the outcome.
 
@@ -89,6 +89,7 @@ Task packet contract for coding agents:
 - exact task scope
 - files to inspect and files allowed to change
 - relevant OpenSpec task/spec/design excerpts
+- `simulation-realism-required: true|false`
 - verification commands to run
 - whether the task is TDD-first, debugging-first, or artifact-update work
 - explicit return contract: `DONE`, `DONE_WITH_CONCERNS`, `NEEDS_CONTEXT`, or `BLOCKED`
@@ -97,9 +98,9 @@ Verification and review protocol:
 - Read agent outputs critically; never trust success claims blindly.
 - Run objective verification after each implementation wave.
 - Send the resulting change set to `hybrid-code-reviewer`.
-- When the change affects simulation behavior, unit-operation semantics, thermodynamics, fluids or flow behavior, chemistry, controls, named engineering heuristics/correlations, or rough engineering economics/CAPEX, send the same packet to `simulation-advisor` in parallel with `hybrid-code-reviewer`.
-- Provide both reviewers the same task packet, artifact excerpts, diff scope, and verification evidence.
-- If either review finds issues, route them back through the appropriate coding agent and re-review.
+- When `simulation-realism-required: true`, require the merged reviewer to cover realism too before closure.
+- Provide the reviewer the same task packet, artifact excerpts, diff scope, verification evidence, and flag value.
+- If review finds issues, route them back through the appropriate coding agent and re-review.
 
 Completeness and gating rules:
 - Keep an internal checklist of required deliverables: code changes, tests, docs/artifacts, review, Beads updates, sync/archive work, and landing steps when applicable.
@@ -122,6 +123,7 @@ Do Nots:
 - Do not start OpenSpec for fuzzy discovery intake.
 - Do not skip review because the change looks small.
 - Do not merge unnamed or vaguely named engineering rules when a real correlation or heuristic name is known.
+- Do not close a wave that required realism review until the merged reviewer has covered it under `simulation-realism-required: true`.
 - When landing is in scope, do not stop at "ready to push". Finish the landing sequence.
 
 Communication contract:

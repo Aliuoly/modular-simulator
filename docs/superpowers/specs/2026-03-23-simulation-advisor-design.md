@@ -1,14 +1,14 @@
-# Simulation Advisor Design
+# Simulation Advisor Design (retired approach)
 
 ## Goal
 
-Add a repo-local OpenCode specialist that reviews plans and implementation for simulation realism, named engineering heuristics, and educational transfer value, then wire it into the existing hybrid planning and execution workflow.
+This note records the retired standalone advisor approach. The active workflow now merges simulation-realism review into `hybrid-code-reviewer` behind the `simulation-realism-required` task-packet flag.
 
 ## Scope
 
 In scope:
-- a standalone read-only agent for realism review and named-correlation guidance
-- planner and orchestrator workflow updates so the specialist is used in the right review phases
+- merged realism review guidance inside `hybrid-code-reviewer`
+- planner and orchestrator workflow updates for the `simulation-realism-required` flag
 - explicit guidance on named equations, empirical correlations, and accepted heuristics
 
 Out of scope:
@@ -18,9 +18,9 @@ Out of scope:
 
 ## Recommended Approach
 
-Create a standalone `simulation-advisor` subagent instead of folding realism review into `hybrid-code-reviewer`.
+Fold realism review into `hybrid-code-reviewer` and gate it with `simulation-realism-required: true` only when the task packet demands it.
 
-This keeps code-quality review separate from domain-realism review while still letting the orchestrator synthesize both results. It also matches GPT-5.4-led manager/specialist guidance: use compact, bounded specialists with clear output contracts and run them in parallel when the work is independently reviewable.
+This keeps the live review surface compact while preserving the ability to require realism review for simulation-affecting work.
 
 ## Review Philosophy
 
@@ -30,9 +30,9 @@ This keeps code-quality review separate from domain-realism review while still l
 - allow softer realism debt only when the current result remains educationally honest
 - never emit a `Speculative` category; guidance must be `Canonical`, `Accepted heuristic`, or `Unacceptable`
 
-## Advisor Responsibilities
+## Reviewer Responsibilities
 
-The agent should:
+When the flag is true, the reviewer should:
 
 1. review plans, prompts, specs, and code for physical, thermodynamic, fluid-dynamic, chemistry, controls, and rough-CAPEX realism
 2. suggest accepted shortcut models when they preserve the intended educational tradeoffs
@@ -56,36 +56,28 @@ The agent should:
 
 ### Planning
 
-- `hybrid-planner` should be allowed to call `simulation-advisor`
-- for plans affecting simulation behavior, unit-operation semantics, thermodynamics, fluids or flow behavior, chemistry, controls, named engineering heuristics/correlations, or rough engineering economics/CAPEX, `hybrid-planner` should invoke `hybrid-plan-reviewer` and `simulation-advisor` in parallel before declaring the pack ready
-- both reviewers should receive the same relevant artifact excerpts and review scope
-- `tasks.md` should encode the downstream execution gate that requires parallel realism and code review when the implementation touches simulation semantics or engineering economics
+- `hybrid-planner` should encode `simulation-realism-required: true` for plans affecting simulation behavior, unit-operation semantics, thermodynamics, fluids or flow behavior, chemistry, controls, named engineering heuristics/correlations, or rough engineering economics/CAPEX
+- `tasks.md` should encode the downstream execution gate that requires the flag and merged realism/code review when the implementation touches simulation semantics or engineering economics
 
 ### Implementation Review
 
-- `hybrid-orchestrator` should be allowed to call `simulation-advisor`
-- any implementation wave affecting simulation behavior, unit-operation semantics, thermodynamics, fluids or flow behavior, chemistry, controls, named engineering heuristics/correlations, or rough engineering economics/CAPEX should be sent to `hybrid-code-reviewer` and `simulation-advisor` in parallel
-- both reviewers should receive the same bounded packet, diff scope, and verification evidence
-- either review may block closure
+- `hybrid-orchestrator` should pass `simulation-realism-required: true|false` to `hybrid-code-reviewer`
+- any implementation wave with the flag set true should not close until the reviewer has covered realism, spec compliance, and code quality
+- the reviewer should receive the same bounded packet, diff scope, verification evidence, and flag value
+- the reviewer may block closure
 
-## Output Contract
+## Historical Output Notes
 
-The advisor should return:
+This section is retired guidance from the standalone advisor design and does not define the live `hybrid-code-reviewer` contract.
 
-1. `VERDICT`
-2. `Transfer assessment`
-3. `What stays realistic`
-4. `Unacceptable issues`
-5. `Accepted heuristics and named correlations`
-6. `Deferred realism debt`
-7. `Beads follow-ups`
-8. `Next action`
+- The live reviewer format is owned by `.opencode/agents/hybrid-code-reviewer.md`.
+- Do not treat the list below as authoritative for current output.
 
-This keeps the review compact and directly actionable for GPT-5.4 manager-style orchestration.
+Historical output sketch: retired alongside the standalone advisor and intentionally omitted here to avoid defining a second live contract.
 
 ## Files To Update
 
-- `.opencode/agents/simulation-advisor.md` - new realism-review specialist prompt
+- `.opencode/agents/simulation-advisor.md` - retired standalone path
 - `.opencode/agents/hybrid-planner.md` - planning-stage integration and naming guidance
 - `.opencode/agents/hybrid-orchestrator.md` - parallel implementation-review integration
 - `AGENTS.md` - repo-level workflow guidance and naming convention reminder
