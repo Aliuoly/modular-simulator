@@ -5,6 +5,8 @@ When user input is genuinely required and the `question` tool is available, use 
 ## Hybrid OpenCode Workflow
 
 - Prefer the repo-local OpenCode agents: `hybrid-planner`, `hybrid-plan-reviewer`, `hybrid-orchestrator`, `hybrid-explore`, `hybrid-general-low`, `hybrid-general-high`, `hybrid-code-reviewer`, and `simulation-advisor`.
+- For implementation work, create new git worktrees via the repo-local OpenCode `create_worktree` tool (plugin) instead of ad hoc `git worktree add` instructions.
+- If `create_worktree` cannot complete full setup (worktree + jCodeMunch bootstrap), treat that as a blocker and stop instead of continuing with a partially prepared worktree.
 - Intake lifecycle is Beads-first:
   - If no suitable Beads goal exists, create one top-level Beads goal as the overall container.
   - If a suitable goal already exists, add new work under that goal instead of creating another top-level goal.
