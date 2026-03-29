@@ -9,7 +9,7 @@
 
 ModularSimulator is not choosing a brand-new simulator architecture from scratch; it is deciding how to stabilize a brownfield, realtime-capable process-simulation backend without breaking the existing session, gameplay, and HTTP-facing substrate. Across the research, the consistent conclusion is that experts do **not** solve this class of problem by adding more retries to a sequential split-step loop. They add stronger coupled-state semantics, explicit residual ownership, better initialization, sparse Jacobian-aware numerics, and diagnostics that explain why a solve was accepted, degraded, or rejected.
 
-The recommended direction for milestone v1.0 is a **hybrid-coupled kernel**: keep the current outer orchestrator, compile lifecycle, and `PlantBackendSession` facade, but insert a new kernel coordinator that can route between legacy split-step, hybrid coupled correction on strongly interacting regions, and—only later if evidence demands it—a whole-flowsheet coupled solve. In practice that means staying on Python 3.13 and SciPy, moving research and prototype work toward `BDF`/`Radau`, sparse Jacobians/linear solves, bounded residual correction, warm starts, and deterministic benchmark telemetry before any major solver-stack rewrite.
+The recommended direction for milestone v1.0 is a **hybrid-coupled kernel**: keep the current outer orchestrator, compile lifecycle, and `PlantBackendSession` facade, but insert a new kernel coordinator that can route between legacy split-step, hybrid coupled correction on strongly interacting regions, and—only later if evidence demands it—a whole-flowsheet coupled solve. In practice that means staying on Python 3.13 while treating SciPy as the first disciplined baseline rather than the assumed final stack: prototype with sparse Jacobians/linear solves, bounded residual correction, warm starts, and deterministic benchmark telemetry first; then evaluate **official SUNDIALS via `sundials4py`** as the first serious post-SciPy substrate and reserve **PETSc/petsc4py** for a later escalation if benchmark evidence shows the kernel needs PETSc-level sparse nonlinear machinery.
 
 The main risks are architectural self-deception and operational regressions: preserving stale unit/network lag inside a “new” kernel, treating algebraic closure as explicit state, hiding instability with clamps, failing at restart or live edits, and losing realtime performance by ignoring sparsity and acceptance semantics. The mitigation is phased: first define coupled-state ownership, invariants, and solver diagnostics; then build pluggable kernel infrastructure and hybrid correction on the worst subgraphs; then decide whether whole-flowsheet or DAE-oriented escalation is actually justified by benchmark evidence.
 
@@ -17,16 +17,17 @@ The main risks are architectural self-deception and operational regressions: pre
 
 ### Recommended Stack
 
-The stack recommendation is conservative on platform choice and aggressive on numerical discipline. Keep the existing Python backend and evolve the kernel in place rather than introducing a parallel engine. The strongest near-term upgrades are all inside SciPy: use stiff implicit methods (`BDF`/`Radau`) instead of defaulting research to `LSODA`, keep Jacobians sparse end-to-end, use bounded nonlinear correction for algebraic closure, and add telemetry plus benchmark fixtures so kernel directions are compared on representative flowsheets rather than intuition.
+The stack recommendation is conservative on platform choice and aggressive on numerical discipline. Keep the existing Python backend and evolve the kernel in place rather than introducing a parallel engine. The strongest near-term upgrades are still inside SciPy, but only as a disciplined baseline: use stiff implicit methods (`BDF`/`Radau`) instead of defaulting research to `LSODA`, keep Jacobians sparse end-to-end, use bounded nonlinear correction for algebraic closure, and add telemetry plus benchmark fixtures so kernel directions are compared on representative flowsheets rather than intuition. If that upgraded baseline still fails realtime or stability targets, the first serious post-SciPy move is **`sundials4py`**, with **PETSc/petsc4py** held in reserve for a later sparse-nonlinear-systems escalation.
 
 **Core technologies:**
 - **Python 3.13.x**: retain the existing runtime substrate — avoids a costly migration unrelated to the milestone.
-- **SciPy `solve_ivp` with `BDF`/`Radau` (1.17.x)**: primary stiff stepping path — lowest-friction move beyond the current split-step behavior.
+- **SciPy `solve_ivp` with `BDF`/`Radau` (1.17.x)**: disciplined stiff-stepping baseline — necessary evidence step, not assumed end-state.
 - **SciPy sparse + sparse linear algebra (1.17.x)**: sparse Jacobian assembly and linear solves — critical because the current hydraulic path throws away sparsity by densifying.
 - **SciPy `least_squares` + `Bounds` (1.17.x)**: bounded correction and initialization solves — needed to keep candidate states physically feasible.
 - **Solver telemetry + deterministic benchmark harnesses**: compare split, hybrid, and coupled directions on canonical flowsheets — required for roadmap decisions.
 - **Numba 0.64.x**: profile-guided acceleration only after the kernel interfaces stabilize.
-- **`sundials4py` 7.6.0 beta**: isolated research spike only if evidence shows the problem is truly DAE-dominated.
+- **`sundials4py` 7.6.0 beta**: first serious post-SciPy substrate for CVODE/IDA/KINSOL-class ODE, DAE, and nonlinear initialization paths if benchmark evidence justifies leaving SciPy.
+- **PETSc + `petsc4py`**: high-ceiling escalation path if representative flowsheets prove the kernel needs custom preconditioning, matrix-free operators, or deeper sparse nonlinear solve control than SciPy/SUNDIALS can provide.
 
 ### Expected Features
 
@@ -86,7 +87,7 @@ Based on research, suggested phase structure:
 ### Phase 2: Hybrid Kernel Substrate in the Existing Runtime
 **Rationale:** Once the contract is defined, the next dependency is infrastructure: the simulator needs pluggable kernel insertion points, reversible snapshots, compile-time ordering/partition metadata, and sparse numerical paths before any serious hybrid correction can be trusted.
 **Delivers:** `CoupledKernelCoordinator`, `KernelStateSnapshot` / `KernelStateVector`, adapter interfaces for units, extended compile metadata, sparse hydraulic/coupled solve plumbing, and warm-start support.
-**Uses:** Python 3.13, SciPy sparse linear algebra, `least_squares`, and initial `BDF`/`Radau` experiments where appropriate.
+**Uses:** Python 3.13, SciPy sparse linear algebra, `least_squares`, and initial `BDF`/`Radau` experiments where appropriate, while defining the adapter seam needed for later `sundials4py` comparison.
 **Implements:** The architecture’s runtime-layer insertion points without changing `PlantBackendSession`.
 
 ### Phase 3: Hybrid-Coupled Pilot on Strongly Coupled Regions
@@ -101,10 +102,10 @@ Based on research, suggested phase structure:
 **Addresses:** Warm starts, bounded runtime mutation, gameplay-safe integration, and migration-readiness.
 **Avoids:** Restart failures, graph-revision races, and nondeterministic live-edit behavior.
 
-### Phase 5: Optional Whole-Flowsheet / DAE Escalation Spike
+### Phase 5: Optional Whole-Flowsheet / Non-SciPy Escalation Spike
 **Rationale:** Only do this if Phases 3-4 show that hybrid-coupled correction still fails key benchmark flowsheets or cannot meet stability/performance targets. This is an escalation path, not the default roadmap.
-**Delivers:** Adapter-isolated whole-flowsheet residual solve or DAE feasibility prototype, benchmarked against the same scenarios and diagnostics.
-**Uses:** SciPy `BDF`/`Radau` or, if clearly warranted, a constrained `sundials4py` spike.
+**Delivers:** Adapter-isolated whole-flowsheet residual solve or DAE feasibility prototype, benchmarked against the same scenarios and diagnostics, plus a post-SciPy stack comparison when solver-core limits remain dominant.
+**Uses:** `sundials4py` first for CVODE/IDA/KINSOL-class capability, with PETSc/petsc4py reserved for a heavier sparse nonlinear systems spike if SUNDIALS is still insufficient.
 **Implements:** The architecture’s future extension path without committing the product to a full rewrite prematurely.
 
 ### Phase Ordering Rationale
@@ -119,7 +120,7 @@ Based on research, suggested phase structure:
 
 Phases likely needing deeper research during planning:
 - **Phase 4:** live-edit-safe reinitialization, checkpoint consistency, and mutation semantics are tightly coupled to repo-specific runtime behavior and deserve focused planning.
-- **Phase 5:** whole-flowsheet/DAE escalation should trigger deeper solver and initialization research before commitment because the cost and compatibility risk are high.
+- **Phase 5:** whole-flowsheet/non-SciPy escalation should trigger deeper solver, initialization, and deployment-risk research before commitment because the cost and compatibility risk are high.
 
 Phases with standard patterns (skip research-phase):
 - **Phase 1:** structural validation, acceptance diagnostics, invariants, and solver telemetry are well supported by the existing research and official references.
@@ -139,8 +140,9 @@ Phases with standard patterns (skip research-phase):
 
 ### Gaps to Address
 
-- **Representative benchmark set is still implicit**: define the exact canonical flowsheets and acceptance budgets early in requirements so comparisons are reproducible.
+- **Representative benchmark set is still implicit**: define the exact canonical flowsheets and acceptance budgets early in requirements so SciPy, SUNDIALS, and any later alternatives are compared fairly.
 - **Hybrid vs whole-flowsheet threshold is not yet quantified**: planning should define the benchmark evidence that would justify escalation beyond hybrid.
+- **SciPy vs non-SciPy escalation threshold is not yet quantified**: planning should define the benchmark evidence that justifies moving from sparse/warm-start SciPy to `sundials4py`, and from SUNDIALS to PETSc if needed.
 - **Differential/algebraic partitioning for current units is not yet enumerated**: this should become an explicit requirements artifact, not an implementation detail.
 - **Runtime mutation classes need formal policy**: distinguish parameter-only edits, structure-changing edits, and restart-required edits during roadmap planning.
 - **Solver-status exposure for external consumers is unresolved**: define what gameplay/API surfaces must know about degraded, retried, or failed steps.
