@@ -28,7 +28,13 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Candidate kernels either publish one accepted coupled plant snapshot or reject the step without exposing partially updated unit and connection state.
   3. Under-specified, over-specified, or structurally inconsistent flowsheet states are rejected before runtime stepping begins.
   4. Accepted states satisfy physical feasibility guards, and any negative inventory, invalid composition normalization, or similar non-physical condition is surfaced as an explicit rejection reason.
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Create the Python 3.13 test substrate, shared failure taxonomy contracts, and Phase 1 test modules.
+- [ ] 01-02-PLAN.md — Route structural compile/barrier/hydraulic failures into explicit pre-step structural rejections.
+- [ ] 01-03-PLAN.md — Add runtime-step failure classification, replay-hash evidence, and scenario-matrix coverage.
+- [ ] 01-04-PLAN.md — Implement whole-plant macro-step acceptance transaction and plant-level physical acceptance guards.
 
 ### Phase 2: Kernel Adapter, Warm Starts & Delay State
 **Goal**: Team can evaluate coupled kernel directions through a reusable adapter seam that preserves initialization, warm starts, and transport/deadtime semantics.
@@ -71,7 +77,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Failure Semantics & Acceptance Gates | 0/TBD | Not started | - |
+| 1. Failure Semantics & Acceptance Gates | 0/4 | Not started | - |
 | 2. Kernel Adapter, Warm Starts & Delay State | 0/TBD | Not started | - |
 | 3. Benchmark Harness & Disciplined Baseline Comparison | 0/TBD | Not started | - |
 | 4. Hybrid Decision Gate & Migration Roadmap | 0/TBD | Not started | - |
