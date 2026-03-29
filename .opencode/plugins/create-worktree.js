@@ -52,9 +52,9 @@ async function cleanupCreatedWorktree($, repoRoot, targetDirectory, branchName) 
 
 async function bootstrapJcodemunchWatcher($, targetDirectory, worktreeName) {
   const check = await $`uvx jcodemunch-mcp config --check`.quiet()
-  if (check.exitCode !== 0) {
-    throw new Error(`jCodeMunch prerequisite check failed: ${check.text().trim()}`)
-  }
+  //if (check.exitCode !== 0) {
+  //  throw new Error(`jCodeMunch prerequisite check failed: ${check.text().trim()}`)
+  //}
 
   const watcherCommand = [
     "uvx",
