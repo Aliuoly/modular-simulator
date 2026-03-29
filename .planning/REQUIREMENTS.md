@@ -65,34 +65,32 @@ Deferred until after the milestone establishes the kernel direction and benchmar
 
 ## Traceability
 
-To be completed during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| KERN-01 | — | Pending |
-| KERN-02 | — | Pending |
-| KERN-03 | — | Pending |
-| KERN-04 | — | Pending |
-| KERN-05 | — | Pending |
-| PERF-01 | — | Pending |
-| PERF-02 | — | Pending |
-| PERF-03 | — | Pending |
-| PERF-04 | — | Pending |
-| PERF-05 | — | Pending |
-| SOLV-01 | — | Pending |
-| SOLV-02 | — | Pending |
-| SOLV-03 | — | Pending |
-| SOLV-04 | — | Pending |
-| SOLV-05 | — | Pending |
-| DELY-01 | — | Pending |
-| DELY-02 | — | Pending |
-| DELY-03 | — | Pending |
-| DELY-04 | — | Pending |
+| KERN-01 | Phase 1 | Pending |
+| KERN-02 | Phase 1 | Pending |
+| KERN-03 | Phase 1 | Pending |
+| KERN-04 | Phase 2 | Pending |
+| KERN-05 | Phase 1 | Pending |
+| PERF-01 | Phase 3 | Pending |
+| PERF-02 | Phase 3 | Pending |
+| PERF-03 | Phase 3 | Pending |
+| PERF-04 | Phase 3 | Pending |
+| PERF-05 | Phase 4 | Pending |
+| SOLV-01 | Phase 3 | Pending |
+| SOLV-02 | Phase 2 | Pending |
+| SOLV-03 | Phase 3 | Pending |
+| SOLV-04 | Phase 4 | Pending |
+| SOLV-05 | Phase 4 | Pending |
+| DELY-01 | Phase 2 | Pending |
+| DELY-02 | Phase 2 | Pending |
+| DELY-03 | Phase 2 | Pending |
+| DELY-04 | Phase 3 | Pending |
 
 **Coverage:**
 - v1 requirements: 19 total
-- Mapped to phases: 0
-- Unmapped: 19
+- Mapped to phases: 19
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-03-29*
