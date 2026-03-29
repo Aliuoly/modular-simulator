@@ -123,7 +123,7 @@ class _FakeNetwork:
     def resume_from_snapshot(self, *, snapshot: object) -> None:
         self._snapshot = snapshot  # type: ignore[assignment]
 
-    def get_observability_snapshot(self) -> Mapping[str, object]:
+    def get_observability_snapshot(self) -> Mapping[str, Any]:
         compiled = self._compiled
         graph_revision = compiled.graph_revision if compiled is not None else None
         queued_ids = tuple(f"rq_{i + 1:04d}" for i in range(len(self.queued)))
@@ -800,7 +800,7 @@ class TestObservabilitySnapshot:
         """get_observability_snapshot returns a Mapping."""
         from collections.abc import Mapping as MappingABC
 
-        snapshot = session.get_observability_snapshot()
+        snapshot: Mapping[str, Any] = session.get_observability_snapshot()
         assert isinstance(snapshot, MappingABC)
 
     def test_get_observability_snapshot_top_level_keys_are_frozen(
@@ -808,7 +808,7 @@ class TestObservabilitySnapshot:
         session: PlantBackendSession,
     ) -> None:
         """Snapshot must contain exactly the first-slice top-level keys."""
-        snapshot = session.get_observability_snapshot()
+        snapshot: Mapping[str, Any] = session.get_observability_snapshot()
 
         assert set(snapshot.keys()) == {
             "schema",
@@ -842,7 +842,7 @@ class TestObservabilitySnapshot:
         session: PlantBackendSession,
     ) -> None:
         """schema field is a non-empty string contract marker."""
-        snapshot = session.get_observability_snapshot()
+        snapshot: Mapping[str, Any] = session.get_observability_snapshot()
 
         assert isinstance(snapshot["schema"], str)
         assert snapshot["schema"]
@@ -854,7 +854,7 @@ class TestObservabilitySnapshot:
         """runtime section has simulation_time_s, macro_step_index, macro_step_active."""
         from collections.abc import Mapping as MappingABC
 
-        snapshot = session.get_observability_snapshot()
+        snapshot: Mapping[str, Any] = session.get_observability_snapshot()
         runtime = snapshot["runtime"]
 
         assert isinstance(runtime, MappingABC)
@@ -946,7 +946,7 @@ class TestObservabilitySnapshot:
             "stage_col/bottoms_mole_fraction/7732-18-5": 0.25,
         }
 
-        def _snapshot_with_runtime_stagewise_values() -> Mapping[str, object]:
+        def _snapshot_with_runtime_stagewise_values() -> Mapping[str, Any]:
             return {
                 "schema": "observability/v1",
                 "graph_revision": "rev_123",
@@ -969,7 +969,7 @@ class TestObservabilitySnapshot:
 
         fake_network.get_observability_snapshot = _snapshot_with_runtime_stagewise_values  # type: ignore[method-assign]
 
-        snapshot = session.get_observability_snapshot()
+        snapshot: Mapping[str, Any] = session.get_observability_snapshot()
         process_state_values = snapshot["observables"]["process_state_values"]
 
         assert process_state_values == expected_process_state_values
@@ -1020,7 +1020,7 @@ class TestObservabilitySnapshot:
             "stage_col/feed_2/mole_fraction/7732-18-5": 0.6,
         }
 
-        def _snapshot_with_runtime_stagewise_values() -> Mapping[str, object]:
+        def _snapshot_with_runtime_stagewise_values() -> Mapping[str, Any]:
             return {
                 "schema": "observability/v1",
                 "graph_revision": "rev_123",
@@ -1043,7 +1043,7 @@ class TestObservabilitySnapshot:
 
         fake_network.get_observability_snapshot = _snapshot_with_runtime_stagewise_values  # type: ignore[method-assign]
 
-        snapshot = session.get_observability_snapshot()
+        snapshot: Mapping[str, Any] = session.get_observability_snapshot()
         process_state_values = snapshot["observables"]["process_state_values"]
 
         assert process_state_values == expected_process_state_values

@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import dataclasses
 import uuid
-from typing import TYPE_CHECKING, Mapping, Sequence
+from typing import TYPE_CHECKING, Mapping, Sequence, TypedDict
 
 from modular_simulation.connection.domain.domain_contracts import (
     CommandEnvelope,
@@ -124,6 +124,32 @@ class PreviewResult:
 
     validation_errors: tuple[str, ...] = ()
     """Human-readable validation error descriptions, if any."""
+
+
+class _TopologyNode(TypedDict):
+    node_id: str
+    ports: list[str]
+
+
+class _TopologyEdgeEndpoint(TypedDict):
+    node_id: str
+    port_name: str
+
+
+class _TopologyEdge(TypedDict):
+    edge_id: str
+    source: _TopologyEdgeEndpoint
+    target: _TopologyEdgeEndpoint
+
+
+class _TopologySnapshot(TypedDict):
+    nodes: list[_TopologyNode]
+    edges: list[_TopologyEdge]
+
+
+class _TopologyEnvelope(TypedDict):
+    graph_revision: str | None
+    topology: _TopologySnapshot | None
 
 
 # ---------------------------------------------------------------------------
@@ -804,7 +830,7 @@ class PlantBackendSession:
 
     # -- topology query -----------------------------------------------------
 
-    def get_topology(self) -> dict[str, object]:
+    def get_topology(self) -> _TopologyEnvelope:
         """Return a serialisable snapshot of the current topology.
 
         Contains the ``graph_revision`` and the compiled topology graph
@@ -815,7 +841,7 @@ class PlantBackendSession:
             return {"graph_revision": None, "topology": None}
 
         topo = compiled.topology
-        nodes: list[dict[str, object]] = []
+        nodes: list[_TopologyNode] = []
         for node_id in topo.node_ids:
             port_names = self._network.process_ports(process_id=node_id)
             nodes.append(
@@ -825,7 +851,7 @@ class PlantBackendSession:
                 }
             )
 
-        edges: list[dict[str, object]] = []
+        edges: list[_TopologyEdge] = []
         for edge in topo.edges:
             edges.append(
                 {

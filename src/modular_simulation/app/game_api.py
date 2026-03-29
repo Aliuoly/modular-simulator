@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
-from typing import Mapping, cast
+from typing import Mapping, TypedDict, cast
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -25,6 +25,28 @@ class _ApiError(Exception):
         self.error_code = error_code
         self.message = message
         self.status_code = status_code
+
+
+class _CreateSessionPayload(TypedDict):
+    mode_id: str
+    simulation_dt_s: float | int
+
+
+class _QuantityPayload(TypedDict):
+    quantity_mol: float | int
+
+
+class _BuyFeedPayload(_QuantityPayload):
+    material_id: str
+
+
+class _SellProductPayload(_QuantityPayload):
+    product_id: str
+
+
+class _SubmitResearchPayload(TypedDict):
+    research_id: str
+    submitted_quantities_by_product_id: Mapping[str, float]
 
 
 def _status_for_error_code(error_code: str) -> int:
@@ -90,9 +112,12 @@ def create_app() -> FastAPI:
                 message="simulation_dt_s must be numeric when provided",
                 status_code=400,
             )
+        validated_payload = cast(_CreateSessionPayload, payload)
         created = create_session(
-            mode_id=cast(str, mode_id),
-            simulation_dt_s=None if simulation_dt_s is None else float(simulation_dt_s),
+            mode_id=validated_payload["mode_id"],
+            simulation_dt_s=None
+            if simulation_dt_s is None
+            else float(validated_payload["simulation_dt_s"]),
         )
         return _as_payload(created)
 
@@ -140,10 +165,11 @@ def create_app() -> FastAPI:
                 message="quantity_mol must be numeric",
                 status_code=400,
             )
+        validated_payload = cast(_BuyFeedPayload, payload)
         accepted = buy_feed(
             session_id=session_id,
-            material_id=material_id,
-            quantity_mol=float(quantity_mol),
+            material_id=validated_payload["material_id"],
+            quantity_mol=float(validated_payload["quantity_mol"]),
         )
         return _as_payload(accepted)
 
@@ -163,10 +189,11 @@ def create_app() -> FastAPI:
                 message="quantity_mol must be numeric",
                 status_code=400,
             )
+        validated_payload = cast(_SellProductPayload, payload)
         accepted = sell_product(
             session_id=session_id,
-            product_id=product_id,
-            quantity_mol=float(quantity_mol),
+            product_id=validated_payload["product_id"],
+            quantity_mol=float(validated_payload["quantity_mol"]),
         )
         return _as_payload(accepted)
 
@@ -186,10 +213,13 @@ def create_app() -> FastAPI:
                 message="submitted_quantities_by_product_id must be an object",
                 status_code=400,
             )
+        validated_payload = cast(_SubmitResearchPayload, payload)
         accepted = submit_research(
             session_id=session_id,
-            research_id=research_id,
-            submitted_quantities_by_product_id=cast(Mapping[str, float], submitted),
+            research_id=validated_payload["research_id"],
+            submitted_quantities_by_product_id=cast(
+                Mapping[str, float], validated_payload["submitted_quantities_by_product_id"]
+            ),
         )
         return _as_payload(accepted)
 
