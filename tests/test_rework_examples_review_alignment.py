@@ -140,7 +140,7 @@ def test_curated_easy3_source_uses_add_sink_for_exchanger_outlets() -> None:
 
 
 def test_readme_and_catalog_agree_on_canonical_examples() -> None:
-    """Regression: README canonical section and catalog 'keep' rows must list the same four examples,
+    """Regression: README canonical section and catalog 'keep' rows must list the same three examples,
     and each canonical example must be classified as 'keep' (not 'reference-only' or 'remove') in the
     catalog inventory table.
 
@@ -157,7 +157,6 @@ def test_readme_and_catalog_agree_on_canonical_examples() -> None:
         "examples/unit_process_flowsheet/easy_2_heater_flash.py",
         "examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py",
         "examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py",
-        "examples/connection_layer/two_tank_reaction_comparison.py",
     }
 
     # --- Derive README canonical set ---
@@ -249,15 +248,14 @@ def test_catalog_migration_map_covers_deprecated_entry_points() -> None:
         "examples/unit_process_flowsheet/easy_2_heater_flash.py",
         "examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py",
         "examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py",
-        "examples/connection_layer/two_tank_reaction_comparison.py",
     )
 
     deprecated_to_expected_replacement = {
         "examples/dynamic_api_cli/minimal_command_quickstart.py": "examples/unit_process_flowsheet/easy_2_heater_flash.py",
-        "examples/dynamic_api_cli/minimal_control_loop_save_load.py": "examples/connection_layer/two_tank_reaction_comparison.py",
+        "examples/dynamic_api_cli/minimal_control_loop_save_load.py": "examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py",
         "examples/dynamic_api_cli/minimal_spec_quickstart.py": "examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py",
         "examples/unit_process_flowsheet/flowsheet_demo.py": "examples/unit_process_flowsheet/easy_2_heater_flash.py",
-        "examples/van_de_vusse_cstr/run_simulation.py": "examples/connection_layer/two_tank_reaction_comparison.py",
+        "examples/van_de_vusse_cstr/run_simulation.py": "examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py",
     }
 
     for deprecated, expected_replacement in deprecated_to_expected_replacement.items():
@@ -275,3 +273,30 @@ def test_catalog_migration_map_covers_deprecated_entry_points() -> None:
         assert expected_replacement in known_canonical_replacements, (
             f"Expected replacement '{expected_replacement}' is not in the known canonical set"
         )
+
+
+def test_dynamic_api_cli_examples_are_removed_from_user_facing_tree() -> None:
+    removed_paths = (
+        ROOT / "examples/dynamic_api_cli/minimal_command_quickstart.py",
+        ROOT / "examples/dynamic_api_cli/minimal_control_loop_save_load.py",
+        ROOT / "examples/dynamic_api_cli/minimal_spec_quickstart.py",
+        ROOT / "examples/dynamic_api_cli/sandbox_backend_minimal.py",
+    )
+
+    for path in removed_paths:
+        assert not path.exists(), f"Deprecated dynamic API/CLI example must be removed: {path}"
+
+
+def test_public_cli_module_no_longer_exports_modular_cli() -> None:
+    import modular_simulation.cli as cli_package
+
+    assert not hasattr(cli_package, "ModularCli")
+
+
+def test_catalog_positions_two_tank_as_proof_reference_not_canonical() -> None:
+    catalog = (ROOT / "docs/examples_catalog.md").read_text(encoding="utf-8")
+
+    assert "`examples/connection_layer/two_tank_reaction_comparison.py` | keep |" not in catalog
+    assert (
+        "`examples/connection_layer/two_tank_reaction_comparison.py` | reference-only |" in catalog
+    )

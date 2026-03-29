@@ -11,10 +11,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from examples.connection_layer.two_tank_reaction_comparison import run_demo as run_two_tank_demo
-from examples.dynamic_api_cli.minimal_command_quickstart import run_demo as run_command_demo
-from examples.dynamic_api_cli.minimal_control_loop_save_load import (
-    run_demo as run_control_and_checkpoint_demo,
-)
 from examples.unit_process_flowsheet.complex_6_ammonia_recycle_loop import (
     _build_flowsheet as build_ammonia_loop_flowsheet,
     run_example as run_ammonia_loop_example,
@@ -44,22 +40,6 @@ from modular_simulation.gameplay.sandbox_session import (
 )
 
 
-def test_quickstart_two_process_command_path_smoke() -> None:
-    command_result = run_command_demo()
-    command_applied = cast(tuple[str, ...], command_result["command_applied"])
-    api_applied = cast(tuple[str, ...], command_result["api_applied"])
-    process_ids = cast(tuple[str, ...], command_result["process_ids"])
-    assert command_applied == ("rq_0001", "rq_0002")
-    assert api_applied == (
-        "rq_0003",
-        "rq_0004",
-        "rq_0005",
-        "rq_0006",
-    )
-    assert "reactor_b" in process_ids
-    assert "mix_junction" not in process_ids
-
-
 def test_van_de_vusse_cstr_run_demo_smoke() -> None:
     result = run_van_de_vusse_demo()
     duration_hours = cast(float, result["duration_hours"])
@@ -76,24 +56,6 @@ def test_van_de_vusse_cstr_run_demo_smoke() -> None:
     assert 0.0 <= final_cb < 5.1
     assert 0.0 < final_tk < final_t < 300.0
     assert 10.0 <= final_tj_in <= 110.0
-
-
-def test_valve_sensor_controller_loop_smoke() -> None:
-    control_result = run_control_and_checkpoint_demo()
-    heater_power = cast(float, control_result["heater_power"])
-    heat_actuator_rate = cast(float, control_result["heat_actuator_rate"])
-    applied_request_ids = cast(tuple[str, ...], control_result["applied_request_ids"])
-    assert heater_power == 0.0
-    assert heat_actuator_rate > 0.0
-    assert len(applied_request_ids) == 14
-
-
-def test_save_load_continue_api_and_cli_smoke() -> None:
-    result = run_control_and_checkpoint_demo()
-    api_round_trip_ok = cast(bool, result["api_round_trip_ok"])
-    cli_round_trip_ok = cast(bool, result["cli_round_trip_ok"])
-    assert api_round_trip_ok is True
-    assert cli_round_trip_ok is True
 
 
 def test_curated_heater_flash_example_smoke() -> None:

@@ -2,6 +2,8 @@
 
 This catalog intentionally keeps the canonical user-facing path small. The retained set favors recognized process patterns, explicit boundary feeds, boundary sinks, named junction topology, and explicit connection edges over one-off API or actuator demonstrations.
 
+`examples/connection_layer/two_tank_reaction_comparison.py` remains in-repo as a proof/verification reference, not as a canonical onboarding example.
+
 ## Canonical examples
 
 | Example | Capability demonstrated | Why it stays canonical |
@@ -9,7 +11,6 @@ This catalog intentionally keeps the canonical user-facing path small. The retai
 | `examples/unit_process_flowsheet/easy_2_heater_flash.py` | Single-feed heater plus flash separation | Smallest grounded flowsheet with one feed, two unit operations, and explicit product split |
 | `examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py` | Dual-feed heat exchange | Shows multi-branch flowsheet wiring with two boundary feeds and explicit exchanger ports |
 | `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` | Explicit recycle-topology composability with separation, purge handling, and line-installed recycle boost | Demonstrates a larger but still readable flowsheet with an explicit recycle return edge, junction-owned branching, a line-installed recycle pump, and boundary sinks |
-| `examples/connection_layer/two_tank_reaction_comparison.py --no-show` | Connected-plant subsystem parity check | Keeps one explicit edge-based connection example with measurable fidelity metrics |
 
 ## Selection rules
 
@@ -25,7 +26,7 @@ This catalog intentionally keeps the canonical user-facing path small. The retai
 | `examples/unit_process_flowsheet/easy_2_heater_flash.py` | keep | Canonical smallest flowsheet |
 | `examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py` | keep | Canonical multi-feed flowsheet |
 | `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` | keep | Canonical advanced flowsheet with an explicit recycle return edge, line-installed recycle pump, junction-owned branching, and boundary sinks |
-| `examples/connection_layer/two_tank_reaction_comparison.py` | keep | Canonical connected-plant parity benchmark |
+| `examples/connection_layer/two_tank_reaction_comparison.py` | reference-only | Connected-plant parity benchmark retained as proof/verification material |
 | `examples/unit_process_flowsheet/flowsheet_demo.py` | remove | Overlaps with the retained flowsheet set and uses unit-local control wiring |
 | `examples/unit_process_flowsheet/complex_5_dual_feed_blend_reaction.py` | reference-only | Useful as a non-canonical reference, but the reactor path still diverges from the current flowsheet runtime contract |
 | `examples/unit_process_flowsheet/complex_7_unipol_simplified_purge_bin.py` | remove | Valuable advanced reference, but too large for the canonical path |
@@ -46,11 +47,11 @@ This catalog intentionally keeps the canonical user-facing path small. The retai
 | If you previously used | Start here now |
 | --- | --- |
 | `examples/dynamic_api_cli/minimal_command_quickstart.py` | `examples/unit_process_flowsheet/easy_2_heater_flash.py` for the smallest grounded topology |
-| `examples/dynamic_api_cli/minimal_control_loop_save_load.py` | `examples/connection_layer/two_tank_reaction_comparison.py --no-show` for explicit edge-based orchestration |
+| `examples/dynamic_api_cli/minimal_control_loop_save_load.py` | `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` for a maintained advanced topology path |
 | `examples/dynamic_api_cli/minimal_spec_quickstart.py` | `examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py` for explicit multi-branch port wiring |
 | `examples/unit_process_flowsheet/flowsheet_demo.py` | `examples/unit_process_flowsheet/easy_2_heater_flash.py` or `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` |
-| `examples/van_de_vusse_cstr/run_simulation.py` | `examples/connection_layer/two_tank_reaction_comparison.py --no-show` for a compact benchmark or `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` for an advanced grounded process train |
-| `examples/simple_irreversible_energy_balance_system/three_tank_staged_connected_control.py` | `examples/connection_layer/two_tank_reaction_comparison.py --no-show` until a fully compliant controlled flowsheet example lands |
+| `examples/van_de_vusse_cstr/run_simulation.py` | `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` for an advanced grounded process train |
+| `examples/simple_irreversible_energy_balance_system/three_tank_staged_connected_control.py` | `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` until a fully compliant controlled flowsheet example lands |
 
 ## Reference-only examples
 

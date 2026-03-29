@@ -55,7 +55,6 @@ The current high-level `Flowsheet` API exposes boundary feeds/sources, explicit 
 | `examples/unit_process_flowsheet/easy_2_heater_flash.py` | Smallest grounded flowsheet with explicit feed, heater, flash, and product split |
 | `examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py` | Compact multi-branch flowsheet with explicit boundary feeds and exchanger ports |
 | `examples/unit_process_flowsheet/complex_6_ammonia_recycle_loop.py` | Advanced recycle-topology flowsheet with junctions, line-installed recycle boost, separation, purge, and explicit boundary sinks |
-| `examples/connection_layer/two_tank_reaction_comparison.py --no-show` | Connected-plant fidelity/parity benchmark with clear metrics |
 
 
 See the curated [Examples Catalog](examples_catalog.md) for the primary/advanced split.
@@ -65,10 +64,9 @@ See the curated [Examples Catalog](examples_catalog.md) for the primary/advanced
 ```bash
 uv run python examples/unit_process_flowsheet/easy_2_heater_flash.py
 uv run python examples/unit_process_flowsheet/easy_3_dual_feed_heat_exchanger.py
-uv run python examples/connection_layer/two_tank_reaction_comparison.py --no-show
 ```
 
-These cover the shortest path to grounded flowsheet modeling, explicit multi-branch port wiring, and connected-plant fidelity checks.
+These cover the shortest path to grounded flowsheet modeling and explicit multi-branch port wiring.
 
 ## Canonical flowsheet examples
 
@@ -110,7 +108,7 @@ What it covers:
 - Recycle pressure boost represented as a line-installed `PumpInstall(...)` rather than a dedicated flow wrapper unit
 - Downstream separation, purge, and liquid product recovery through explicit boundary sinks
 
-## Grounded Process Examples
+## Proof / verification references
 
 ### Connected-plant fidelity benchmark
 
@@ -118,7 +116,7 @@ What it covers:
 uv run python examples/connection_layer/two_tank_reaction_comparison.py --no-show
 ```
 
-This runs the migrated subsystem-based two-tank benchmark and prints CSV-style trajectory rows plus parity metrics such as `max_abs_error_a`, `max_abs_error_b`, `rmse_b`, and `b_lag_steps`.
+This runs the migrated subsystem-based two-tank benchmark and prints CSV-style trajectory rows plus parity metrics such as `max_abs_error_a`, `max_abs_error_b`, `rmse_b`, and `b_lag_steps`. Treat it as proof/verification material rather than canonical onboarding.
 
 See the curated [Examples Catalog](examples_catalog.md) for the migration map from older examples to these canonical replacements.
 
