@@ -83,11 +83,23 @@ def _ports_for_unit(unit: ProcessModel) -> tuple[tuple[str, ...], tuple[str, ...
 
 
 def _derive_publication_map(unit: ProcessModel) -> dict[str, float]:
+    if type(unit).__name__ == "HoldingTank":
+        # Holding-tank physical reads are exposed via observability
+        # process_state_values, not published_measurements.
+        return {}
+
     publication_map: dict[str, float] = {}
     for state_name, metadata in unit.state_metadata_dict.items():
         if metadata.type not in {StateType.ALGEBRAIC, StateType.DIFFERENTIAL}:
             continue
-        publication_map[state_name] = _default_publication_value(unit=unit, state_name=state_name)
+        value = unit.state_getter(state_name)
+        if not isinstance(value, (int, float)):
+            # Skip non-scalar states (e.g. ndarray composition vectors).
+            # Array-shaped states are surfaced via process_state_values, not
+            # published_measurements, so omitting them here is correct and
+            # prevents float(ndarray) TypeError after species-dimension widening.
+            continue
+        publication_map[state_name] = float(value)
     return publication_map
 
 

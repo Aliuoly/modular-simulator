@@ -24,7 +24,7 @@ from .connection_layer import (
     TransportAndMixingUpdate,
 )
 from .junction_runtime import mix_junction_runtime_states
-from .process_stream_io import ProcessStreamIO
+from .process_stream_io import ProcessStreamIO, apply_process_requested_outlet_demand
 from .transport_runtime import TransportRuntime
 from .runtime_snapshot_schema import (
     validate_live_runtime_snapshot_payload,
@@ -245,7 +245,13 @@ class RuntimeHeatActuatorCommandProvider(Protocol):
 
 
 class RuntimeObservabilityProvider(Protocol):
-    def get_observability_observables(self) -> Mapping[str, Mapping[str, float]]: ...
+    def get_observability_observables(
+        self,
+    ) -> Mapping[str, Mapping[str, float]]: ...
+
+    def export_process_runtime_state(self) -> Mapping[str, object]: ...
+
+    def restore_process_runtime_state(self, payload: Mapping[str, object]) -> None: ...
 
 
 class _DestructiveEditPlanLike(Protocol):
@@ -738,6 +744,10 @@ class ConnectionRuntimeOrchestrator:
                 macro_step_time_s=macro_step_time_s,
                 macro_step_index=self._macro_step_index + 1,
             )
+            self._apply_requested_outlet_demands(
+                network=network,
+                hydraulic_result=macro_step_result.hydraulic_result,
+            )
             self._macro_step_index += 1
             self._simulation_time_s += macro_step_time_s
         finally:
@@ -808,6 +818,9 @@ class ConnectionRuntimeOrchestrator:
         compiled = network.compiled
         graph_revision = None if compiled is None else str(compiled.graph_revision)
         queue = network.queued_reconfigurations
+        process_runtime_state: Mapping[str, object] = {}
+        if self._observability_provider is not None:
+            process_runtime_state = self._observability_provider.export_process_runtime_state()
         return {
             "schema": "connection_runtime_v1",
             "simulation_time_s": self._simulation_time_s,
@@ -817,6 +830,7 @@ class ConnectionRuntimeOrchestrator:
             "queued_request_ids": tuple(item.request_id for item in queue),
             "queued_request_count": len(queue),
             "committed_idempotency_keys": tuple(sorted(self._committed_idempotency_keys)),
+            "process_runtime_state": dict(process_runtime_state),
             "transport_runtime_state": self.export_transport_runtime_state(),
         }
 
@@ -835,6 +849,10 @@ class ConnectionRuntimeOrchestrator:
             self.restore_transport_runtime_state(transport_runtime_state)
         else:
             self.restore_transport_runtime_state({})
+        if self._observability_provider is not None:
+            self._observability_provider.restore_process_runtime_state(
+                validated_snapshot.process_runtime_state
+            )
 
     def _capture_barrier_runtime_state(self) -> RuntimeBarrierStateSnapshot:
         return RuntimeBarrierStateSnapshot(
@@ -1795,10 +1813,12 @@ class ConnectionRuntimeOrchestrator:
     ) -> dict[str, LagTransportState]:
         current_edge_states: dict[str, LagTransportState] = {}
         for edge_id in topology_edge_ids:
-            current_edge_states[edge_id] = self._transport_edge_states.get(
-                edge_id,
-                advected_edge_states[edge_id],
-            )
+            cached = self._transport_edge_states.get(edge_id)
+            advected = advected_edge_states[edge_id]
+            if cached is None or len(cached.composition) != len(advected.composition):
+                current_edge_states[edge_id] = advected
+            else:
+                current_edge_states[edge_id] = cached
         return current_edge_states
 
     def _resolve_previous_junction_states(
@@ -1887,6 +1907,54 @@ class ConnectionRuntimeOrchestrator:
     ) -> Mapping[str, PortCondition]:
         del network, hydraulic_result, transport_and_mixing_update, macro_step_time_s
         return {}
+
+    def _apply_requested_outlet_demands(
+        self,
+        *,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+    ) -> None:
+        compiled = network.compiled
+        if compiled is None or compiled.hydraulic is None:
+            return
+
+        edge_id_by_process_outlet: dict[tuple[str, str], str] = {}
+        for edge in compiled.topology.edges:
+            if edge.source.node_id in compiled.process_bindings:
+                edge_id_by_process_outlet[(edge.source.node_id, edge.source.port_name)] = (
+                    edge.edge_id
+                )
+
+        for process_node in compiled.topology.process_nodes:
+            node_id = process_node.process_id
+            stream_port_io = self._stream_port_io_by_node_id.get(node_id)
+            binding = compiled.process_bindings.get(node_id)
+            if stream_port_io is None and binding is None:
+                continue
+
+            for outlet_port in process_node.outlet_ports:
+                edge_id = edge_id_by_process_outlet.get((node_id, outlet_port))
+                if edge_id is None:
+                    continue
+                flow = compiled.hydraulic.resolve_line_flow(
+                    line_id=edge_id,
+                    hydraulic_result=hydraulic_result,
+                )
+                if flow is None:
+                    continue
+                demand = max(0.0, float(flow))
+
+                applied = apply_process_requested_outlet_demand(
+                    stream_port_io,
+                    outlet_port,
+                    demand,
+                )
+                if not applied:
+                    _ = apply_process_requested_outlet_demand(
+                        binding,
+                        outlet_port,
+                        demand,
+                    )
 
 
 __all__ = [

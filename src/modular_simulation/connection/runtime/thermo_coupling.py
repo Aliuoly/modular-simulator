@@ -24,6 +24,7 @@ from ..topology.topology import ConnectionEdge
 from .connection_layer import TransportAndMixingUpdate
 from .process_stream_io import (
     ProcessStreamIO,
+    apply_process_requested_outlet_demand,
     resolve_process_outlet_condition,
 )
 from modular_simulation.thermodynamics.stream import StreamData
@@ -346,7 +347,59 @@ class ThermoBoundaryPropagationStep:
                 StreamData.from_port_condition(conditions[target_key]),
             )
 
+        self._apply_requested_outlet_demands(
+            network=network,
+            hydraulic_result=hydraulic_result,
+        )
+
         return conditions
+
+    def _apply_requested_outlet_demands(
+        self,
+        *,
+        network: ConnectionNetwork,
+        hydraulic_result: HydraulicSolveResult,
+    ) -> None:
+        compiled = network.compiled
+        if compiled is None or compiled.hydraulic is None:
+            return
+
+        edge_by_process_outlet: dict[tuple[str, str], str] = {}
+        for edge in compiled.topology.edges:
+            if edge.source.node_id in compiled.process_bindings:
+                edge_by_process_outlet[(edge.source.node_id, edge.source.port_name)] = edge.edge_id
+
+        for process_node in sorted(
+            compiled.topology.process_nodes, key=lambda item: item.process_id
+        ):
+            node_id = process_node.process_id
+            configured_bindings = self._config.stream_port_io_by_node_id
+            configured_candidate = (
+                configured_bindings.get(node_id) if configured_bindings is not None else None
+            )
+            binding = compiled.process_bindings.get(node_id)
+            for outlet_port in process_node.outlet_ports:
+                edge_id = edge_by_process_outlet.get((node_id, outlet_port))
+                if edge_id is None:
+                    continue
+                flow = compiled.hydraulic.resolve_line_flow(
+                    line_id=edge_id,
+                    hydraulic_result=hydraulic_result,
+                )
+                if flow is None:
+                    continue
+                requested_demand = max(0.0, float(flow))
+                applied = apply_process_requested_outlet_demand(
+                    configured_candidate,
+                    outlet_port,
+                    requested_demand,
+                )
+                if not applied:
+                    _ = apply_process_requested_outlet_demand(
+                        binding,
+                        outlet_port,
+                        requested_demand,
+                    )
 
     def _record_all_process_outlet_snapshots(
         self,
@@ -397,16 +450,27 @@ class ThermoBoundaryPropagationStep:
                     continue
 
                 state = source_condition.state
-                through_molar_flow_rate = float(source_condition.through_molar_flow_rate)
+                through_molar_flow_rate = max(
+                    0.0,
+                    float(source_condition.through_molar_flow_rate),
+                )
                 connected_edge = edge_by_source_port.get((source_node_id, source_port_name))
                 if connected_edge is not None:
-                    resolved_flow = self._resolve_hydraulic_flow(
+                    through_molar_flow_rate = self._resolve_flow_rate(
                         edge_id=connected_edge.edge_id,
                         compiled_hydraulic=compiled.hydraulic,
                         hydraulic_result=hydraulic_result,
+                        source_node_id=source_node_id,
+                        source_port_name=source_port_name,
+                        target_node_id=connected_edge.target.node_id,
+                        target_port_name=connected_edge.target.port_name,
+                        outlet_payload=None,
+                        fallback_flow_rate=through_molar_flow_rate,
                     )
-                    if resolved_flow is not None:
-                        through_molar_flow_rate = abs(resolved_flow)
+                through_molar_flow_rate = min(
+                    through_molar_flow_rate,
+                    max(0.0, float(source_condition.through_molar_flow_rate)),
+                )
                 runtime_port_snapshot_store.record_outlet(
                     node_id=source_node_id,
                     port_name=source_port_name,
@@ -485,6 +549,10 @@ class ThermoBoundaryPropagationStep:
             target_port_name=target_port_name,
             outlet_payload=None,
             fallback_flow_rate=float(source_condition.through_molar_flow_rate),
+        )
+        flow_rate = min(
+            flow_rate,
+            max(0.0, float(source_condition.through_molar_flow_rate)),
         )
 
         target_state = state

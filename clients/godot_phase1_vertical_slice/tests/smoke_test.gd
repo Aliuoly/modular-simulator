@@ -299,7 +299,10 @@ func _run() -> void:
 		"Build item label must show currently selected unlocked item")
 
 	buy_feed_button.pressed.emit()
-	await _wait_for_status_contains_any(status_label, PackedStringArray(["Bought", "Buy feed failed"]))
+	if selected_mode == "heater_flash_guided_build_v1":
+		await _wait_for_status_contains(status_label, "Feed purchase unavailable")
+	else:
+		await _wait_for_status_contains_any(status_label, PackedStringArray(["Bought", "Buy feed failed"]))
 
 	build_selected_button.pressed.emit()
 	await _wait_for_status_contains_any(status_label, PackedStringArray(["Built", "Build failed", "Line build requires explicit endpoints"]))

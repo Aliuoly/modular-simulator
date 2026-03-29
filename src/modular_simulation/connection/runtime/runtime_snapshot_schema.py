@@ -35,6 +35,7 @@ class LiveRuntimeSnapshotPayload(BaseModel):
     queued_request_ids: tuple[str, ...] = Field(default_factory=tuple)
     queued_request_count: int
     committed_idempotency_keys: tuple[str, ...] = Field(default_factory=tuple)
+    process_runtime_state: dict[str, object] = Field(default_factory=dict)
     transport_runtime_state: dict[str, object] = Field(default_factory=dict)
 
     model_config: ClassVar[ConfigDict] = ConfigDict(

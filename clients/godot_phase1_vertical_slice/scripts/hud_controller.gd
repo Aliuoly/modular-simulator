@@ -37,10 +37,10 @@ func _on_snapshot_updated() -> void:
 func _render_snapshot(snapshot: Dictionary) -> void:
 	mode_label.text = "Mode: %s" % String(snapshot.get("mode_id", "--"))
 
-	var cash_ledger: Dictionary = snapshot.get("cash_ledger", {})
+	var cash_ledger: Dictionary = _dictionary_or_empty(snapshot.get("cash_ledger", {}))
 	cash_label.text = "Cash: %.2f" % float(cash_ledger.get("cash_balance", 0.0))
 
-	var simulation_snapshot: Dictionary = snapshot.get("simulation_snapshot", {})
+	var simulation_snapshot: Dictionary = _dictionary_or_empty(snapshot.get("simulation_snapshot", {}))
 	feed_label.text = "Feed: %s" % _format_inventory(
 		simulation_snapshot.get("feed_inventory_by_material_id", {})
 	)
@@ -51,7 +51,7 @@ func _render_snapshot(snapshot: Dictionary) -> void:
 		snapshot.get("published_signal_values_by_id", {})
 	)
 
-	var progression_snapshot: Dictionary = simulation_snapshot.get("progression_snapshot", {})
+	var progression_snapshot: Dictionary = _dictionary_or_empty(simulation_snapshot.get("progression_snapshot", {}))
 	if progression_snapshot.is_empty():
 		stage_label.text = "Stage: --"
 		research_label.text = "Research: --"
@@ -93,3 +93,9 @@ func _format_sequence(values: Variant) -> String:
 			texts.append(String(value))
 		return ", ".join(texts)
 	return "--"
+
+
+func _dictionary_or_empty(value: Variant) -> Dictionary:
+	if value is Dictionary:
+		return value
+	return {}
