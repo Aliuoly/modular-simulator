@@ -1127,6 +1127,95 @@ def test_thermo_coupling_preserves_solved_zero_flow_instead_of_payload_placehold
     assert latest_inlet.through_molar_flow_rate == pytest.approx(0.0)
 
 
+def test_thermo_coupling_uses_realized_tank_outlet_flow_when_hydraulics_overrequest() -> None:
+    from modular_simulation.unit_processes.storage.holding_tank import HoldingTank
+
+    runtime = ConnectionRuntimeOrchestrator(
+        runtime_context=cast("SimulationRuntimeContext", _RuntimeContextStub())
+    )
+    network = ConnectionNetwork(
+        compile_lifecycle=HydraulicCompileLifecycle(),
+        hydraulic_system_builder=lambda topology: _lookup_system(),
+        runtime_orchestrator=runtime,
+    )
+    network.add_process("tank", inlet_ports=("inlet",), outlet_ports=("outlet",))
+    network.add_boundary_source("feed_boundary")
+    network.add_boundary_sink("product_boundary")
+    network.connect("feed_boundary", "tank.inlet")
+    network.connect("tank.outlet", "product_boundary")
+    compiled = network.compile()
+    assert compiled.hydraulic is not None
+
+    tank = HoldingTank()  # type: ignore[call-arg]
+    runtime.bind_stream_port_io(node_id="tank", stream_port_io=tank)
+    runtime.set_feed_stream(
+        boundary_id="feed_boundary",
+        stream=StreamData(
+            temperature=300.0,
+            pressure=150000.0,
+            mole_fractions=(0.25, 0.75),
+            molar_flow_rate=1.0,
+            species_ids=("7732-18-5", "64-17-5"),
+        ),
+    )
+    network._compiled = replace(
+        compiled,
+        process_bindings={
+            **compiled.process_bindings,
+            "tank": tank,
+        },
+    )
+
+    _ = runtime._boundary_propagation_step(
+        network=network,
+        hydraulic_result=HydraulicSolveResult(
+            converged=True,
+            iterations=2,
+            residual_norm=1.0e-10,
+            solution_vector=np.asarray([8.0, 9.0, 7.0], dtype=np.float64),
+            unknowns={"edge_flow": 8.0, "target_pressure": 9.0, "source_pressure": 7.0},
+            unknown_index_map={"edge_flow": 0, "target_pressure": 1, "source_pressure": 2},
+            residual_index_map={"balance": 0, "ref": 1},
+        ),
+        transport_and_mixing_update=TransportAndMixingUpdate(
+            transport_results={
+                "edge_0001": _transport_result(),
+                "edge_0002": _transport_result(),
+            }
+        ),
+        macro_step_time_s=1.0,
+    )
+    tank.step(1.0)
+
+    _ = runtime._boundary_propagation_step(
+        network=network,
+        hydraulic_result=HydraulicSolveResult(
+            converged=True,
+            iterations=2,
+            residual_norm=1.0e-10,
+            solution_vector=np.asarray([8.0, 9.0, 7.0], dtype=np.float64),
+            unknowns={"edge_flow": 8.0, "target_pressure": 9.0, "source_pressure": 7.0},
+            unknown_index_map={"edge_flow": 0, "target_pressure": 1, "source_pressure": 2},
+            residual_index_map={"balance": 0, "ref": 1},
+        ),
+        transport_and_mixing_update=TransportAndMixingUpdate(
+            transport_results={
+                "edge_0001": _transport_result(),
+                "edge_0002": _transport_result(),
+            }
+        ),
+        macro_step_time_s=1.0,
+    )
+
+    latest_inlet = runtime.get_latest_inlet_condition(node_id="tank", port_name="inlet")
+    latest_outlet = runtime.get_latest_outlet_condition(node_id="tank", port_name="outlet")
+    assert latest_inlet is not None
+    assert latest_outlet is not None
+
+    assert latest_outlet.through_molar_flow_rate == pytest.approx(1.0)
+    assert latest_inlet.through_molar_flow_rate == pytest.approx(1.0)
+
+
 def test_pressure_coupled_endpoint_missing_compiled_pressure_raises_instead_of_falling_back() -> (
     None
 ):

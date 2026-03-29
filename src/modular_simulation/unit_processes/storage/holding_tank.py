@@ -294,11 +294,8 @@ class HoldingTank(ProcessModel):
             max_realizable_flow = (withdrawable_moles + inlet_moles) / dt_s
             self.imposed_outlet_flow_mol_s = min(requested_flow, max_realizable_flow)
         else:
-            # No explicit demand: drain all available holdup (legacy free-discharge
-            # behaviour for stand-alone / unconnected use).
-            holdup_start = self.holdup_mol
-            withdrawable_moles = max(0.0, holdup_start - _NEAR_EMPTY_HOLDUP_FLOOR_MOL)
-            self.imposed_outlet_flow_mol_s = withdrawable_moles / dt_s
+            # No explicit demand (or explicit zero demand): no withdrawal is authorized.
+            self.imposed_outlet_flow_mol_s = 0.0
 
         super().step(float(dt))
 

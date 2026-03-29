@@ -46,7 +46,7 @@ The public observability snapshot SHALL expose substrate-owned conserved process
 - **AND** `observables.process_state_values` includes `<process_id>/bulk_temperature_K` plus one numeric `<process_id>/mole_fraction/<species_id>` key per published species in the mixed bulk state
 - **AND** when the tank is clipped to its small positive near-empty floor, `outlet_flow_mol_s` may report a clipped near-zero positive observable rather than exact zero for continuity
 - **AND** that clipped near-zero observable SHALL NOT by itself authorize additional material transfer once withdrawable holdup above the configured floor is exhausted
-- **AND** when the tank is clipped to that near-empty floor, `bulk_temperature_K` and mole-fraction keys retain the previous bulk-state values for observability continuity
+- **AND** when the tank is clipped to that near-empty floor, `bulk_temperature_K` retains the previous bulk-state value for observability continuity while mole-fraction keys continue to expose normalized substrate-owned composition readouts without widening gameplay custody or implying rigorous near-empty composition fidelity
 - **AND** `bulk_temperature_K` is a lumped bulk-state read rather than a claim of full energy-balance, stratification, or EOS closure
 - **AND** those values are derived from substrate-owned tank state rather than gameplay-owned mirrors or direct persistence-payload dumping.
 

@@ -450,16 +450,27 @@ class ThermoBoundaryPropagationStep:
                     continue
 
                 state = source_condition.state
-                through_molar_flow_rate = float(source_condition.through_molar_flow_rate)
+                through_molar_flow_rate = max(
+                    0.0,
+                    float(source_condition.through_molar_flow_rate),
+                )
                 connected_edge = edge_by_source_port.get((source_node_id, source_port_name))
                 if connected_edge is not None:
-                    resolved_flow = self._resolve_hydraulic_flow(
+                    through_molar_flow_rate = self._resolve_flow_rate(
                         edge_id=connected_edge.edge_id,
                         compiled_hydraulic=compiled.hydraulic,
                         hydraulic_result=hydraulic_result,
+                        source_node_id=source_node_id,
+                        source_port_name=source_port_name,
+                        target_node_id=connected_edge.target.node_id,
+                        target_port_name=connected_edge.target.port_name,
+                        outlet_payload=None,
+                        fallback_flow_rate=through_molar_flow_rate,
                     )
-                    if resolved_flow is not None:
-                        through_molar_flow_rate = abs(resolved_flow)
+                through_molar_flow_rate = min(
+                    through_molar_flow_rate,
+                    max(0.0, float(source_condition.through_molar_flow_rate)),
+                )
                 runtime_port_snapshot_store.record_outlet(
                     node_id=source_node_id,
                     port_name=source_port_name,
@@ -538,6 +549,10 @@ class ThermoBoundaryPropagationStep:
             target_port_name=target_port_name,
             outlet_payload=None,
             fallback_flow_rate=float(source_condition.through_molar_flow_rate),
+        )
+        flow_rate = min(
+            flow_rate,
+            max(0.0, float(source_condition.through_molar_flow_rate)),
         )
 
         target_state = state

@@ -801,3 +801,81 @@ def test_runtime_boundary_application_latches_solved_requested_outlet_demand_for
     _ = network.step(macro_step_time_s=1.0)
 
     assert tank_bridge.requested_outlet_by_port["outlet"] == pytest.approx(1.25)
+
+
+def test_runtime_latches_zero_requested_outlet_when_hydraulic_flow_is_non_positive() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = ConnectionNetwork(
+        compile_lifecycle=HydraulicCompileLifecycle(),
+        hydraulic_system_builder=lambda topology: _valid_system(),
+        runtime_orchestrator=runtime,
+    )
+    network.add_process("tank", inlet_ports=("inlet",), outlet_ports=("outlet",))
+    network.add_boundary_source("feed")
+    network.add_boundary_sink("product")
+    network.connect("feed", "tank.inlet", edge_id="edge_0001")
+    network.connect("tank.outlet", "product", edge_id="edge_0002")
+    compiled = network.compile()
+
+    tank_bridge = _DemandLatchBridge()
+    runtime.bind_stream_port_io(node_id="tank", stream_port_io=tank_bridge)
+    runtime.set_feed_stream(
+        boundary_id="feed",
+        stream=StreamData(
+            temperature=300.0,
+            pressure=101325.0,
+            mole_fractions=(1.0,),
+            molar_flow_rate=2.0,
+        ),
+    )
+
+    class _ManualHydraulic:
+        def __init__(self) -> None:
+            self.topology_lookup = type(
+                "_Lookup",
+                (),
+                {
+                    "line_flow_unknown_by_line": {
+                        "edge_0001": "flow_in",
+                        "edge_0002": "flow_out",
+                    }
+                },
+            )()
+
+        def solve(self) -> HydraulicSolveResult:
+            return HydraulicSolveResult(
+                converged=True,
+                iterations=1,
+                residual_norm=1.0e-10,
+                solution_vector=np.asarray([2.0, -0.5], dtype=np.float64),
+                unknowns={"flow_in": 2.0, "flow_out": -0.5},
+                unknown_index_map={"flow_in": 0, "flow_out": 1},
+                residual_index_map={},
+            )
+
+        def resolve_line_flow(
+            self, *, line_id: str, hydraulic_result: HydraulicSolveResult
+        ) -> float | None:
+            key = self.topology_lookup.line_flow_unknown_by_line.get(line_id)
+            if key is None:
+                return None
+            return float(hydraulic_result.unknowns[key])
+
+        def resolve_line_target_pressure(
+            self, *, line_id: str, hydraulic_result: HydraulicSolveResult
+        ) -> float | None:
+            del line_id, hydraulic_result
+            return 101325.0
+
+    network._compiled = replace(
+        compiled,
+        hydraulic=cast(object, _ManualHydraulic()),
+        process_bindings={
+            **compiled.process_bindings,
+            "tank": tank_bridge,
+        },
+    )
+
+    _ = network.step(macro_step_time_s=1.0)
+
+    assert tank_bridge.requested_outlet_by_port["outlet"] == pytest.approx(0.0)

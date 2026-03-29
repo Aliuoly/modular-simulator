@@ -226,11 +226,6 @@ Phase-1 gameplay SHALL NOT maintain a session-owned mirror of simulation-owned h
 - **THEN** gameplay does not store per-tank conserved amount, mixed composition, or aggregate thermodynamic state outside the substrate runtime
 - **AND** stale helpers such as gameplay-owned `tank_custody.py` are not the authoritative source of tank physical state.
 
-#### Scenario: Internal purge clears one tank custody record without widening live contracts
-- **WHEN** the staged purge primitive clears custody for one holding-tank `process_id`
-- **THEN** it removes only that tank's stored custody state
-- **AND** it does not delete the tank record, alter ledger state, or require a new public session method, snapshot field, HTTP route, or Godot command
-
 #### Scenario: Public session contracts stay unchanged in ej7.1
 - **WHEN** contributors inspect simulation-session methods and snapshots
 - **THEN** no new public tank methods, tank snapshot fields, or build/start widenings are introduced by this pack

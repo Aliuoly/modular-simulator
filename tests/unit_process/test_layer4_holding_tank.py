@@ -115,20 +115,14 @@ def test_holding_tank_zero_holdup_yields_zero_outlet_flow() -> None:
     assert float(tank.outlet_flow) == pytest.approx(0.0)
 
 
-def test_holding_tank_outlet_flow_is_bounded_by_holdup_available_at_step_start() -> None:
-    """With zero inlet and non-zero stored holdup, discharge for the step must
-    not exceed the holdup available at the start of that step.
-
-    This proves the frozen contract without imposing any extra same-step
-    discharge timing rule on how newly arrived material may be handled.
-    """
+def test_holding_tank_without_requested_outlet_does_not_withdraw_stored_holdup() -> None:
+    """No requested outlet demand must not authorize withdrawal from stored holdup."""
     tank_a = _make_tank(inlet_flow=10.0, inlet_temperature=300.0, inlet_pressure=101325.0)
     assert float(tank_a.holdup_mol) == pytest.approx(0.0)
 
     tank_a.step(1.0)
 
-    # Advance again with zero inlet. The outlet flow for this second step must
-    # not exceed the holdup that was available at the start of the step.
+    # Advance again with zero inlet and no requested outlet demand.
     holdup_at_start_of_b = float(tank_a.holdup_mol)
     assert holdup_at_start_of_b > 0.0
 
@@ -136,8 +130,23 @@ def test_holding_tank_outlet_flow_is_bounded_by_holdup_available_at_step_start()
     tank_a.step(1.0)
 
     outlet_in_b = float(tank_a.outlet_flow)
-    assert outlet_in_b >= 0.0
-    assert outlet_in_b <= holdup_at_start_of_b + 1e-9  # outlet cannot exceed available holdup
+    assert outlet_in_b == pytest.approx(0.0)
+    assert float(tank_a.holdup_mol) == pytest.approx(holdup_at_start_of_b)
+
+
+def test_holding_tank_zero_requested_outlet_does_not_withdraw_stored_holdup() -> None:
+    """An explicit zero demand is equivalent to absent demand for withdrawal auth."""
+    tank = _make_tank(inlet_flow=7.0, inlet_temperature=300.0, inlet_pressure=101325.0)
+    tank.step(1.0)
+    holdup_before = float(tank.holdup_mol)
+    assert holdup_before > 0.0
+
+    tank.inlet_flow = 0.0  # type: ignore[assignment]
+    tank.apply_requested_outlet_through_flow_demand("outlet", 0.0)
+    tank.step(1.0)
+
+    assert float(tank.outlet_flow) == pytest.approx(0.0)
+    assert float(tank.holdup_mol) == pytest.approx(holdup_before)
 
 
 def test_holding_tank_zero_inlet_discharge_uses_stored_material_state() -> None:
@@ -165,6 +174,7 @@ def test_holding_tank_zero_inlet_discharge_uses_stored_material_state() -> None:
         molar_flow_rate=0.0,
     )
     tank.apply_inlet("inlet", placeholder_stream)
+    tank.apply_requested_outlet_through_flow_demand("outlet", 4.0)
     tank.step(2.0)
 
     outlet = tank.get_outlet_stream("outlet")
@@ -410,3 +420,34 @@ def test_holding_tank_published_measurements_are_all_numeric_after_species_widen
     assert not any("composition" in tag and "tank" in tag for tag in published_measurements), (
         "outlet_composition (ndarray) must not appear in published_measurements"
     )
+
+
+def test_holding_tank_physical_states_are_not_exposed_in_published_measurements() -> None:
+    """Tank physical reads must live under observables.process_state_values only."""
+    from modular_simulation.connection.runtime.connected_plant_orchestrator import (
+        ConnectedPlantOrchestrator,
+    )
+    from modular_simulation.flowsheet import Flowsheet
+    from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
+
+    context = SimulationRuntimeContext.create(species_names=["methane", "ethane"])
+    flowsheet = Flowsheet(context=context, dt=1.0)
+
+    tank = HoldingTank()  # type: ignore[call-arg]
+    flowsheet.add_unit("tank", tank)
+    flowsheet.add_feed_from_values("feed", T=300.0, P=150_000.0, z=(0.6, 0.4), flow=5.0)
+    flowsheet.add_sink("sink")
+    flowsheet.connect("feed", "tank")
+    flowsheet.connect("tank", "sink")
+
+    plant = flowsheet.compile()
+    assert isinstance(plant, ConnectedPlantOrchestrator)
+    _ = plant.step(macro_step_time_s=1.0)
+
+    observables = plant.get_observability_observables()
+    published_measurements = observables["published_measurements"]
+    process_state_values = observables["process_state_values"]
+
+    assert not any(tag.startswith("tank/") for tag in published_measurements)
+    assert "tank/holdup_total_mol" in process_state_values
+    assert "tank/outlet_flow_mol_s" in process_state_values
