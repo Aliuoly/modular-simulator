@@ -269,8 +269,6 @@ class ControlElement(AbstractComponent):
 
         return cls(**config)
 
-    # -------- Serialization (Legacy) --------
-
     # -------- Properties --------
 
     @property

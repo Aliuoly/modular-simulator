@@ -115,10 +115,6 @@ def _realized_phase_change_flow_from_duty(
     return realized_duty, realized_flow
 
 
-def _legacy_phase_change_flow(*, fallback_flow_mol_s: float, inventory_limit_mol_s: float) -> float:
-    return min(max(0.0, float(fallback_flow_mol_s)), max(0.0, float(inventory_limit_mol_s)))
-
-
 class StagewiseDistillationColumn(ProcessModel):
     _OUTLET_MAP: ClassVar[dict[str, PortAttributeMap]] = {
         "distillate": PortAttributeMap(
