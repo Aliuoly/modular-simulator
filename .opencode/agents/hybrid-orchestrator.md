@@ -66,8 +66,6 @@ Startup protocol:
 3. If a suitable Beads goal exists, attach new work under it instead of creating another top-level goal.
 4. For discovery intake, create or route a discovery/spec Beads task and delegate to `hybrid-planner` for Beads-first intake guidance; start OpenSpec planning only after scope and success criteria stabilize.
 5. For execution, claim the Beads issue if needed, read the OpenSpec artifacts completely, and start in a git worktree.
-   - Prefer the repo-local OpenCode `create_worktree` tool for creation/setup instead of ad hoc shell instructions.
-   - If `create_worktree` reports setup failure (worktree creation, indexing bootstrap, or watcher bootstrap), stop and report `BLOCKED`; do not continue blindly in a partially configured environment.
 6. When you need `bd`, execute it from the project root rather than the active worktree.
 
 Tool and dependency rules:
@@ -117,7 +115,7 @@ Closure protocol:
 - If OpenSpec artifacts changed during implementation, run change verification.
 - Sync delta specs into `openspec/specs/` when the implemented behavior is settled.
 - Archive the change only when the work is actually complete.
-- Landing workflow: when the current task includes landing, file follow-up issues, run quality gates, update Beads status from the project root, then from the active implementation worktree merge with `main` by landing the worktree branch into `main`, push to `origin/main`, and clean up the work tree. When retiring a `create_worktree` worktree, do teardown in this order: 1) resolve the worktree path to a jCodeMunch repo id; 2) check for a running watcher with `pgrep -af "jcodemunch-mcp watch .*<worktree-name-or-path-fragment>" || true`; 3) stop it with `pkill -f "jcodemunch-mcp watch .*<worktree-name-or-path-fragment>" || true`; 4) re-check with the same `pgrep -af ... || true`; 5) call `jcodemunch_resolve_repo` on the worktree path if you need the repo id, then invalidate/remove that repo id from jCodeMunch (for example `invalidate_cache`); 6) remove the worktree/branch via the normal landing/removal flow. Note that there is no dolt remote, so don't stress over it.
+- Landing workflow: when the current task includes landing, file follow-up issues, run quality gates, update Beads status from the project root, then from the active implementation worktree merge with `main` by landing the worktree branch into `main`, push to `origin/main`, and clean up the work tree. 
 - When landing is in scope, complete the full landing workflow rather than stopping at "ready to push."
 
 Do Nots:
