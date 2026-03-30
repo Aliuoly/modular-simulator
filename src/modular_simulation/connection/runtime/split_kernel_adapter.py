@@ -6,6 +6,7 @@ from typing import Protocol
 
 from modular_simulation.connection.kernel_adapter import (
     CandidateKernelAdapter,
+    KernelDelayStateMapping,
     KernelAdapterTelemetry,
     KernelCandidateStepRequest,
     KernelCandidateStepResult,
@@ -39,6 +40,20 @@ def _default_delay_semantics() -> KernelDelaySemantics:
     )
 
 
+def _default_delay_state_mapping() -> KernelDelayStateMapping:
+    return KernelDelayStateMapping(
+        payload_key="transport_runtime_state",
+        mapped_fields=("edge_states", "previous_edge_flow_rates", "junction_states"),
+        replacement_required=True,
+        replacement_candidates=("augmented_state", "hybrid"),
+        replacement_rule=(
+            "Future candidates must publish an explicit mapping from current transport "
+            "history semantics to any replacement delay bundle without implying optional "
+            "solver capabilities."
+        ),
+    )
+
+
 def _bootstrap_telemetry() -> KernelAdapterTelemetry:
     return KernelAdapterTelemetry(
         macro_step_index=0,
@@ -65,6 +80,9 @@ class SplitKernelAdapter:
     runtime_orchestrator: ConnectionRuntimeOrchestrator
     process_runtime_owner: ProcessRuntimeStateOwner | None = None
     delay_semantics: KernelDelaySemantics = field(default_factory=_default_delay_semantics)
+    delay_state_mapping: KernelDelayStateMapping = field(
+        default_factory=_default_delay_state_mapping
+    )
     telemetry: KernelAdapterTelemetry = field(default_factory=_bootstrap_telemetry)
 
     def __post_init__(self) -> None:
@@ -106,9 +124,18 @@ class SplitKernelAdapter:
         )
 
     def capture_delay_state(self) -> Mapping[str, object]:
-        return self.runtime_orchestrator.export_transport_runtime_state()
+        return {
+            "delay_strategy": self.delay_semantics.strategy.value,
+            "state_schema": self.delay_semantics.state_schema,
+            "mapped_fields": self.delay_state_mapping.mapped_fields,
+            self.delay_state_mapping.payload_key: self.runtime_orchestrator.export_transport_runtime_state(),
+        }
 
     def restore_delay_state(self, payload: Mapping[str, object]) -> None:
+        transport_payload = payload.get(self.delay_state_mapping.payload_key)
+        if isinstance(transport_payload, Mapping):
+            self.runtime_orchestrator.restore_transport_runtime_state(transport_payload)
+            return
         self.runtime_orchestrator.restore_transport_runtime_state(payload)
 
     def supported_optional_capabilities(self) -> frozenset[KernelOptionalCapability]:

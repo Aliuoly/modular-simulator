@@ -28,6 +28,15 @@ class KernelDelaySemantics:
 
 
 @dataclass(frozen=True)
+class KernelDelayStateMapping:
+    payload_key: str
+    mapped_fields: tuple[str, ...]
+    replacement_required: bool
+    replacement_candidates: tuple[str, ...]
+    replacement_rule: str
+
+
+@dataclass(frozen=True)
 class KernelAdapterTelemetry:
     macro_step_index: int
     macro_step_time_s: float
@@ -112,6 +121,9 @@ class CandidateKernelAdapter(Protocol):
     def delay_semantics(self) -> KernelDelaySemantics: ...
 
     @property
+    def delay_state_mapping(self) -> KernelDelayStateMapping: ...
+
+    @property
     def telemetry(self) -> KernelAdapterTelemetry: ...
 
     def initialize(self, request: KernelInitializationRequest) -> KernelInitializationResult: ...
@@ -135,6 +147,7 @@ __all__ = [
     "KernelCandidateStepRequest",
     "KernelCandidateStepResult",
     "KernelDelaySemantics",
+    "KernelDelayStateMapping",
     "KernelDelayStrategy",
     "KernelInitializationRequest",
     "KernelInitializationResult",
