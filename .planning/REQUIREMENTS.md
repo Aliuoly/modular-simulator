@@ -26,7 +26,7 @@ Requirements for milestone v1.0 Kernel stability. Each maps to roadmap phases.
 ### Solver Substrate Comparison
 
 - [ ] **SOLV-01**: Team can compare candidate solver substrates fairly using the same flowsheet workloads, checkpoints, tolerances, physical-acceptance gates, and telemetry outputs.
-- [ ] **SOLV-02**: Team can expose a solver-kernel adapter seam with state, residual, Jacobian, bounds, initialization, warm-start, and telemetry interfaces so candidate stacks can be swapped without rewriting gameplay/session surfaces first.
+- [x] **SOLV-02**: Team can expose a solver-kernel adapter seam with state, residual, Jacobian, bounds, initialization, warm-start, and telemetry interfaces so candidate stacks can be swapped without rewriting gameplay/session surfaces first.
 - [ ] **SOLV-03**: Team can evaluate a disciplined current-stack baseline before approving a migration to a new solver substrate.
 - [ ] **SOLV-04**: Team can compare at least one post-SciPy Python-native path and at least one non-Python-capable path when benchmark evidence suggests the baseline may be solver-limited.
 - [ ] **SOLV-05**: Team can justify any solver-stack migration in terms of stability improvement, latency improvement, deployment risk, and compatibility with the existing runtime/session facades.
@@ -34,7 +34,7 @@ Requirements for milestone v1.0 Kernel stability. Each maps to roadmap phases.
 ### Delay Semantics
 
 - [ ] **DELY-01**: Team can preserve or explicitly replace existing transport-lag behavior so candidate kernels do not erase current delay semantics when moving toward hybrid or whole-flowsheet coupling.
-- [ ] **DELY-02**: Team can define how deadtime is represented in each candidate kernel direction, including whether delay remains external history/buffer state, becomes augmented state, or requires a different hybrid treatment.
+- [x] **DELY-02**: Team can define how deadtime is represented in each candidate kernel direction, including whether delay remains external history/buffer state, becomes augmented state, or requires a different hybrid treatment.
 - [ ] **DELY-03**: Team can restore and safely update deadtime or transport-history state across checkpoint reloads, warm starts, and runtime edits.
 - [ ] **DELY-04**: Team can benchmark delay-heavy and transport-lag-sensitive scenarios so whole-flowsheet directions are not approved without evidence that delay semantics still behave credibly.
 
@@ -78,12 +78,12 @@ Deferred until after the milestone establishes the kernel direction and benchmar
 | PERF-04 | Phase 3 | Pending |
 | PERF-05 | Phase 4 | Pending |
 | SOLV-01 | Phase 3 | Pending |
-| SOLV-02 | Phase 2 | Pending |
+| SOLV-02 | Phase 2 | Complete |
 | SOLV-03 | Phase 3 | Pending |
 | SOLV-04 | Phase 4 | Pending |
 | SOLV-05 | Phase 4 | Pending |
 | DELY-01 | Phase 2 | Pending |
-| DELY-02 | Phase 2 | Pending |
+| DELY-02 | Phase 2 | Complete |
 | DELY-03 | Phase 2 | Pending |
 | DELY-04 | Phase 3 | Pending |
 
