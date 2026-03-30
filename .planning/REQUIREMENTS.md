@@ -12,7 +12,7 @@ Requirements for milestone v1.0 Kernel stability. Each maps to roadmap phases.
 - [ ] **KERN-01**: Team can classify and reproduce the current split-kernel failure modes that create stale-coupling, non-physical inventory, or stale-pressure-driven flow on representative complex flowsheets.
 - [ ] **KERN-02**: Team can validate whether a candidate kernel step produced one accepted coupled plant state rather than publishing partially updated unit and connection states.
 - [ ] **KERN-03**: Team can reject under-specified, over-specified, or structurally inconsistent flowsheet states before runtime stepping begins.
-- [ ] **KERN-04**: Team can initialize and warm-start candidate kernels from the last accepted plant state, checkpoint restore, or post-edit recovery path.
+- [x] **KERN-04**: Team can initialize and warm-start candidate kernels from the last accepted plant state, checkpoint restore, or post-edit recovery path.
 - [ ] **KERN-05**: Team can enforce physical feasibility guards that prevent accepted states with negative inventory, invalid composition normalization, or other non-physical plant states.
 
 ### Performance Evidence
@@ -70,7 +70,7 @@ Deferred until after the milestone establishes the kernel direction and benchmar
 | KERN-01 | Phase 1 | Pending |
 | KERN-02 | Phase 1 | Pending |
 | KERN-03 | Phase 1 | Pending |
-| KERN-04 | Phase 2 | Pending |
+| KERN-04 | Phase 2 | Complete |
 | KERN-05 | Phase 1 | Pending |
 | PERF-01 | Phase 3 | Pending |
 | PERF-02 | Phase 3 | Pending |

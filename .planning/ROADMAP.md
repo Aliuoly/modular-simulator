@@ -49,7 +49,7 @@ Plans:
 
 Plans:
 - [x] 02-01-PLAN.md — Define the capability-first kernel adapter core, optional solver-capability protocols, and the honest split-runtime baseline wrapper.
-- [ ] 02-02-PLAN.md — Route resume, save/load, and post-edit recovery through one canonical accepted-snapshot warm-start path using only the shared core.
+- [x] 02-02-PLAN.md — Route resume, save/load, and post-edit recovery through one canonical accepted-snapshot warm-start path using only the shared core.
 - [ ] 02-03-PLAN.md — Make delay-state treatment explicit, map the split baseline delay bundle, and lock in restore/update regressions for future candidates.
 
 ### Phase 3: Benchmark Harness & Disciplined Baseline Comparison
