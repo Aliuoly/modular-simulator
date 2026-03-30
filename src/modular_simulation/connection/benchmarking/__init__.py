@@ -19,6 +19,10 @@ from modular_simulation.connection.benchmarking.harness import (
     benchmark_attempt_records_to_dicts,
     run_candidate_workload,
 )
+from modular_simulation.connection.benchmarking.reporting import (
+    build_phase3_report,
+    score_candidate_report,
+)
 from modular_simulation.connection.benchmarking.workloads import (
     BenchmarkCheckpointSeed,
     benchmark_workload_coverage_matrix,
@@ -38,8 +42,10 @@ __all__ = [
     "BenchmarkWorkloadDefinition",
     "benchmark_attempt_records_to_dicts",
     "benchmark_workload_coverage_matrix",
+    "build_phase3_report",
     "build_benchmark_attempt_record",
     "build_phase3_workloads",
     "run_candidate_workload",
+    "score_candidate_report",
     "summarize_accepted_step_latency",
 ]
