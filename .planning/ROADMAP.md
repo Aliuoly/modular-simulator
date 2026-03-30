@@ -45,7 +45,12 @@ Plans:
   2. Solver candidates plug into a shared adapter seam covering state, residual, Jacobian, bounds, initialization, warm-start, and telemetry interfaces.
   3. Existing transport-lag behavior is either preserved or explicitly replaced, with the active delay treatment documented for each candidate direction.
   4. Deadtime and transport-history state can be restored and updated safely across checkpoint reloads, warm starts, and runtime edits.
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 02-01-PLAN.md — Define the shared kernel adapter seam and wrap the current split runtime as the baseline adapter.
+- [ ] 02-02-PLAN.md — Route resume, save/load, and post-edit recovery through one canonical checkpoint-based warm-start path.
+- [ ] 02-03-PLAN.md — Make delay-state treatment explicit for the split baseline and lock in restore/update regressions plus candidate mapping rules.
 
 ### Phase 3: Benchmark Harness & Disciplined Baseline Comparison
 **Goal**: Team can compare split, hybrid-coupled, and escalation candidates fairly on canonical workloads with trustworthy telemetry and realtime performance gates.
@@ -78,6 +83,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Failure Semantics & Acceptance Gates | 0/4 | Not started | - |
-| 2. Kernel Adapter, Warm Starts & Delay State | 0/TBD | Not started | - |
+| 2. Kernel Adapter, Warm Starts & Delay State | 0/3 | Not started | - |
 | 3. Benchmark Harness & Disciplined Baseline Comparison | 0/TBD | Not started | - |
 | 4. Hybrid Decision Gate & Migration Roadmap | 0/TBD | Not started | - |
