@@ -77,14 +77,14 @@ class SplitKernelAdapter:
         else:
             compiled = self.network.compiled
         if request.accepted_snapshot is not None:
-            self.network.resume_from_snapshot(snapshot=request.accepted_snapshot)
+            self.network.restore_validated_runtime_snapshot(snapshot=request.accepted_snapshot)
         return KernelInitializationResult(
             initialized=True,
             graph_revision=None if compiled is None else compiled.graph_revision,
         )
 
     def warm_start(self, request: KernelWarmStartRequest) -> KernelWarmStartResult:
-        self.network.resume_from_snapshot(snapshot=request.accepted_snapshot)
+        self.network.restore_validated_runtime_snapshot(snapshot=request.accepted_snapshot)
         compiled = self.network.compiled
         return KernelWarmStartResult(
             restored=True,

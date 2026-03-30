@@ -31,6 +31,10 @@ from ..hydraulics.line_hydraulic_config_manager import (
 from ..runtime.runtime_snapshot_schema import (
     validate_live_runtime_snapshot_payload,
 )
+from ..runtime.kernel_adapter_restore import (
+    KernelRestoreReason,
+    restore_kernel_from_snapshot,
+)
 from .asymmetric_adapter import (
     AsymmetricPortAdapter,
     ConvergingPortAdapter,
@@ -857,14 +861,51 @@ class ConnectionNetwork:
     def resume_from_snapshot(self, *, snapshot: object) -> None:
         if not isinstance(snapshot, Mapping):
             raise ValueError("invalid snapshot payload: expected mapping")
+        _ = validate_live_runtime_snapshot_payload(snapshot=snapshot)
+        self.restore_from_checkpoint_snapshot(
+            snapshot=snapshot,
+            restore_reason="resume",
+        )
+
+    def restore_validated_runtime_snapshot(self, *, snapshot: Mapping[str, object]) -> None:
         if self._runtime_orchestrator is None:
             raise RuntimeError(
                 "runtime resume is unavailable: runtime orchestrator not configured for ConnectionNetwork"
             )
-        validated_snapshot = validate_live_runtime_snapshot_payload(snapshot=snapshot)
         self._runtime_orchestrator.resume_from_snapshot(
             network=self,
-            snapshot=validated_snapshot.model_dump(mode="python", by_alias=True),
+            snapshot=snapshot,
+        )
+
+    def restore_from_checkpoint_snapshot(
+        self,
+        *,
+        snapshot: Mapping[str, object],
+        restore_reason: KernelRestoreReason,
+    ) -> None:
+        adapter = self._build_kernel_adapter()
+        restore_kernel_from_snapshot(
+            adapter=adapter,
+            snapshot=snapshot,
+            restore_reason=restore_reason,
+        )
+
+    def recover_from_checkpoint_after_edit(self, *, snapshot: Mapping[str, object]) -> None:
+        self.restore_from_checkpoint_snapshot(
+            snapshot=snapshot,
+            restore_reason="post_edit_recovery",
+        )
+
+    def _build_kernel_adapter(self):
+        if self._runtime_orchestrator is None:
+            raise RuntimeError(
+                "runtime resume is unavailable: runtime orchestrator not configured for ConnectionNetwork"
+            )
+        from ..runtime.split_kernel_adapter import SplitKernelAdapter
+
+        return SplitKernelAdapter(
+            network=self,
+            runtime_orchestrator=self._runtime_orchestrator,
         )
 
     def remove_boundary(self, *, boundary_id: object) -> None:

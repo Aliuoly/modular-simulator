@@ -21,6 +21,7 @@ from modular_simulation.connection.runtime.runtime_persistence import (
 )
 from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
 from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.cli.backend_session import PlantBackendSession
 from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
 from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSystemDefinition,
@@ -183,3 +184,30 @@ def test_restore_kernel_from_snapshot_surfaces_adapter_failure_reason() -> None:
         )
 
     assert excinfo.value.failure_reason == "graph revision mismatch"
+
+
+def test_backend_session_load_checkpoint_uses_canonical_restore_path() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network(runtime)
+    session = PlantBackendSession(network=network)
+
+    checkpoint = _checkpoint_snapshot()
+
+    session.load_checkpoint(checkpoint)
+
+    restored_snapshot = network.save_runtime_snapshot()
+    assert restored_snapshot["graph_revision"] == checkpoint["graph_revision"]
+    assert restored_snapshot["schema"] == "connection_runtime_v1"
+
+
+def test_post_edit_recovery_uses_canonical_restore_reason() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network(runtime)
+
+    checkpoint = _checkpoint_snapshot()
+
+    network.recover_from_checkpoint_after_edit(snapshot=checkpoint)
+
+    restored_snapshot = network.save_runtime_snapshot()
+    assert restored_snapshot["graph_revision"] == checkpoint["graph_revision"]
+    assert restored_snapshot["queued_request_count"] == 0

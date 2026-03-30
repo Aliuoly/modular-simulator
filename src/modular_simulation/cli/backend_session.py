@@ -882,7 +882,10 @@ class PlantBackendSession:
         The checkpoint must have been produced by :py:meth:`save_checkpoint`
         on a network with the same ``graph_revision``.
         """
-        self._network.resume_from_snapshot(snapshot=checkpoint)
+        self._network.restore_from_checkpoint_snapshot(
+            snapshot=checkpoint,
+            restore_reason="save_load",
+        )
 
     def get_observability_snapshot(self) -> Mapping[str, object]:
         """Return the substrate observability snapshot for this session.
