@@ -59,7 +59,7 @@ Each task was committed atomically:
 1. **Task 1: Expose explicit split-baseline delay semantics and delay-state mapping** - `9d507b1` (feat)
 2. **Task 2: Lock in restore/update regressions and document future-candidate rules** - `c5e9252` (feat)
 
-**Plan metadata:** Pending final docs commit
+**Plan metadata:** recorded in follow-up docs commits for summary/state/roadmap synchronization.
 
 ## Files Created/Modified
 - `src/modular_simulation/connection/kernel_adapter.py` - Added typed delay-state mapping metadata to the shared adapter contract.

@@ -13,7 +13,7 @@ This roadmap turns the v1.0 kernel-stability milestone into a decision-driven se
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [ ] **Phase 1: Failure Semantics & Acceptance Gates** - Make current kernel failures, coupled-state acceptance, and physical rejection rules explicit.
-- [ ] **Phase 2: Kernel Adapter, Warm Starts & Delay State** - Create the substrate for fair candidate comparison without breaking live runtime facades.
+- [x] **Phase 2: Kernel Adapter, Warm Starts & Delay State** - Create the substrate for fair candidate comparison without breaking live runtime facades. (completed 2026-03-30)
 - [ ] **Phase 3: Benchmark Harness & Disciplined Baseline Comparison** - Compare candidates on the same workloads, telemetry, and realtime acceptance thresholds.
 - [ ] **Phase 4: Hybrid Decision Gate & Migration Roadmap** - End the milestone with an evidence-backed kernel direction and escalation path.
 
@@ -83,6 +83,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Failure Semantics & Acceptance Gates | 0/4 | Not started | - |
-| 2. Kernel Adapter, Warm Starts & Delay State | 1/3 | In Progress | - |
+| 2. Kernel Adapter, Warm Starts & Delay State | 3/3 | Complete   | 2026-03-30 |
 | 3. Benchmark Harness & Disciplined Baseline Comparison | 0/TBD | Not started | - |
 | 4. Hybrid Decision Gate & Migration Roadmap | 0/TBD | Not started | - |
