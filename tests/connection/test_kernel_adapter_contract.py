@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
+
 from modular_simulation.connection.kernel_adapter import (
     CandidateKernelAdapter,
     KernelAdapterTelemetry,
@@ -19,6 +21,11 @@ from modular_simulation.connection.kernel_adapter import (
     SupportsResidualEvaluation,
     SupportsStateVectorExport,
 )
+from modular_simulation.connection.hydraulics.hydraulic_solver import HydraulicSolveResult
+from modular_simulation.connection.runtime.connection_layer import TransportAndMixingUpdate
+from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
+from modular_simulation.connection.runtime.split_kernel_adapter import SplitKernelAdapter
+from modular_simulation.connection.topology.network import ConnectionNetwork
 
 
 @dataclass
@@ -126,3 +133,108 @@ def test_core_adapter_contract_requires_delay_semantics_and_comparable_telemetry
     )
     assert adapter.telemetry.transport_fallback_keys == ("edge_a",)
     assert adapter.telemetry.applied_request_ids == ("rq_0001",)
+
+
+@dataclass
+class _FakeProcessRuntimeOwner:
+    state: dict[str, object]
+
+    def export_process_runtime_state(self) -> dict[str, object]:
+        return dict(self.state)
+
+    def restore_process_runtime_state(self, payload: dict[str, object]) -> None:
+        self.state = dict(payload)
+
+
+def _hydraulic_result() -> HydraulicSolveResult:
+    return HydraulicSolveResult(
+        converged=True,
+        iterations=2,
+        residual_norm=1.0e-8,
+        solution_vector=np.asarray([1.0, 5.0], dtype=np.float64),
+        unknowns={"flow": 1.0, "pressure": 5.0},
+        unknown_index_map={"flow": 0, "pressure": 1},
+        residual_index_map={"balance": 0, "ref": 1},
+    )
+
+
+def _make_split_runtime_fixture() -> tuple[
+    ConnectionNetwork,
+    ConnectionRuntimeOrchestrator,
+    _FakeProcessRuntimeOwner,
+]:
+    runtime = ConnectionRuntimeOrchestrator(
+        hydraulic_solve_step=lambda *, network, macro_step_time_s: _hydraulic_result(),
+        transport_and_mixing_step=(
+            lambda *, network, hydraulic_result, macro_step_time_s: TransportAndMixingUpdate(
+                transport_results={}
+            )
+        ),
+        boundary_propagation_step=(
+            lambda *, network, hydraulic_result, transport_and_mixing_update, macro_step_time_s: {}
+        ),
+    )
+    process_runtime_owner = _FakeProcessRuntimeOwner(state={"reactor": {"temperature": 301.0}})
+    runtime.set_observability_provider(process_runtime_owner)
+    network = ConnectionNetwork(runtime_orchestrator=runtime)
+    network.add_process("reactor", inlet_ports=("feed",), outlet_ports=("product",))
+    network.add_boundary_source("feed_boundary")
+    network.add_boundary_sink("product_boundary")
+    _ = network.connect("feed_boundary", "reactor.feed")
+    _ = network.connect("reactor.product", "product_boundary")
+    _ = network.compile()
+    return network, runtime, process_runtime_owner
+
+
+def test_split_kernel_adapter_declares_external_transport_history() -> None:
+    network, runtime, process_runtime_owner = _make_split_runtime_fixture()
+
+    adapter = SplitKernelAdapter(
+        network=network,
+        runtime_orchestrator=runtime,
+        process_runtime_owner=process_runtime_owner,
+    )
+
+    assert adapter.delay_semantics.strategy.value == "external_transport_history"
+    assert adapter.delay_semantics.state_schema == "transport_runtime_state"
+    assert adapter.delay_semantics.preserves_existing_transport_history is True
+
+
+def test_split_kernel_adapter_emits_comparable_telemetry() -> None:
+    network, runtime, process_runtime_owner = _make_split_runtime_fixture()
+    adapter = SplitKernelAdapter(
+        network=network,
+        runtime_orchestrator=runtime,
+        process_runtime_owner=process_runtime_owner,
+    )
+
+    result = adapter.evaluate_candidate_step(KernelCandidateStepRequest(macro_step_time_s=0.25))
+
+    assert result.accepted is True
+    assert result.graph_revision == "graph_rev_0001"
+    assert result.telemetry.macro_step_index == 1
+    assert result.telemetry.macro_step_time_s == 0.25
+    assert result.telemetry.simulation_time_s == 0.25
+    assert result.telemetry.executed_sequence == (
+        "hydraulics_solve",
+        "transport_update",
+        "boundary_state_propagation",
+    )
+    assert result.telemetry.used_fallback is False
+    assert result.telemetry.barrier_queue_size_before == 0
+    assert result.telemetry.barrier_queue_size_after == 0
+
+
+def test_split_kernel_adapter_does_not_claim_unsupported_solver_capabilities() -> None:
+    network, runtime, process_runtime_owner = _make_split_runtime_fixture()
+    adapter = SplitKernelAdapter(
+        network=network,
+        runtime_orchestrator=runtime,
+        process_runtime_owner=process_runtime_owner,
+    )
+
+    assert adapter.supported_optional_capabilities() == frozenset()
+    assert not isinstance(adapter, SupportsStateVectorExport)
+    assert not isinstance(adapter, SupportsResidualEvaluation)
+    assert not isinstance(adapter, SupportsJacobianAccess)
+    assert not isinstance(adapter, SupportsBoundsAccess)
