@@ -151,11 +151,10 @@ def build_checkpoint_restart_reconfigure_checkpoint() -> BenchmarkCheckpointSeed
         ),
         macro_step_time_s=0.5,
     )
-    checkpoint = session.save_checkpoint()
-    session.load_checkpoint(checkpoint)
     tx = session.begin_tx()
     tx.add_process("bypass", inlet_ports=("inlet",), outlet_ports=("outlet",))
     tx.commit()
+    checkpoint = session.save_checkpoint()
     return BenchmarkCheckpointSeed(
         workload_id="checkpoint_restart_reconfigure",
         checkpoint_id="phase3-restart-reconfigure-checkpoint",

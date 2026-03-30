@@ -121,6 +121,17 @@ def test_harness_uses_shared_fairness_contract_for_each_candidate_run() -> None:
         )
 
 
+def test_restart_reconfigure_checkpoint_contains_post_edit_topology() -> None:
+    workload = build_phase3_workloads()[2]
+
+    seed = workload.checkpoint_builder()
+    seed.session.load_checkpoint(seed.checkpoint)
+    topology = seed.session.get_topology()
+    assert topology["topology"] is not None
+    node_ids = {node["node_id"] for node in topology["topology"]["nodes"]}
+    assert "bypass" in node_ids
+
+
 def _candidate_config() -> BenchmarkCandidateConfig:
     workload = build_phase3_workloads()[0]
     return BenchmarkCandidateConfig(

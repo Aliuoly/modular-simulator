@@ -128,6 +128,39 @@ def test_disqualified_baseline_is_visible_but_unranked() -> None:
     assert report["disqualified_candidates"][0]["disqualification_reasons"] == ["fallback_used"]
 
 
+def test_build_phase3_report_scores_each_workload_independently() -> None:
+    from modular_simulation.connection.benchmarking.reporting import build_phase3_report
+
+    workloads = build_phase3_workloads()
+    baseline = _candidate_config_for_workload(workloads[0])
+    report = build_phase3_report(
+        candidate_attempt_records={
+            baseline.candidate_id: (
+                _attempt_record(
+                    workload_index=0,
+                    candidate_config=baseline,
+                    accepted=True,
+                    wall_clock_elapsed_s=0.02,
+                ),
+                _attempt_record(
+                    workload_index=1,
+                    candidate_config=_candidate_config_for_workload(workloads[1]),
+                    accepted=True,
+                    wall_clock_elapsed_s=0.50,
+                ),
+            )
+        },
+        candidate_configs={baseline.candidate_id: baseline},
+        coverage_matrix=(),
+        latency_budget=BenchmarkLatencyBudget(),
+    )
+
+    candidate_row = report["candidate_rankings"][0]
+    assert len(report["candidate_workloads"][baseline.candidate_id]) == 2
+    assert candidate_row["realtime_factor"] == 12.5
+    assert candidate_row["accepted_step_p95_fraction_of_step_size"] == 0.08
+
+
 def test_build_phase3_report_includes_coverage_matrix_and_disqualified_candidates() -> None:
     from modular_simulation.connection.benchmarking.reporting import build_phase3_report
 
@@ -175,14 +208,15 @@ def _attempt_record(
 ):
     workload = build_phase3_workloads()[workload_index]
     candidate = candidate_config or _candidate_config_for_workload(workload)
+    macro_step_time_s = workload.checkpoint_builder().macro_step_time_s
     return build_benchmark_attempt_record(
         candidate_step_result=KernelCandidateStepResult(
             accepted=accepted,
             graph_revision="graph_1",
             telemetry=KernelAdapterTelemetry(
                 macro_step_index=1,
-                macro_step_time_s=0.25,
-                simulation_time_s=0.25,
+                macro_step_time_s=macro_step_time_s,
+                simulation_time_s=macro_step_time_s,
                 graph_revision="graph_1",
                 executed_sequence=("candidate_step",),
                 transport_fallback_keys=("line_a",) if used_fallback else (),

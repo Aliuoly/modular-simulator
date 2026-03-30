@@ -116,6 +116,25 @@ def score_candidate_report(
     }
 
 
+def score_candidate_workloads(
+    *,
+    candidate_config: BenchmarkCandidateConfig,
+    attempt_records: tuple[BenchmarkAttemptRecord, ...] | list[BenchmarkAttemptRecord],
+    latency_budget: BenchmarkLatencyBudget,
+) -> tuple[dict[str, object], ...]:
+    grouped_records: dict[str, list[BenchmarkAttemptRecord]] = {}
+    for record in attempt_records:
+        grouped_records.setdefault(record.workload_id, []).append(record)
+    return tuple(
+        score_candidate_report(
+            candidate_config=candidate_config,
+            attempt_records=records,
+            latency_budget=latency_budget,
+        )
+        for _, records in sorted(grouped_records.items())
+    )
+
+
 def build_phase3_report(
     *,
     candidate_attempt_records: dict[
@@ -125,14 +144,20 @@ def build_phase3_report(
     coverage_matrix: tuple[dict[str, object], ...] | list[dict[str, object]],
     latency_budget: BenchmarkLatencyBudget,
 ) -> dict[str, object]:
-    scored_rows = [
-        score_candidate_report(
+    scored_rows = []
+    for candidate_id, attempt_records in candidate_attempt_records.items():
+        workload_rows = score_candidate_workloads(
             candidate_config=candidate_configs[candidate_id],
             attempt_records=attempt_records,
             latency_budget=latency_budget,
         )
-        for candidate_id, attempt_records in candidate_attempt_records.items()
-    ]
+        scored_rows.append(
+            _build_candidate_aggregate_row(
+                candidate_config=candidate_configs[candidate_id],
+                workload_rows=workload_rows,
+                latency_budget=latency_budget,
+            )
+        )
     candidate_rankings = sorted(
         [row for row in scored_rows if row["viable_for_ranking"]],
         key=lambda row: (
@@ -145,10 +170,81 @@ def build_phase3_report(
     return {
         "candidate_rankings": candidate_rankings,
         "disqualified_candidates": disqualified_candidates,
+        "candidate_workloads": {
+            row["candidate_id"]: row["workload_reports"] for row in scored_rows
+        },
         "coverage_matrix": list(coverage_matrix),
         "headline_rtf_target": latency_budget.headline_rtf_target,
         "minimum_rtf_gate": latency_budget.minimum_rtf_gate,
         "latency_budget_fraction": latency_budget.accepted_step_p95_fraction_of_step_size,
+    }
+
+
+def _build_candidate_aggregate_row(
+    *,
+    candidate_config: BenchmarkCandidateConfig,
+    workload_rows: tuple[dict[str, object], ...],
+    latency_budget: BenchmarkLatencyBudget,
+) -> dict[str, object]:
+    accepted_attempt_count = sum(int(row["accepted_attempt_count"]) for row in workload_rows)
+    rejected_attempt_count = sum(int(row["rejected_attempt_count"]) for row in workload_rows)
+    disqualification_reasons: list[str] = []
+    for row in workload_rows:
+        for reason in row["disqualification_reasons"]:
+            if reason not in disqualification_reasons:
+                disqualification_reasons.append(reason)
+    viable_for_ranking = bool(workload_rows) and all(
+        bool(row["viable_for_ranking"]) for row in workload_rows
+    )
+    is_disqualified = any(bool(row["is_disqualified"]) for row in workload_rows)
+    realtime_values = [
+        float(row["realtime_factor"]) for row in workload_rows if row["realtime_factor"] is not None
+    ]
+    p95_values = [
+        float(row["accepted_step_latency_p95_s"])
+        for row in workload_rows
+        if row["accepted_step_latency_p95_s"] is not None
+    ]
+    fraction_values = [
+        float(row["accepted_step_p95_fraction_of_step_size"])
+        for row in workload_rows
+        if row["accepted_step_p95_fraction_of_step_size"] is not None
+    ]
+    return {
+        "candidate_id": candidate_config.candidate_id,
+        "candidate_label": candidate_config.candidate_label,
+        "candidate_family": candidate_config.candidate_family,
+        "checkpoint_id": candidate_config.checkpoint_id,
+        "tolerance_profile": candidate_config.tolerance_profile,
+        "physical_acceptance_profile": candidate_config.physical_acceptance_profile,
+        "telemetry_contract_version": candidate_config.telemetry_contract_version,
+        "delay_semantics_label": candidate_config.delay_semantics_label,
+        "accepted_attempt_count": accepted_attempt_count,
+        "rejected_attempt_count": rejected_attempt_count,
+        "accepted_step_latency_median_s": max(
+            (row["accepted_step_latency_median_s"] for row in workload_rows),
+            default=None,
+        ),
+        "accepted_step_latency_p95_s": max(p95_values, default=None),
+        "accepted_step_latency_p99_s": max(
+            (row["accepted_step_latency_p99_s"] for row in workload_rows),
+            default=None,
+        ),
+        "accepted_step_p95_fraction_of_step_size": max(fraction_values, default=None),
+        "latency_budget_fraction": latency_budget.accepted_step_p95_fraction_of_step_size,
+        "realtime_factor": min(realtime_values, default=None),
+        "minimum_rtf_gate": latency_budget.minimum_rtf_gate,
+        "headline_rtf_target": latency_budget.headline_rtf_target,
+        "meets_latency_gate": bool(workload_rows)
+        and all(bool(row["meets_latency_gate"]) for row in workload_rows),
+        "meets_minimum_rtf_gate": bool(workload_rows)
+        and all(bool(row["meets_minimum_rtf_gate"]) for row in workload_rows),
+        "meets_headline_rtf_target": bool(workload_rows)
+        and all(bool(row["meets_headline_rtf_target"]) for row in workload_rows),
+        "is_disqualified": is_disqualified,
+        "viable_for_ranking": viable_for_ranking,
+        "disqualification_reasons": disqualification_reasons,
+        "workload_reports": list(workload_rows),
     }
 
 
@@ -165,4 +261,4 @@ def _collect_disqualification_reasons(
     return tuple(reasons)
 
 
-__all__ = ["build_phase3_report", "score_candidate_report"]
+__all__ = ["build_phase3_report", "score_candidate_report", "score_candidate_workloads"]
