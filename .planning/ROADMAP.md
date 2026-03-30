@@ -107,10 +107,12 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
   2. The SUNDIALS-backed and PETSc-backed candidates restore accepted snapshots and transport-history delay state strongly enough to start from the same checkpoint-first seeds as the disciplined split baseline.
   3. The final report keeps per-workload rows, baseline visibility, and disqualified-candidate visibility instead of silently dropping failed candidates.
   4. Existing public runtime/session facades stay intact; new solver work remains behind `CandidateKernelAdapter` and the benchmark wrapper.
-**Plans:** 4 plans
+**Plans:** 6 plans
 
 Plans:
 - [x] 05-01-PLAN.md — Define the Phase 5 hard-coded comparison contract, binding metadata, and dependency declarations.
 - [x] 05-02-PLAN.md — Implement the SUNDIALS-backed runnable adapter with accepted-snapshot and delay-state parity.
 - [x] 05-03-PLAN.md — Implement the PETSc-backed runnable adapter with accepted-snapshot and delay-state parity.
 - [x] 05-04-PLAN.md — Wire the hard-coded three-candidate benchmark surface and verify visible multi-candidate reporting.
+- [ ] 05-05-PLAN.md — Provision a pinned live-backend environment plus CI path for real SUNDIALS and PETSc benchmark execution.
+- [ ] 05-06-PLAN.md — Add live same-harness regression checks and rerun the real Phase 5 benchmark gate.
