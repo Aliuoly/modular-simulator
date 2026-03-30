@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 3 context gathered
-last_updated: "2026-03-30T02:58:16.605Z"
+stopped_at: Completed 03-01-PLAN.md
+last_updated: "2026-03-30T02:59:21.240Z"
 last_activity: 2026-03-30 -- Phase 03 execution started
 progress:
   total_phases: 4
@@ -54,6 +54,7 @@ Progress: [████░░░░░░] 43%
 | Phase 02 P01 | 3 min | 2 tasks | 4 files |
 | Phase 02 P02 | 4 min | 2 tasks | 6 files |
 | Phase 02 P03 | 2 min | 2 tasks | 5 files |
+| Phase 03 P01 | 4 min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -71,6 +72,8 @@ Recent decisions affecting current work:
 - [Phase 02]: Delay semantics and mapping metadata belong to the required adapter core so candidate comparisons cannot hide delay treatment.
 - [Phase 02]: The split baseline keeps the existing transport_runtime_state schema in Phase 2 instead of renaming snapshot payloads prematurely.
 - [Phase 02]: Future candidates using augmented_state or hybrid must publish explicit transport-history mapping and restore rules for checkpoint reloads and runtime edits.
+- [Phase 03]: Adopt one shared benchmark contract package under src/modular_simulation/connection/benchmarking for fairness metadata, attempt records, and accepted-step latency summaries. — Phase 3 context and research require one reusable substrate contract so every candidate uses the same checkpoint, tolerance, telemetry, and delay-semantics language instead of bespoke dicts.
+- [Phase 03]: Keep accepted-step viability summaries separate from all-attempt traces so rejected and disqualified attempts remain visible without polluting latency gates. — D-02 and D-03 require median/p95/p99 latency to use accepted attempts only while fallback, hidden failure, and rejection evidence stays explicit in the benchmark trace.
 
 ### Pending Todos
 
@@ -82,6 +85,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-30T02:58:16.603Z
-Stopped at: Phase 3 context gathered
+Last session: 2026-03-30T02:59:21.238Z
+Stopped at: Completed 03-01-PLAN.md
 Resume file: None
