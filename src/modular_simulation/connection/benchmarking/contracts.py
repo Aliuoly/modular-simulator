@@ -77,6 +77,9 @@ class BenchmarkAttemptRecord:
     picard_iterations_used: int = 0
     picard_converged: bool = True
     picard_last_residual: float | None = None
+    residual_eval_cost_s: float | None = None
+    jacobian_eval_cost_s: float | None = None
+    linear_solve_cost_s: float | None = None
     disqualification_reasons: tuple[BenchmarkDisqualificationReason, ...] = ()
     details: str | None = None
 
