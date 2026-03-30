@@ -87,7 +87,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 1 → 2 → 3 → 4
+Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -95,3 +95,22 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 2. Kernel Adapter, Warm Starts & Delay State | 3/3 | Complete   | 2026-03-30 |
 | 3. Benchmark Harness & Disciplined Baseline Comparison | 3/3 | Complete   | 2026-03-30 |
 | 4. Hybrid Decision Gate & Migration Roadmap | 2/2 | Complete   | 2026-03-30 |
+| 5. Runnable solver candidates | 0/4 | Planned | - |
+
+### Phase 5: Runnable solver candidates
+
+**Goal:** Team can run the disciplined split baseline, a real SUNDIALS-backed candidate, and a real PETSc-backed candidate through the fixed three-workload canon from comparable accepted snapshots and publish one same-harness report.
+**Requirements**: PERF-06, SOLV-06, DELY-05
+**Depends on:** Phase 4
+**Success Criteria** (what must be TRUE):
+  1. Team can run `disciplined_split`, `sundials4py`, and `petsc4py` through the exact fixed canon `ammonia_recycle_warm`, `staged_delay_control_disturbance`, and `checkpoint_restart_reconfigure` using the existing benchmark harness contract.
+  2. The SUNDIALS-backed and PETSc-backed candidates restore accepted snapshots and transport-history delay state strongly enough to start from the same checkpoint-first seeds as the disciplined split baseline.
+  3. The final report keeps per-workload rows, baseline visibility, and disqualified-candidate visibility instead of silently dropping failed candidates.
+  4. Existing public runtime/session facades stay intact; new solver work remains behind `CandidateKernelAdapter` and the benchmark wrapper.
+**Plans:** 4 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — Define the Phase 5 hard-coded comparison contract, binding metadata, and dependency declarations.
+- [ ] 05-02-PLAN.md — Implement the SUNDIALS-backed runnable adapter with accepted-snapshot and delay-state parity.
+- [ ] 05-03-PLAN.md — Implement the PETSc-backed runnable adapter with accepted-snapshot and delay-state parity.
+- [ ] 05-04-PLAN.md — Wire the hard-coded three-candidate benchmark surface and verify visible multi-candidate reporting.

@@ -22,6 +22,7 @@ Requirements for milestone v1.0 Kernel stability. Each maps to roadmap phases.
 - [x] **PERF-03**: Team can evaluate candidate kernels against explicit realtime viability thresholds using realtime factor plus median, p95, and p99 accepted-step latency.
 - [x] **PERF-04**: Team can disqualify any candidate from performance comparison when benchmark traces carry producer-backed rank-blocking evidence such as fallback use, hidden solver failure, telemetry-contract failure, or future physical-acceptance/clipping/hidden-recovery signals.
 - [x] **PERF-05**: Team can decide whether leaving the current SciPy baseline is justified using benchmark evidence rather than intuition or single-scenario timing.
+- [ ] **PERF-06**: Team can run the disciplined split baseline plus the chosen SUNDIALS-backed and PETSc-backed candidates through the fixed canonical workloads and publish one same-harness report that keeps disqualified candidates visible.
 
 ### Solver Substrate Comparison
 
@@ -30,6 +31,7 @@ Requirements for milestone v1.0 Kernel stability. Each maps to roadmap phases.
 - [x] **SOLV-03**: Team can evaluate a disciplined current-stack baseline before approving a migration to a new solver substrate.
 - [x] **SOLV-04**: Team can compare at least one post-SciPy Python-native path and at least one non-Python-capable path when benchmark evidence suggests the baseline may be solver-limited.
 - [x] **SOLV-05**: Team can justify any solver-stack migration in terms of stability improvement, latency improvement, deployment risk, and compatibility with the existing runtime/session facades.
+- [ ] **SOLV-06**: Team can instantiate real SUNDIALS-backed and PETSc-backed `CandidateKernelAdapter` implementations behind the existing runtime/session facades without replacing `PlantBackendSession` or the shared benchmark substrate first.
 
 ### Delay Semantics
 
@@ -37,6 +39,7 @@ Requirements for milestone v1.0 Kernel stability. Each maps to roadmap phases.
 - [x] **DELY-02**: Team can define how deadtime is represented in each candidate kernel direction, including whether delay remains external history/buffer state, becomes augmented state, or requires a different hybrid treatment.
 - [x] **DELY-03**: Team can restore and safely update deadtime or transport-history state across checkpoint reloads, warm starts, and runtime edits.
 - [x] **DELY-04**: Team can benchmark delay-heavy and transport-lag-sensitive scenarios so whole-flowsheet directions are not approved without evidence that delay semantics still behave credibly.
+- [ ] **DELY-05**: Team can restore accepted snapshots and transport-history or delay payloads across every runnable comparison candidate so same-workload benchmark runs start from comparable checkpoint state rather than fresh starts.
 
 ## Future Requirements
 
@@ -77,19 +80,22 @@ Deferred until after the milestone establishes the kernel direction and benchmar
 | PERF-03 | Phase 3 | Complete |
 | PERF-04 | Phase 3 | Complete |
 | PERF-05 | Phase 4 | Complete |
+| PERF-06 | Phase 5 | Pending |
 | SOLV-01 | Phase 3 | Complete |
 | SOLV-02 | Phase 2 | Complete |
 | SOLV-03 | Phase 3 | Complete |
 | SOLV-04 | Phase 4 | Complete |
 | SOLV-05 | Phase 4 | Complete |
+| SOLV-06 | Phase 5 | Pending |
 | DELY-01 | Phase 2 | Complete |
 | DELY-02 | Phase 2 | Complete |
 | DELY-03 | Phase 2 | Complete |
 | DELY-04 | Phase 3 | Complete |
+| DELY-05 | Phase 5 | Pending |
 
 **Coverage:**
-- v1 requirements: 19 total
-- Mapped to phases: 19
+- v1 requirements: 22 total
+- Mapped to phases: 22
 - Unmapped: 0
 
 ---
