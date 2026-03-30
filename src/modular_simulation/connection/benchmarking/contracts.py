@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -38,6 +39,7 @@ class BenchmarkWorkloadDefinition:
     physical_acceptance_profile: str
     telemetry_contract_version: str
     delay_semantics_label: str
+    checkpoint_builder: Callable[[], object] | None = None
     scenario_tags: tuple[BenchmarkScenarioTag, ...] = ()
     latency_budget: BenchmarkLatencyBudget = field(default_factory=BenchmarkLatencyBudget)
     description: str | None = None
