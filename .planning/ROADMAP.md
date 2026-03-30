@@ -62,7 +62,12 @@ Plans:
   3. Benchmark results apply explicit realtime viability thresholds using realtime factor plus median, p95, and p99 accepted-step latency on the same tolerances and physical-acceptance gates.
   4. Any candidate that hides solver failure, violates physical-acceptance gates, or depends on emergency clipping/fallback is disqualified before speed comparisons are accepted.
   5. Delay-heavy and transport-lag-sensitive scenarios are included in the benchmark matrix so whole-flowsheet or hybrid directions are not approved by ignoring delay semantics.
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Define reusable benchmark contracts, fairness metadata, and telemetry normalization for candidate comparison.
+- [ ] 03-02-PLAN.md — Build the fixed 3-workload checkpoint-first catalog and reusable benchmark harness runner.
+- [ ] 03-03-PLAN.md — Add viability scoring, disqualification, and disciplined split/SciPy baseline reporting.
 
 ### Phase 4: Hybrid Decision Gate & Migration Roadmap
 **Goal**: Team can choose the default kernel direction for v1.0, justify whether SciPy remains sufficient, and publish a concrete migration roadmap for any needed escalation.
@@ -84,5 +89,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Failure Semantics & Acceptance Gates | 0/4 | Not started | - |
 | 2. Kernel Adapter, Warm Starts & Delay State | 3/3 | Complete   | 2026-03-30 |
-| 3. Benchmark Harness & Disciplined Baseline Comparison | 0/TBD | Not started | - |
+| 3. Benchmark Harness & Disciplined Baseline Comparison | 0/3 | Not started | - |
 | 4. Hybrid Decision Gate & Migration Roadmap | 0/TBD | Not started | - |
