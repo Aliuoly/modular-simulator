@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Phase 03 ready for verification
-last_updated: "2026-03-30T11:59:40.874Z"
+status: verifying
+stopped_at: Completed 04-02-PLAN.md
+last_updated: "2026-03-30T12:17:56.354Z"
 last_activity: 2026-03-30
 progress:
   total_phases: 4
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 13
-  completed_plans: 8
-  percent: 43
+  completed_plans: 9
+  percent: 69
 ---
 
 # Project State
@@ -25,30 +25,32 @@ See: `.planning/PROJECT.md` (updated 2026-03-29)
 
 ## Current Position
 
-Phase: 04 (hybrid-decision-gate-migration-roadmap) — EXECUTING
-Plan: 2 of 2
-Status: Ready to execute
+Phase: 04
+Plan: 2 of 2 complete
+Status: Ready for verification
 Last activity: 2026-03-30
 
-Progress: [████░░░░░░] 43%
+Progress: [███████░░░] 69%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 6
-- Average duration: 3 min
-- Total execution time: 0.2 hours
+- Total plans completed: 8
+- Average duration: 5 min
+- Total execution time: 0.7 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 02 | 3 | 9 min | 3 min |
+| 03 | 3 | 27 min | 9 min |
+| 04 | 2 | 7 min | 4 min |
 
 **Recent Trend:**
 
-- Last 5 plans: 02-02 (4 min), 02-03 (2 min), 03-01 (4 min), 03-02 (18 min), 03-03 (5 min)
+- Last 5 plans: 03-01 (4 min), 03-02 (18 min), 03-03 (5 min), 04-01 (1 min), 04-02 (6 min)
 - Trend: Stable
 
 | Phase 02 P01 | 3 min | 2 tasks | 4 files |
@@ -57,6 +59,8 @@ Progress: [████░░░░░░] 43%
 | Phase 03 P01 | 4 min | 2 tasks | 4 files |
 | Phase 03 P02 | 18 min | 2 tasks | 7 files |
 | Phase 03 P03 | 5 min | 2 tasks | 6 files |
+| Phase 04 P01 | 1 min | 2 tasks | 3 files |
+| Phase 04 P02 | 6 min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -81,6 +85,8 @@ Recent decisions affecting current work:
 - [Phase 03]: Make the macro benchmark example a thin wrapper that returns JSON-serializable attempt-record summaries from the reusable Phase 3 harness. — The example benchmark must stop being a disconnected smoke stub; returning serialized harness traces keeps example behavior aligned with the reusable substrate and gives Phase 3 reporting work one stable summary shape.
 - [Phase 03]: Separate minimum viability from headline target in benchmark reports — Reports now keep minimum_rtf_gate=4.0 distinct from headline_rtf_target=100.0 so viability and aspirational headroom stay explicit.
 - [Phase 03]: Keep disqualified baseline visible but unranked — Phase 3 reporting now always shows the disciplined split/SciPy baseline while excluding producer-backed disqualified runs from `candidate_rankings`.
+- [Phase 04]: Keep `hybrid_coupled` as the default kernel direction while separating architecture direction from solver-stack escalation. — The public decision surface and roadmap now freeze `hybrid_coupled` as the default direction unless benchmark evidence disproves it.
+- [Phase 04]: Leave SciPy only when Phase 3 gates miss and profiling shows `solver_core_fraction >= 0.5`; try `sundials4py` before PETSc. — The reusable decision gate, public wrapper, and docs now enforce `sundials4py` as the first post-SciPy path and keep `petsc4py` later-only.
 
 ### Pending Todos
 
@@ -92,6 +98,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-30T05:05:00.000Z
-Stopped at: Phase 03 ready for verification
+Last session: 2026-03-30T12:14:04.563Z
+Stopped at: Completed 04-02-PLAN.md
 Resume file: None

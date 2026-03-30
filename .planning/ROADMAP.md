@@ -15,7 +15,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [ ] **Phase 1: Failure Semantics & Acceptance Gates** - Make current kernel failures, coupled-state acceptance, and physical rejection rules explicit.
 - [x] **Phase 2: Kernel Adapter, Warm Starts & Delay State** - Create the substrate for fair candidate comparison without breaking live runtime facades. (completed 2026-03-30)
 - [x] **Phase 3: Benchmark Harness & Disciplined Baseline Comparison** - Compare candidates on the same workloads, telemetry, and realtime acceptance thresholds.
-- [ ] **Phase 4: Hybrid Decision Gate & Migration Roadmap** - End the milestone with an evidence-backed kernel direction and escalation path.
+- [x] **Phase 4: Hybrid Decision Gate & Migration Roadmap** - End the milestone with an evidence-backed kernel direction and escalation path. (completed 2026-03-30)
 
 ## Phase Details
 
@@ -81,8 +81,8 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
-- [ ] 04-01-PLAN.md — Add the reusable Phase 4 decision gate that turns Phase 3 benchmark evidence into a SciPy sufficiency or escalation decision.
-- [ ] 04-02-PLAN.md — Publish the thin Phase 4 decision example plus kernel-direction and migration-roadmap docs grounded in the Phase 3 canon.
+- [x] 04-01-PLAN.md — Add the reusable Phase 4 decision gate that turns Phase 3 benchmark evidence into a SciPy sufficiency or escalation decision.
+- [x] 04-02-PLAN.md — Publish the thin Phase 4 decision example plus kernel-direction and migration-roadmap docs grounded in the Phase 3 canon.
 
 ## Progress
 
@@ -94,4 +94,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | 1. Failure Semantics & Acceptance Gates | 0/4 | Not started | - |
 | 2. Kernel Adapter, Warm Starts & Delay State | 3/3 | Complete   | 2026-03-30 |
 | 3. Benchmark Harness & Disciplined Baseline Comparison | 3/3 | Complete   | 2026-03-30 |
-| 4. Hybrid Decision Gate & Migration Roadmap | 0/2 | Not started | - |
+| 4. Hybrid Decision Gate & Migration Roadmap | 2/2 | Complete   | 2026-03-30 |

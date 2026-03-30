@@ -57,7 +57,7 @@ completed: 2026-03-30
 Each task was committed atomically:
 
 1. **Task 1: Write failing tests for the Phase 4 decision example and roadmap docs** - `1af3cef` (test)
-2. **Task 2: Implement the thin Phase 4 decision example and publish the migration docs** - `PENDING` (feat)
+2. **Task 2: Implement the thin Phase 4 decision example and publish the migration docs** - `ef0f8c7` (feat)
 
 _Note: Task 1 followed RED -> GREEN across the task commits._
 

@@ -28,9 +28,9 @@ Deliver a grounded, composable process-simulation backend that stays physically 
 
 ### Active
 
-- [ ] Analyze failure modes in the current split unit-step / connection macro-step kernel, especially stale hydraulic decisions and non-physical inventories
-- [ ] Compare candidate kernel architectures for complex flowsheets, including whole-flowsheet coupled stepping versus the current split runtime
-- [ ] Define a migration roadmap toward a more stable backend kernel that preserves game-usable simulation performance
+- [x] Analyze failure modes in the current split unit-step / connection macro-step kernel, especially stale hydraulic decisions and non-physical inventories
+- [x] Compare candidate kernel architectures for complex flowsheets, including whole-flowsheet coupled stepping versus the current split runtime
+- [x] Define a migration roadmap toward a more stable backend kernel that preserves game-usable simulation performance
 
 ### Out of Scope
 
@@ -58,6 +58,10 @@ The existing brownfield codebase already includes a flowsheet builder, connected
 | Start planning baseline at milestone v1.0 | `.planning/PROJECT.md` and milestone history were not yet initialized for this brownfield repo | — Pending |
 | Prioritize kernel stability and performance over new feature expansion | The current concern is backend correctness and suitability for complex flowsheets in game use | — Pending |
 | Evaluate whole-flowsheet coupled stepping as a first-class option | The user explicitly wants to test whether the current split-step architecture is the wrong direction | — Pending |
+| Score benchmark candidates per workload while publishing the real split baseline | Phase 3 review showed that mixed-workload latency gates and a synthetic baseline stub produce non-credible benchmark evidence | Phase 3 reports now aggregate workload-level results and instantiate the network's configured split adapter path |
+| Narrow Phase 3 workload claims to transport-history-sensitive disturbance and topology-reroute evidence | The benchmark canon now carries honest delay-sensitive and restart/reconfiguration coverage, but it does not yet wire a full closed-loop controller benchmark | Phase 3 roadmap and requirement text now match the implemented workload seeds and checkpoint reroute behavior |
+| Keep `hybrid_coupled` as the default kernel direction while separating architecture direction from solver-stack migration | Phase 4 needs one evidence-backed kernel direction without forcing an immediate solver rewrite or facade break | The reusable decision gate, public wrapper, and docs now lock the default direction to `hybrid_coupled` and preserve `PlantBackendSession` / `CandidateKernelAdapter` |
+| Leave SciPy only after gate misses plus solver-core dominance, with `sundials4py` before PETSc | Phase 4 research favored a lighter Python-native escalation before a higher-complexity PETSc path | The decision gate and roadmap now require gate evidence plus `solver_core_fraction >= 0.5`, recommend `sundials4py` first, and keep `petsc4py` later-only |
 
 ## Evolution
 
@@ -77,4 +81,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-03-29 after milestone v1.0 start*
+*Last updated: 2026-03-30 after Phase 4 completion and verification handoff*

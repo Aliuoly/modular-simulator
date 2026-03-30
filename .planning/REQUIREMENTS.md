@@ -21,15 +21,15 @@ Requirements for milestone v1.0 Kernel stability. Each maps to roadmap phases.
 - [x] **PERF-02**: Team can record per-step telemetry for accepted/rejected steps, residual/convergence status, Jacobian or residual assembly cost, linear-solve cost, and wall-clock latency.
 - [x] **PERF-03**: Team can evaluate candidate kernels against explicit realtime viability thresholds using realtime factor plus median, p95, and p99 accepted-step latency.
 - [x] **PERF-04**: Team can disqualify any candidate from performance comparison when benchmark traces carry producer-backed rank-blocking evidence such as fallback use, hidden solver failure, telemetry-contract failure, or future physical-acceptance/clipping/hidden-recovery signals.
-- [ ] **PERF-05**: Team can decide whether leaving the current SciPy baseline is justified using benchmark evidence rather than intuition or single-scenario timing.
+- [x] **PERF-05**: Team can decide whether leaving the current SciPy baseline is justified using benchmark evidence rather than intuition or single-scenario timing.
 
 ### Solver Substrate Comparison
 
 - [x] **SOLV-01**: Team can compare candidate solver substrates fairly using the same flowsheet workloads, checkpoints, tolerances, physical-acceptance gates, and telemetry outputs.
 - [x] **SOLV-02**: Team can expose a solver-kernel adapter seam with state, residual, Jacobian, bounds, initialization, warm-start, and telemetry interfaces so candidate stacks can be swapped without rewriting gameplay/session surfaces first.
 - [x] **SOLV-03**: Team can evaluate a disciplined current-stack baseline before approving a migration to a new solver substrate.
-- [ ] **SOLV-04**: Team can compare at least one post-SciPy Python-native path and at least one non-Python-capable path when benchmark evidence suggests the baseline may be solver-limited.
-- [ ] **SOLV-05**: Team can justify any solver-stack migration in terms of stability improvement, latency improvement, deployment risk, and compatibility with the existing runtime/session facades.
+- [x] **SOLV-04**: Team can compare at least one post-SciPy Python-native path and at least one non-Python-capable path when benchmark evidence suggests the baseline may be solver-limited.
+- [x] **SOLV-05**: Team can justify any solver-stack migration in terms of stability improvement, latency improvement, deployment risk, and compatibility with the existing runtime/session facades.
 
 ### Delay Semantics
 
@@ -76,12 +76,12 @@ Deferred until after the milestone establishes the kernel direction and benchmar
 | PERF-02 | Phase 3 | Complete |
 | PERF-03 | Phase 3 | Complete |
 | PERF-04 | Phase 3 | Complete |
-| PERF-05 | Phase 4 | Pending |
+| PERF-05 | Phase 4 | Complete |
 | SOLV-01 | Phase 3 | Complete |
 | SOLV-02 | Phase 2 | Complete |
 | SOLV-03 | Phase 3 | Complete |
-| SOLV-04 | Phase 4 | Pending |
-| SOLV-05 | Phase 4 | Pending |
+| SOLV-04 | Phase 4 | Complete |
+| SOLV-05 | Phase 4 | Complete |
 | DELY-01 | Phase 2 | Complete |
 | DELY-02 | Phase 2 | Complete |
 | DELY-03 | Phase 2 | Complete |
