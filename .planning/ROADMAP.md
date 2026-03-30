@@ -66,7 +66,7 @@ Plans:
 
 Plans:
 - [x] 03-01-PLAN.md — Define reusable benchmark contracts, fairness metadata, and telemetry normalization for candidate comparison.
-- [ ] 03-02-PLAN.md — Build the fixed 3-workload checkpoint-first catalog and reusable benchmark harness runner.
+- [x] 03-02-PLAN.md — Build the fixed 3-workload checkpoint-first catalog and reusable benchmark harness runner.
 - [ ] 03-03-PLAN.md — Add viability scoring, disqualification, and disciplined split/SciPy baseline reporting.
 
 ### Phase 4: Hybrid Decision Gate & Migration Roadmap

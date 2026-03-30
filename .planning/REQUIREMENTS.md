@@ -17,7 +17,7 @@ Requirements for milestone v1.0 Kernel stability. Each maps to roadmap phases.
 
 ### Performance Evidence
 
-- [ ] **PERF-01**: Team can run a version-controlled benchmark harness over canonical checkpointed workloads covering warm runs, disturbances, recycle-heavy cases, controller/network coupling, and restart/reconfiguration paths.
+- [x] **PERF-01**: Team can run a version-controlled benchmark harness over canonical checkpointed workloads covering warm runs, disturbances, recycle-heavy cases, controller/network coupling, and restart/reconfiguration paths.
 - [x] **PERF-02**: Team can record per-step telemetry for accepted/rejected steps, residual/convergence status, Jacobian or residual assembly cost, linear-solve cost, and wall-clock latency.
 - [ ] **PERF-03**: Team can evaluate candidate kernels against explicit realtime viability thresholds using realtime factor plus median, p95, and p99 accepted-step latency.
 - [ ] **PERF-04**: Team can disqualify any candidate from performance comparison when it violates physical-acceptance gates, hides solver failure, or depends on emergency clipping/fallback to appear stable.
@@ -36,7 +36,7 @@ Requirements for milestone v1.0 Kernel stability. Each maps to roadmap phases.
 - [x] **DELY-01**: Team can preserve or explicitly replace existing transport-lag behavior so candidate kernels do not erase current delay semantics when moving toward hybrid or whole-flowsheet coupling.
 - [x] **DELY-02**: Team can define how deadtime is represented in each candidate kernel direction, including whether delay remains external history/buffer state, becomes augmented state, or requires a different hybrid treatment.
 - [x] **DELY-03**: Team can restore and safely update deadtime or transport-history state across checkpoint reloads, warm starts, and runtime edits.
-- [ ] **DELY-04**: Team can benchmark delay-heavy and transport-lag-sensitive scenarios so whole-flowsheet directions are not approved without evidence that delay semantics still behave credibly.
+- [x] **DELY-04**: Team can benchmark delay-heavy and transport-lag-sensitive scenarios so whole-flowsheet directions are not approved without evidence that delay semantics still behave credibly.
 
 ## Future Requirements
 
@@ -72,7 +72,7 @@ Deferred until after the milestone establishes the kernel direction and benchmar
 | KERN-03 | Phase 1 | Pending |
 | KERN-04 | Phase 2 | Complete |
 | KERN-05 | Phase 1 | Pending |
-| PERF-01 | Phase 3 | Pending |
+| PERF-01 | Phase 3 | Complete |
 | PERF-02 | Phase 3 | Complete |
 | PERF-03 | Phase 3 | Pending |
 | PERF-04 | Phase 3 | Pending |
@@ -85,7 +85,7 @@ Deferred until after the milestone establishes the kernel direction and benchmar
 | DELY-01 | Phase 2 | Complete |
 | DELY-02 | Phase 2 | Complete |
 | DELY-03 | Phase 2 | Complete |
-| DELY-04 | Phase 3 | Pending |
+| DELY-04 | Phase 3 | Complete |
 
 **Coverage:**
 - v1 requirements: 19 total
