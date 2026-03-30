@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 05-02-PLAN.md
-last_updated: "2026-03-30T20:57:38.186Z"
+stopped_at: Completed 05-03-PLAN.md
+last_updated: "2026-03-30T20:59:03.931Z"
 last_activity: 2026-03-30
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 17
-  completed_plans: 11
+  completed_plans: 12
   percent: 69
 ---
 
@@ -26,7 +26,7 @@ See: `.planning/PROJECT.md` (updated 2026-03-29)
 ## Current Position
 
 Phase: 05 (runnable-solver-candidates) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
 Last activity: 2026-03-30
 
@@ -63,6 +63,7 @@ Progress: [███████░░░] 69%
 | Phase 04 P02 | 6 min | 2 tasks | 4 files |
 | Phase 05 P01 | 3 min | 2 tasks | 4 files |
 | Phase 05 P02 | 4 min | 2 tasks | 2 files |
+| Phase 05 P03 | 6 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -92,6 +93,8 @@ Recent decisions affecting current work:
 - [Phase 05]: Keep the Phase 5 runnable comparison set hard-coded and phase-local instead of introducing discovery or registry logic.
 - [Phase 05]: Preserve public slot ids as disciplined_split, sundials4py, and petsc4py while recording concrete bindings separately as split_kernel_adapter, scikits.odes.ida, and petsc4py.PETSc.SNES.
 - [Phase 05]: Preserve external transport-history delay semantics by reusing runtime export/restore payloads instead of inventing a new delay model.
+- [Phase 05]: Implement PETSc as a lazy-imported SNES adapter over the compiled hydraulic residual/Jacobian seam so the public runtime facade stays unchanged. — Phase 5 requires a real PETSc-backed comparison candidate behind the existing CandidateKernelAdapter seam, and lazy import keeps the facade stable while allowing test doubles in environments without a native PETSc install.
+- [Phase 05]: Reuse the existing external transport-history delay bundle and validated snapshot restore path for PETSc so same-canon fairness remains checkpoint-first. — D-08 and D-09 require every runnable comparison candidate to start from comparable accepted snapshots and delay payloads rather than a PETSc-specific fresh-start path.
 
 ### Pending Todos
 
@@ -107,6 +110,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-30T20:57:38.184Z
-Stopped at: Completed 05-02-PLAN.md
+Last session: 2026-03-30T20:59:03.929Z
+Stopped at: Completed 05-03-PLAN.md
 Resume file: None
