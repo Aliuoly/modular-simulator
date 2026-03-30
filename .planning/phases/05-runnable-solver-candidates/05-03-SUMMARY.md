@@ -53,7 +53,7 @@ Each task was committed atomically:
 1. **Task 1: Write failing PETSc-adapter restore and telemetry tests** - `e3409ee` (test)
 2. **Task 2: Implement the PETSc-backed adapter on the compiled hydraulic seam** - `4825a67` (feat)
 
-**Plan metadata:** `PENDING`
+**Plan metadata:** `2857fad` (docs)
 
 ## Files Created/Modified
 - `tests/connection/test_petsc_kernel_adapter.py` - RED/GREEN regression coverage for snapshot restore, delay-state parity, PETSc telemetry, and candidate-order policy.
