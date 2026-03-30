@@ -33,6 +33,12 @@ from modular_simulation.connection.benchmarking.workloads import (
     benchmark_workload_coverage_matrix,
     build_phase3_workloads,
 )
+from modular_simulation.connection.benchmarking.runnable_candidate_contracts import (
+    PHASE5_RUNNABLE_CANDIDATES,
+    PHASE5_RUNNABLE_CANDIDATE_ORDER,
+    RunnableCandidateDefinition,
+    build_phase5_candidate_configs,
+)
 
 __all__ = [
     "BenchmarkAcceptedLatencySummary",
@@ -47,10 +53,14 @@ __all__ = [
     "BenchmarkWorkloadDefinition",
     "KernelDirectionDecision",
     "KernelProfilingSummary",
+    "PHASE5_RUNNABLE_CANDIDATES",
+    "PHASE5_RUNNABLE_CANDIDATE_ORDER",
+    "RunnableCandidateDefinition",
     "benchmark_attempt_records_to_dicts",
     "benchmark_workload_coverage_matrix",
     "build_kernel_direction_decision",
     "build_phase3_report",
+    "build_phase5_candidate_configs",
     "build_benchmark_attempt_record",
     "build_phase3_workloads",
     "run_candidate_workload",
