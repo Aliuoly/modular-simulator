@@ -14,7 +14,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [ ] **Phase 1: Failure Semantics & Acceptance Gates** - Make current kernel failures, coupled-state acceptance, and physical rejection rules explicit.
 - [x] **Phase 2: Kernel Adapter, Warm Starts & Delay State** - Create the substrate for fair candidate comparison without breaking live runtime facades. (completed 2026-03-30)
-- [ ] **Phase 3: Benchmark Harness & Disciplined Baseline Comparison** - Compare candidates on the same workloads, telemetry, and realtime acceptance thresholds.
+- [x] **Phase 3: Benchmark Harness & Disciplined Baseline Comparison** - Compare candidates on the same workloads, telemetry, and realtime acceptance thresholds.
 - [ ] **Phase 4: Hybrid Decision Gate & Migration Roadmap** - End the milestone with an evidence-backed kernel direction and escalation path.
 
 ## Phase Details
@@ -57,10 +57,10 @@ Plans:
 **Depends on**: Phase 2
 **Requirements**: PERF-01, PERF-02, PERF-03, PERF-04, SOLV-01, SOLV-03, DELY-04
 **Success Criteria** (what must be TRUE):
-  1. Team can run a version-controlled benchmark harness over canonical checkpointed workloads covering warm runs, disturbances, recycle-heavy cases, controller/network coupling, restart, and reconfiguration paths.
+  1. Team can run a version-controlled benchmark harness over canonical checkpointed workloads covering warm runs, disturbances, recycle-heavy cases, transport-history-sensitive staged flow paths, and restart plus post-edit reconfiguration paths.
   2. Every candidate emits comparable per-step telemetry for accepted/rejected steps, convergence status, residual/Jacobian work, linear-solve cost, and wall-clock latency.
   3. Benchmark results apply explicit realtime viability thresholds using realtime factor plus median, p95, and p99 accepted-step latency on the same tolerances and physical-acceptance gates.
-  4. Any candidate that hides solver failure, violates physical-acceptance gates, or depends on emergency clipping/fallback is disqualified before speed comparisons are accepted.
+  4. Any candidate that emits producer-backed rank-blocking benchmark evidence is disqualified before speed comparisons are accepted, with fallback use remaining mandatory and additional disqualifier signals surfaced as adapters expose them.
   5. Delay-heavy and transport-lag-sensitive scenarios are included in the benchmark matrix so whole-flowsheet or hybrid directions are not approved by ignoring delay semantics.
 **Plans**: 3 plans
 
@@ -78,7 +78,11 @@ Plans:
   2. When the baseline appears solver-limited, the comparison includes at least one post-SciPy Python-native path and at least one non-Python-capable path under the same workloads, tolerances, and acceptance gates.
   3. The milestone ends with a concrete migration roadmap that treats split-step instability and possible whole-flowsheet escalation as one kernel problem, sets hybrid-coupled as the default direction unless benchmarks disprove it, and preserves existing facades where practical.
   4. Any solver-stack migration is justified in terms of stability, latency, deployment risk, and compatibility; `sundials4py` is the first serious post-SciPy path and PETSc/petsc4py remains a later escalation only if benchmarks justify it.
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — Add the reusable Phase 4 decision gate that turns Phase 3 benchmark evidence into a SciPy sufficiency or escalation decision.
+- [ ] 04-02-PLAN.md — Publish the thin Phase 4 decision example plus kernel-direction and migration-roadmap docs grounded in the Phase 3 canon.
 
 ## Progress
 
@@ -89,5 +93,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Failure Semantics & Acceptance Gates | 0/4 | Not started | - |
 | 2. Kernel Adapter, Warm Starts & Delay State | 3/3 | Complete   | 2026-03-30 |
-| 3. Benchmark Harness & Disciplined Baseline Comparison | 1/3 | In Progress | - |
-| 4. Hybrid Decision Gate & Migration Roadmap | 0/TBD | Not started | - |
+| 3. Benchmark Harness & Disciplined Baseline Comparison | 3/3 | Complete   | 2026-03-30 |
+| 4. Hybrid Decision Gate & Migration Roadmap | 0/2 | Not started | - |
