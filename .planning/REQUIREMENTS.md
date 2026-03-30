@@ -33,9 +33,9 @@ Requirements for milestone v1.0 Kernel stability. Each maps to roadmap phases.
 
 ### Delay Semantics
 
-- [ ] **DELY-01**: Team can preserve or explicitly replace existing transport-lag behavior so candidate kernels do not erase current delay semantics when moving toward hybrid or whole-flowsheet coupling.
+- [x] **DELY-01**: Team can preserve or explicitly replace existing transport-lag behavior so candidate kernels do not erase current delay semantics when moving toward hybrid or whole-flowsheet coupling.
 - [x] **DELY-02**: Team can define how deadtime is represented in each candidate kernel direction, including whether delay remains external history/buffer state, becomes augmented state, or requires a different hybrid treatment.
-- [ ] **DELY-03**: Team can restore and safely update deadtime or transport-history state across checkpoint reloads, warm starts, and runtime edits.
+- [x] **DELY-03**: Team can restore and safely update deadtime or transport-history state across checkpoint reloads, warm starts, and runtime edits.
 - [ ] **DELY-04**: Team can benchmark delay-heavy and transport-lag-sensitive scenarios so whole-flowsheet directions are not approved without evidence that delay semantics still behave credibly.
 
 ## Future Requirements
@@ -82,9 +82,9 @@ Deferred until after the milestone establishes the kernel direction and benchmar
 | SOLV-03 | Phase 3 | Pending |
 | SOLV-04 | Phase 4 | Pending |
 | SOLV-05 | Phase 4 | Pending |
-| DELY-01 | Phase 2 | Pending |
+| DELY-01 | Phase 2 | Complete |
 | DELY-02 | Phase 2 | Complete |
-| DELY-03 | Phase 2 | Pending |
+| DELY-03 | Phase 2 | Complete |
 | DELY-04 | Phase 3 | Pending |
 
 **Coverage:**

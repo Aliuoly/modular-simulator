@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 02-02-PLAN.md
-last_updated: "2026-03-30T01:20:39.604Z"
+status: verifying
+stopped_at: Completed 02-03-PLAN.md
+last_updated: "2026-03-30T01:26:22.994Z"
 last_activity: 2026-03-30
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 7
-  completed_plans: 2
+  completed_plans: 3
   percent: 14
 ---
 
@@ -27,7 +27,7 @@ See: `.planning/PROJECT.md` (updated 2026-03-29)
 
 Phase: 02 (kernel-adapter-warm-starts-delay-state) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-03-30
 
 Progress: [█░░░░░░░░░] 14%
@@ -53,6 +53,7 @@ Progress: [█░░░░░░░░░] 14%
 
 | Phase 02 P01 | 3 min | 2 tasks | 4 files |
 | Phase 02 P02 | 4 min | 2 tasks | 6 files |
+| Phase 02 P03 | 2 min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -67,6 +68,9 @@ Recent decisions affecting current work:
 - [Phase 02]: Expose split runtime delay treatment as external transport history and leave optional solver capabilities empty until real seams exist.
 - [Phase 02]: Normalize checkpoint envelopes into connection_runtime_v1 payloads before adapter warm start — One accepted-snapshot restore helper now serves checkpoint restore and resume without cold-start fallback.
 - [Phase 02]: Keep PlantBackendSession save_checkpoint/load_checkpoint names stable while routing load through canonical restore — Preserves substrate-facing session API while moving restore policy under the shared adapter seam.
+- [Phase 02]: Delay semantics and mapping metadata belong to the required adapter core so candidate comparisons cannot hide delay treatment.
+- [Phase 02]: The split baseline keeps the existing transport_runtime_state schema in Phase 2 instead of renaming snapshot payloads prematurely.
+- [Phase 02]: Future candidates using augmented_state or hybrid must publish explicit transport-history mapping and restore rules for checkpoint reloads and runtime edits.
 
 ### Pending Todos
 
@@ -78,6 +82,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-30T01:20:29.465Z
-Stopped at: Completed 02-02-PLAN.md
+Last session: 2026-03-30T01:26:03.272Z
+Stopped at: Completed 02-03-PLAN.md
 Resume file: None
