@@ -31,7 +31,7 @@ Requirements for milestone v1.0 Kernel stability. Each maps to roadmap phases.
 - [x] **SOLV-03**: Team can evaluate a disciplined current-stack baseline before approving a migration to a new solver substrate.
 - [x] **SOLV-04**: Team can compare at least one post-SciPy Python-native path and at least one non-Python-capable path when benchmark evidence suggests the baseline may be solver-limited.
 - [x] **SOLV-05**: Team can justify any solver-stack migration in terms of stability improvement, latency improvement, deployment risk, and compatibility with the existing runtime/session facades.
-- [ ] **SOLV-06**: Team can instantiate real SUNDIALS-backed and PETSc-backed `CandidateKernelAdapter` implementations behind the existing runtime/session facades without replacing `PlantBackendSession` or the shared benchmark substrate first.
+- [x] **SOLV-06**: Team can instantiate real SUNDIALS-backed and PETSc-backed `CandidateKernelAdapter` implementations behind the existing runtime/session facades without replacing `PlantBackendSession` or the shared benchmark substrate first.
 
 ### Delay Semantics
 
@@ -86,7 +86,7 @@ Deferred until after the milestone establishes the kernel direction and benchmar
 | SOLV-03 | Phase 3 | Complete |
 | SOLV-04 | Phase 4 | Complete |
 | SOLV-05 | Phase 4 | Complete |
-| SOLV-06 | Phase 5 | Pending |
+| SOLV-06 | Phase 5 | Complete |
 | DELY-01 | Phase 2 | Complete |
 | DELY-02 | Phase 2 | Complete |
 | DELY-03 | Phase 2 | Complete |
