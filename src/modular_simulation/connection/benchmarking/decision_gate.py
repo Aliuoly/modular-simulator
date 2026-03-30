@@ -31,7 +31,6 @@ def build_kernel_direction_decision(
 ) -> KernelDirectionDecision:
     evidence_workload_ids = _extract_evidence_workload_ids(phase3_report)
     disciplined_split_is_viable = _disciplined_split_is_viable(phase3_report)
-    direct_petsc_escalation = bool(phase3_report.get("direct_petsc_escalation"))
     later_escalation_only = (
         ("petsc4py",) if bool(phase3_report.get("post_sundials_gap_unresolved")) else ()
     )
@@ -64,13 +63,10 @@ def build_kernel_direction_decision(
         )
 
     if solver_core_fraction >= 0.5:
-        recommended_solver_stack: RecommendedSolverStack = (
-            "petsc4py" if direct_petsc_escalation else "sundials4py"
-        )
         return KernelDirectionDecision(
             default_kernel_direction="hybrid_coupled",
             scipy_status="solver_limited",
-            recommended_solver_stack=recommended_solver_stack,
+            recommended_solver_stack="sundials4py",
             preserve_existing_facades=True,
             evidence_workload_ids=evidence_workload_ids,
             blocking_reasons=_gate_failure_reasons(phase3_report),

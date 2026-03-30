@@ -38,10 +38,10 @@ created: 2026-03-30
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 04-01-01 | 01 | 1 | PERF-05 | contract | `uv run python -m pytest tests/connection/test_benchmark_decision_gate.py -q` | ❌ | ⬜ pending |
-| 04-01-02 | 01 | 1 | PERF-05, SOLV-05 | contract/integration | `uv run python -m pytest tests/connection/test_benchmark_decision_gate.py -q` | ❌ | ⬜ pending |
-| 04-02-01 | 02 | 2 | SOLV-04 | contract/docs | `uv run python -m pytest tests/connection/test_kernel_direction_decision_example.py -q` | ❌ | ⬜ pending |
-| 04-02-02 | 02 | 2 | SOLV-04, SOLV-05 | docs/integration | `uv run python -m pytest tests/connection/test_kernel_direction_decision_example.py tests/connection/test_examples_benchmarks.py -q` | ❌ | ⬜ pending |
+| 04-01-01 | 01 | 1 | PERF-05 | contract | `uv run python -m pytest tests/connection/test_benchmark_decision_gate.py -q` | ✅ | ✅ green |
+| 04-01-02 | 01 | 1 | PERF-05, SOLV-05 | contract/integration | `uv run python -m pytest tests/connection/test_benchmark_decision_gate.py -q` | ✅ | ✅ green |
+| 04-02-01 | 02 | 2 | SOLV-04 | contract/docs | `uv run python -m pytest tests/connection/test_kernel_direction_decision_example.py -q` | ✅ | ✅ green |
+| 04-02-02 | 02 | 2 | SOLV-04, SOLV-05 | docs/integration | `uv run python -m pytest tests/connection/test_kernel_direction_decision_example.py tests/connection/test_examples_benchmarks.py -q` | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -68,4 +68,4 @@ All phase behaviors have automated verification.
 - [x] Feedback latency < 20s
 - [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** ready for phase verification

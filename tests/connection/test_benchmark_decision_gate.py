@@ -60,6 +60,17 @@ def test_build_kernel_direction_decision_keeps_petsc_as_later_only_escalation() 
     assert decision.later_escalation_only == ("petsc4py",)
 
 
+def test_build_kernel_direction_decision_never_recommends_petsc_as_first_escalation() -> None:
+    decision = build_kernel_direction_decision(
+        _phase3_report(candidate_rankings=[], direct_petsc_escalation=True),
+        KernelProfilingSummary(solver_core_fraction=0.8),
+    )
+
+    assert decision.scipy_status == "solver_limited"
+    assert decision.recommended_solver_stack == "sundials4py"
+    assert decision.recommended_solver_stack != "petsc4py"
+
+
 def test_build_kernel_direction_decision_needs_more_evidence_without_profiling_signal() -> None:
     decision = build_kernel_direction_decision(
         _phase3_report(candidate_rankings=[]),
@@ -75,6 +86,7 @@ def _phase3_report(
     *,
     candidate_rankings: list[dict[str, object]],
     post_sundials_gap_unresolved: bool = False,
+    direct_petsc_escalation: bool = False,
 ) -> dict[str, object]:
     return {
         "candidate_rankings": candidate_rankings,
@@ -87,4 +99,5 @@ def _phase3_report(
             {"workload_id": "checkpoint_restart_reconfigure"},
         ],
         "post_sundials_gap_unresolved": post_sundials_gap_unresolved,
+        "direct_petsc_escalation": direct_petsc_escalation,
     }
