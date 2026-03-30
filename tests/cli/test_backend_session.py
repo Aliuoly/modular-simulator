@@ -123,6 +123,15 @@ class _FakeNetwork:
     def resume_from_snapshot(self, *, snapshot: object) -> None:
         self._snapshot = snapshot  # type: ignore[assignment]
 
+    def restore_from_checkpoint_snapshot(
+        self,
+        *,
+        snapshot: object,
+        restore_reason: str,
+    ) -> None:
+        assert restore_reason == "save_load"
+        self._snapshot = cast(Mapping[str, object], snapshot)
+
     def get_observability_snapshot(self) -> Mapping[str, Any]:
         compiled = self._compiled
         graph_revision = compiled.graph_revision if compiled is not None else None
