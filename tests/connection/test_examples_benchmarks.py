@@ -49,9 +49,17 @@ def test_macro_coupling_benchmark_run_benchmark_shape():
     result = bench_module.run_benchmark()
     assert isinstance(result, dict)
     # Required keys
-    for key in ("elapsed_seconds", "macro_steps", "iterations"):
+    for key in ("candidate_id", "workload_count", "attempt_record_count", "attempt_records"):
         assert key in result
-        assert isinstance(result[key], float)
+
+
+def test_macro_coupling_benchmark_wrapper_uses_phase3_harness():
+    result = bench_module.run_benchmark()
+
+    assert result["candidate_id"] == "disciplined_split"
+    assert result["workload_count"] == 3
+    assert result["attempt_record_count"] == len(result["attempt_records"])
+    assert result["attempt_records"][0]["checkpoint_id"].startswith("phase3-")
 
 
 def test_smoke_integration_imports():
