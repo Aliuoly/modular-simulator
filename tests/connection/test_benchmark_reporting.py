@@ -128,6 +128,42 @@ def test_disqualified_baseline_is_visible_but_unranked() -> None:
     assert report["disqualified_candidates"][0]["disqualification_reasons"] == ["fallback_used"]
 
 
+def test_build_phase3_report_includes_coverage_matrix_and_disqualified_candidates() -> None:
+    from modular_simulation.connection.benchmarking.reporting import build_phase3_report
+
+    workloads = build_phase3_workloads()
+    baseline = _candidate_config_for_workload(workloads[0])
+    report = build_phase3_report(
+        candidate_attempt_records={
+            baseline.candidate_id: (
+                _attempt_record(
+                    workload_index=0,
+                    candidate_config=baseline,
+                    accepted=True,
+                    wall_clock_elapsed_s=0.02,
+                    disqualification_reasons=(
+                        BenchmarkDisqualificationReason.HIDDEN_SOLVER_FAILURE,
+                    ),
+                ),
+            )
+        },
+        candidate_configs={baseline.candidate_id: baseline},
+        coverage_matrix=[
+            {
+                "workload_id": workloads[0].workload_id,
+                "checkpoint_id": workloads[0].checkpoint_id,
+                "scenario_tags": [tag.value for tag in workloads[0].scenario_tags],
+            }
+        ],
+        latency_budget=BenchmarkLatencyBudget(),
+    )
+
+    assert report["coverage_matrix"][0]["workload_id"] == "ammonia_recycle_warm"
+    assert report["disqualified_candidates"][0]["disqualification_reasons"] == [
+        "hidden_solver_failure"
+    ]
+
+
 def _attempt_record(
     *,
     workload_index: int,

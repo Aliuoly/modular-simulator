@@ -33,6 +33,7 @@ def score_candidate_report(
     accepted_records = [
         record for record in attempt_records if record.attempt_outcome == "accepted"
     ]
+    representative_record = attempt_records[0] if attempt_records else None
     disqualification_reasons = _collect_disqualification_reasons(attempt_records)
     accepted_step_p95_s = latency_summary.accepted_step_latency_p95_s
     step_size_s = accepted_records[0].macro_step_time_s if accepted_records else None
@@ -71,11 +72,31 @@ def score_candidate_report(
         "candidate_id": candidate_config.candidate_id,
         "candidate_label": candidate_config.candidate_label,
         "candidate_family": candidate_config.candidate_family,
-        "checkpoint_id": candidate_config.checkpoint_id,
-        "tolerance_profile": candidate_config.tolerance_profile,
-        "physical_acceptance_profile": candidate_config.physical_acceptance_profile,
-        "telemetry_contract_version": candidate_config.telemetry_contract_version,
-        "delay_semantics_label": candidate_config.delay_semantics_label,
+        "checkpoint_id": (
+            representative_record.checkpoint_id
+            if representative_record is not None
+            else candidate_config.checkpoint_id
+        ),
+        "tolerance_profile": (
+            representative_record.tolerance_profile
+            if representative_record is not None
+            else candidate_config.tolerance_profile
+        ),
+        "physical_acceptance_profile": (
+            representative_record.physical_acceptance_profile
+            if representative_record is not None
+            else candidate_config.physical_acceptance_profile
+        ),
+        "telemetry_contract_version": (
+            representative_record.telemetry_contract_version
+            if representative_record is not None
+            else candidate_config.telemetry_contract_version
+        ),
+        "delay_semantics_label": (
+            representative_record.delay_semantics_label
+            if representative_record is not None
+            else candidate_config.delay_semantics_label
+        ),
         "accepted_attempt_count": latency_summary.accepted_attempt_count,
         "rejected_attempt_count": latency_summary.rejected_attempt_count,
         "accepted_step_latency_median_s": latency_summary.accepted_step_latency_median_s,

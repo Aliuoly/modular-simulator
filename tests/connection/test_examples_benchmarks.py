@@ -49,17 +49,41 @@ def test_macro_coupling_benchmark_run_benchmark_shape():
     result = bench_module.run_benchmark()
     assert isinstance(result, dict)
     # Required keys
-    for key in ("candidate_id", "workload_count", "attempt_record_count", "attempt_records"):
+    for key in (
+        "candidate_rankings",
+        "disqualified_candidates",
+        "coverage_matrix",
+        "headline_rtf_target",
+        "minimum_rtf_gate",
+        "latency_budget_fraction",
+    ):
         assert key in result
 
 
 def test_macro_coupling_benchmark_wrapper_uses_phase3_harness():
     result = bench_module.run_benchmark()
 
-    assert result["candidate_id"] == "disciplined_split"
-    assert result["workload_count"] == 3
-    assert result["attempt_record_count"] == len(result["attempt_records"])
-    assert result["attempt_records"][0]["checkpoint_id"].startswith("phase3-")
+    assert result["headline_rtf_target"] == 100.0
+    assert result["minimum_rtf_gate"] == 4.0
+    assert result["latency_budget_fraction"] == 0.25
+    assert result["coverage_matrix"][0]["checkpoint_id"].startswith("phase3-")
+
+
+def test_macro_coupling_benchmark_returns_ranked_and_disqualified_sections():
+    result = bench_module.run_benchmark()
+
+    for key in (
+        "candidate_rankings",
+        "disqualified_candidates",
+        "coverage_matrix",
+        "headline_rtf_target",
+        "minimum_rtf_gate",
+        "latency_budget_fraction",
+    ):
+        assert key in result
+    assert isinstance(result["candidate_rankings"], list)
+    assert isinstance(result["disqualified_candidates"], list)
+    assert result["candidate_rankings"][0]["candidate_id"] == "disciplined_split"
 
 
 def test_smoke_integration_imports():
