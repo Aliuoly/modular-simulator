@@ -3,6 +3,19 @@ import math
 import importlib.abc
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
+
+from modular_simulation.connection.benchmarking.contracts import (
+    BenchmarkAttemptRecord,
+    BenchmarkCandidateConfig,
+    BenchmarkDisqualificationReason,
+    BenchmarkLatencyBudget,
+)
+from modular_simulation.connection.kernel_adapter import (
+    KernelAdapterTelemetry,
+    KernelCandidateStepResult,
+)
+from modular_simulation.connection.topology.network import ConnectionNetwork
 
 
 def _load_module_from_path(name: str, path: str):
@@ -84,6 +97,256 @@ def test_macro_coupling_benchmark_returns_ranked_and_disqualified_sections():
     assert isinstance(result["candidate_rankings"], list)
     assert isinstance(result["disqualified_candidates"], list)
     assert result["candidate_rankings"][0]["candidate_id"] == "disciplined_split"
+
+
+def test_macro_coupling_benchmark_includes_per_workload_rows():
+    result = bench_module.run_benchmark()
+
+    assert "candidate_workloads" in result
+    for candidate_id in ("disciplined_split", "sundials4py", "petsc4py"):
+        assert candidate_id in result["candidate_workloads"]
+        assert len(result["candidate_workloads"][candidate_id]) == 3
+        assert {row["workload_id"] for row in result["candidate_workloads"][candidate_id]} == {
+            "ammonia_recycle_warm",
+            "staged_delay_control_disturbance",
+            "checkpoint_restart_reconfigure",
+        }
+
+
+def test_macro_coupling_benchmark_reports_all_phase5_candidate_sections(monkeypatch):
+    calls: list[tuple[str, str]] = []
+
+    class _FakeNetwork:
+        def _build_kernel_adapter(self):
+            calls.append(("split_builder", "disciplined_split"))
+            return SimpleNamespace(kind="disciplined_split")
+
+    class _FakeHarness:
+        def __init__(
+            self,
+            *,
+            workload_definition,
+            candidate_config,
+            candidate_adapter_factory,
+            latency_budget,
+        ):
+            self.workload_definition = workload_definition
+            self.candidate_config = candidate_config
+            self.candidate_adapter_factory = candidate_adapter_factory
+            self.latency_budget = latency_budget
+
+        def run(self):
+            del self.latency_budget
+            seed = SimpleNamespace(
+                workload_id=self.workload_definition.workload_id,
+                checkpoint_id=self.workload_definition.checkpoint_id,
+                macro_step_time_s=1.0,
+                session=SimpleNamespace(network=_FakeNetwork()),
+            )
+            adapter = self.candidate_adapter_factory(seed)
+            calls.append((self.candidate_config.candidate_id, adapter.kind))
+            rejected = self.candidate_config.candidate_id == "petsc4py"
+            reasons = (BenchmarkDisqualificationReason.HIDDEN_SOLVER_FAILURE,) if rejected else ()
+            return (
+                BenchmarkAttemptRecord(
+                    workload_id=self.workload_definition.workload_id,
+                    candidate_id=self.candidate_config.candidate_id,
+                    checkpoint_id=self.workload_definition.checkpoint_id,
+                    tolerance_profile=self.workload_definition.tolerance_profile,
+                    physical_acceptance_profile=self.workload_definition.physical_acceptance_profile,
+                    telemetry_contract_version=self.workload_definition.telemetry_contract_version,
+                    delay_semantics_label=self.workload_definition.delay_semantics_label,
+                    attempt_outcome="rejected" if rejected else "accepted",
+                    macro_step_index=1,
+                    macro_step_time_s=1.0,
+                    simulation_time_s=1.0,
+                    wall_clock_elapsed_s=0.02,
+                    replay_hash=f"{self.candidate_config.candidate_id}:{self.workload_definition.workload_id}",
+                    graph_revision="graph_1",
+                    residual_eval_cost_s=0.001,
+                    jacobian_eval_cost_s=0.002,
+                    linear_solve_cost_s=0.003,
+                    disqualification_reasons=reasons,
+                ),
+            )
+
+    def _fake_sundials_adapter(*args, **kwargs):
+        del args, kwargs
+        calls.append(("explicit_constructor", "sundials4py"))
+        return SimpleNamespace(kind="sundials4py")
+
+    def _fake_petsc_adapter(*args, **kwargs):
+        del args, kwargs
+        calls.append(("explicit_constructor", "petsc4py"))
+        return SimpleNamespace(kind="petsc4py")
+
+    monkeypatch.setattr(bench_module, "BenchmarkHarness", _FakeHarness)
+    monkeypatch.setattr(bench_module, "BenchmarkLatencyBudget", BenchmarkLatencyBudget)
+    monkeypatch.setattr(
+        bench_module,
+        "SundialsIdaKernelAdapter",
+        _fake_sundials_adapter,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        bench_module,
+        "PetscSnesKernelAdapter",
+        _fake_petsc_adapter,
+        raising=False,
+    )
+
+    result = bench_module.run_benchmark()
+
+    assert set(result["candidate_workloads"]) == {
+        "disciplined_split",
+        "sundials4py",
+        "petsc4py",
+    }
+    assert {row["candidate_id"] for row in result["candidate_rankings"]} == {
+        "disciplined_split",
+        "sundials4py",
+    }
+    assert {row["candidate_id"] for row in result["disqualified_candidates"]} == {"petsc4py"}
+    assert ("split_builder", "disciplined_split") in calls
+    assert ("explicit_constructor", "sundials4py") in calls
+    assert ("explicit_constructor", "petsc4py") in calls
+    assert calls.count(("split_builder", "disciplined_split")) == 3
+
+
+def test_macro_coupling_benchmark_uses_network_kernel_adapter_path():
+    original_builder = ConnectionNetwork._build_kernel_adapter
+    calls: list[str] = []
+
+    class _FakeAdapter:
+        def __init__(self, network: object) -> None:
+            self.network = network
+            self.telemetry = KernelAdapterTelemetry(
+                macro_step_index=0,
+                macro_step_time_s=0.0,
+                simulation_time_s=0.0,
+                graph_revision="graph_0",
+                executed_sequence=(),
+                transport_fallback_keys=(),
+                junction_fallback_keys=(),
+                used_fallback=False,
+                residual_eval_cost_s=0.001,
+                jacobian_eval_cost_s=0.002,
+                linear_solve_cost_s=0.003,
+            )
+
+        def initialize(self, request):
+            del request
+            return SimpleNamespace(initialized=True, graph_revision="graph_0")
+
+        def warm_start(self, request):
+            del request
+            return SimpleNamespace(restored=True, graph_revision="graph_0")
+
+        def evaluate_candidate_step(self, request):
+            self.telemetry = KernelAdapterTelemetry(
+                macro_step_index=1,
+                macro_step_time_s=request.macro_step_time_s,
+                simulation_time_s=request.macro_step_time_s,
+                graph_revision="graph_1",
+                executed_sequence=("candidate_step",),
+                transport_fallback_keys=(),
+                junction_fallback_keys=(),
+                used_fallback=False,
+                residual_eval_cost_s=0.001,
+                jacobian_eval_cost_s=0.002,
+                linear_solve_cost_s=0.003,
+            )
+            return KernelCandidateStepResult(
+                accepted=True,
+                graph_revision="graph_1",
+                telemetry=self.telemetry,
+                details="accepted",
+            )
+
+        def capture_process_runtime_state(self):
+            return {}
+
+    def _fake_builder(self):
+        calls.append("called")
+        return _FakeAdapter(self)
+
+    ConnectionNetwork._build_kernel_adapter = _fake_builder
+    try:
+        result = bench_module.run_benchmark()
+    finally:
+        ConnectionNetwork._build_kernel_adapter = original_builder
+
+    assert len(calls) == 3
+    assert "disciplined_split" in result["candidate_workloads"]
+
+
+def test_macro_coupling_benchmark_preserves_candidate_configs_for_fixed_canon(monkeypatch):
+    seen_candidate_configs: list[BenchmarkCandidateConfig] = []
+
+    class _FakeHarness:
+        def __init__(
+            self,
+            *,
+            workload_definition,
+            candidate_config,
+            candidate_adapter_factory,
+            latency_budget,
+        ):
+            del candidate_adapter_factory, latency_budget
+            self.workload_definition = workload_definition
+            self.candidate_config = candidate_config
+
+        def run(self):
+            seen_candidate_configs.append(self.candidate_config)
+            return (
+                BenchmarkAttemptRecord(
+                    workload_id=self.workload_definition.workload_id,
+                    candidate_id=self.candidate_config.candidate_id,
+                    checkpoint_id=self.workload_definition.checkpoint_id,
+                    tolerance_profile=self.workload_definition.tolerance_profile,
+                    physical_acceptance_profile=self.workload_definition.physical_acceptance_profile,
+                    telemetry_contract_version=self.workload_definition.telemetry_contract_version,
+                    delay_semantics_label=self.workload_definition.delay_semantics_label,
+                    attempt_outcome="accepted",
+                    macro_step_index=1,
+                    macro_step_time_s=1.0,
+                    simulation_time_s=1.0,
+                    wall_clock_elapsed_s=0.01,
+                    replay_hash=f"{self.candidate_config.candidate_id}:{self.workload_definition.workload_id}",
+                    graph_revision="graph_1",
+                    residual_eval_cost_s=0.001,
+                    jacobian_eval_cost_s=0.001,
+                    linear_solve_cost_s=0.001,
+                ),
+            )
+
+    monkeypatch.setattr(bench_module, "BenchmarkHarness", _FakeHarness)
+    monkeypatch.setattr(
+        bench_module,
+        "SundialsIdaKernelAdapter",
+        lambda *args, **kwargs: SimpleNamespace(kind="sundials4py"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        bench_module,
+        "PetscSnesKernelAdapter",
+        lambda *args, **kwargs: SimpleNamespace(kind="petsc4py"),
+        raising=False,
+    )
+
+    bench_module.run_benchmark()
+
+    assert len(seen_candidate_configs) == 9
+    assert {config.candidate_id for config in seen_candidate_configs} == {
+        "disciplined_split",
+        "sundials4py",
+        "petsc4py",
+    }
+    assert {config.checkpoint_id for config in seen_candidate_configs} == {
+        "phase3-ammonia-recycle-warm",
+        "phase3-staged-delay-control-disturbance",
+        "phase3-checkpoint-restart-reconfigure",
+    }
 
 
 def test_smoke_integration_imports():
