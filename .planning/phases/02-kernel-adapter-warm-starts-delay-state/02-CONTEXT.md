@@ -14,28 +14,29 @@ Add a reusable candidate-kernel adapter seam beneath the existing simulation/ses
 ## Implementation Decisions
 
 ### Adapter Surface
-- **D-01:** Phase 2 should define the full shared candidate-kernel contract up front: state, residual, Jacobian, bounds, initialization, warm start, and telemetry are part of the same seam rather than being phased in later.
-- **D-02:** The current split runtime should be wrapped fully as one adapter implementation so the baseline and future candidates are compared through the same contract.
-- **D-03:** Comparable telemetry is mandatory in the adapter contract from the start rather than being deferred to Phase 3.
+- **D-01:** Phase 2 should define one small required typed adapter core for every candidate: initialize, warm start from accepted snapshots, advance/evaluate one candidate step, capture and restore candidate-owned delay state, emit comparable telemetry, and declare delay semantics.
+- **D-02:** Solver-shaped features such as state-vector export, residual evaluation, Jacobian access, and bounds must be modeled as optional typed capabilities layered on top of the core adapter rather than required from every candidate up front.
+- **D-03:** The current split runtime should be wrapped fully as one adapter implementation against the shared core plus whatever optional capabilities it can honestly support; future candidates must not be forced to fake unsupported solver hooks just to enter evaluation.
+- **D-04:** Comparable telemetry is mandatory in the required adapter core from the start rather than being deferred to Phase 3.
 
 ### Facade Preservation
-- **D-04:** Phase 2 should be substrate-first by default: keep adapter work behind substrate/runtime boundaries unless there is a clear technical reason to widen session or API contracts.
-- **D-05:** Higher-layer session or API contract changes are allowed when they materially improve adapter integration; preserving today's gameplay/API contract shape is not a hard constraint by itself.
+- **D-05:** Phase 2 should be substrate-first by default: keep adapter work behind substrate/runtime boundaries unless there is a clear technical reason to widen session or API contracts.
+- **D-06:** Higher-layer session or API contract changes are allowed when they materially improve adapter integration; preserving today's gameplay/API contract shape is not a hard constraint by itself.
 
 ### Warm Starts And Restore
-- **D-06:** Checkpoint-style accepted snapshots are the one canonical restore mechanism underneath normal resume, save/load, and post-edit recovery paths.
-- **D-07:** The authoritative source for warm starts is the accepted coupled plant snapshot rather than mixed reconstruction from helper caches or gameplay-owned state.
-- **D-08:** If a candidate cannot safely restore from a requested warm-start path, the runtime must fail explicitly with a clear reason rather than silently cold-starting or attempting lossy repair.
+- **D-07:** Checkpoint-style accepted snapshots are the one canonical restore mechanism underneath normal resume, save/load, and post-edit recovery paths.
+- **D-08:** The authoritative source for warm starts is the accepted coupled plant snapshot rather than mixed reconstruction from helper caches or gameplay-owned state.
+- **D-09:** If a candidate cannot safely restore from a requested warm-start path, the runtime must fail explicitly with a clear reason rather than silently cold-starting or attempting lossy repair.
 
 ### Delay And Transport State
-- **D-09:** Candidate kernels may choose their own delay or deadtime treatment in Phase 2 rather than being forced to keep the current external-history representation.
-- **D-10:** Any candidate that replaces the current transport-history approach must document the mapping from existing delay/transport state to its own representation and define safe restore behavior across checkpoint reloads and runtime edits.
-- **D-11:** Delay semantics remain open for exploration in Phase 2; semantic consistency with the current runtime is preferred only when justified by later research rather than locked now.
+- **D-10:** Candidate kernels may choose their own delay or deadtime treatment in Phase 2 rather than being forced to keep the current external-history representation.
+- **D-11:** Any candidate that replaces the current transport-history approach must document the mapping from existing delay/transport state to its own representation and define safe restore behavior across checkpoint reloads and runtime edits.
+- **D-12:** Delay semantics remain open for exploration in Phase 2; semantic consistency with the current runtime is preferred only when justified by later research rather than locked now.
 
 ### the agent's Discretion
-- Choose the exact Python surface for the adapter seam and whether it lands as protocols, dataclasses, or other typed substrate contracts, as long as the full contract in D-01 stays explicit.
-- Choose the minimum justified higher-layer session/API changes case by case under D-04 and D-05 rather than widening public contracts speculatively.
-- Choose the exact artifact shape for candidate-specific delay-state mapping and restore documentation under D-10.
+- Choose the exact Python surface for the adapter seam and whether it lands as protocols, dataclasses, or other typed substrate contracts, as long as the required core in D-01 and optional capabilities in D-02 stay explicit.
+- Choose the minimum justified higher-layer session/API changes case by case under D-05 and D-06 rather than widening public contracts speculatively.
+- Choose the exact artifact shape for candidate-specific delay-state mapping and restore documentation under D-11.
 
 </decisions>
 
@@ -92,6 +93,7 @@ Add a reusable candidate-kernel adapter seam beneath the existing simulation/ses
 - The user expects save/load game behavior to remain the intuitive restore story, so multiple warm-start modes should collapse onto one canonical checkpoint-style restore path rather than becoming separate user-facing concepts.
 - The user is not attached to the current gameplay service or API contract shape; higher-layer changes are acceptable when they have a clear technical payoff for the adapter seam.
 - Delay/deadtime treatment should stay open enough for real candidate exploration, but any alternative must come with explicit state-mapping and restore rules.
+- The adapter must not be so solver-shaped that only the current split runtime can satisfy it; future candidates should be able to participate through the required core and advertise optional capabilities honestly.
 
 </specifics>
 

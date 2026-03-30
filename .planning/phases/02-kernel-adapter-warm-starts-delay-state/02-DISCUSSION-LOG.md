@@ -155,3 +155,18 @@
 ## Deferred Ideas
 
 None.
+
+---
+
+## Post-Planning Correction
+
+### Adapter strictness reconsideration
+
+| Option | Description | Selected |
+|--------|-------------|----------|
+| Keep monolithic full contract | Require every candidate to implement solver-shaped hooks such as state, residual, Jacobian, and bounds up front. | |
+| Capability-first typed seam | Require a small shared typed core and layer solver-specific hooks as optional typed capabilities. | ✓ |
+| Go fully untyped | Avoid typed contracts until more candidate kernels exist. | |
+
+**User's choice:** Capability-first typed seam
+**Notes:** After seeing the generated plans, the user raised a new concern that a monolithic full adapter contract might overfit the current split kernel and make alternative kernels fail the interface for artificial reasons. The corrected planning direction is to keep the adapter typed, but loosen it into a required shared core plus optional typed capabilities for solver-shaped features such as state-vector export, residuals, Jacobians, and bounds.

@@ -51,7 +51,7 @@ created: 2026-03-29
 
 ## Wave 0 Requirements
 
-- [ ] `tests/connection/test_kernel_adapter_contract.py` — contract seam and telemetry expectations
+- [ ] `tests/connection/test_kernel_adapter_contract.py` — capability-first core contract, optional solver-capability protocols, telemetry, and delay-semantics expectations
 - [ ] `tests/connection/test_kernel_adapter_restore.py` — canonical restore and explicit-failure expectations
 - [ ] `tests/connection/test_split_kernel_delay_mapping.py` — delay-state semantics and round-trip coverage
 
