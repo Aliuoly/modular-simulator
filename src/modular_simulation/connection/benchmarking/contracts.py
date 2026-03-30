@@ -95,7 +95,17 @@ class BenchmarkSummaryRow:
     disqualification_reasons: tuple[BenchmarkDisqualificationReason, ...] = ()
 
 
+@dataclass(frozen=True)
+class BenchmarkAcceptedLatencySummary:
+    accepted_attempt_count: int
+    rejected_attempt_count: int
+    accepted_step_latency_median_s: float | None
+    accepted_step_latency_p95_s: float | None
+    accepted_step_latency_p99_s: float | None
+
+
 __all__ = [
+    "BenchmarkAcceptedLatencySummary",
     "BenchmarkAttemptRecord",
     "BenchmarkCandidateConfig",
     "BenchmarkDisqualificationReason",
