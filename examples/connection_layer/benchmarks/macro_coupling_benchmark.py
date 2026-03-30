@@ -4,53 +4,86 @@ from __future__ import annotations
 
 from modular_simulation.connection.benchmarking import (
     BenchmarkHarness,
+    BenchmarkCandidateConfig,
     BenchmarkLatencyBudget,
     benchmark_workload_coverage_matrix,
     build_phase3_report,
     build_phase3_workloads,
+    build_phase5_candidate_configs,
+)
+from modular_simulation.connection.runtime.petsc_kernel_adapter import (
+    PetscSnesKernelAdapter,
+)
+from modular_simulation.connection.runtime.sundials_kernel_adapter import (
+    SundialsIdaKernelAdapter,
 )
 
 
 def run_benchmark() -> dict[str, object]:
     workloads = build_phase3_workloads()
     latency_budget = BenchmarkLatencyBudget()
-    candidate_id = "disciplined_split"
-    candidate_config = _candidate_config_for_workloads(workloads, candidate_id=candidate_id)
-    attempt_records = []
-    for workload in workloads:
-        attempt_records.extend(
-            BenchmarkHarness(
-                workload_definition=workload,
-                candidate_config=candidate_config[workload.workload_id],
-                candidate_adapter_factory=lambda seed: seed.session.network._build_kernel_adapter(),
-                latency_budget=latency_budget,
-            ).run()
-        )
+    candidate_configs = _candidate_configs_by_candidate(workloads)
+    candidate_factories = {
+        "disciplined_split": lambda seed: seed.session.network._build_kernel_adapter(),
+        "sundials4py": lambda seed: SundialsIdaKernelAdapter(
+            network=seed.session.network,
+            runtime_orchestrator=_runtime_orchestrator_for_seed(seed),
+        ),
+        "petsc4py": lambda seed: PetscSnesKernelAdapter(
+            network=seed.session.network,
+            runtime_orchestrator=_runtime_orchestrator_for_seed(seed),
+        ),
+    }
+
+    candidate_attempt_records: dict[str, tuple[object, ...]] = {}
+    for candidate_id, workload_configs in candidate_configs.items():
+        attempt_records = []
+        for workload in workloads:
+            attempt_records.extend(
+                BenchmarkHarness(
+                    workload_definition=workload,
+                    candidate_config=workload_configs[workload.workload_id],
+                    candidate_adapter_factory=candidate_factories[candidate_id],
+                    latency_budget=latency_budget,
+                ).run()
+            )
+        candidate_attempt_records[candidate_id] = tuple(attempt_records)
 
     return build_phase3_report(
-        candidate_attempt_records={candidate_id: tuple(attempt_records)},
-        candidate_configs={candidate_id: candidate_config[workloads[0].workload_id]},
+        candidate_attempt_records=candidate_attempt_records,
+        candidate_configs={
+            candidate_id: next(iter(workload_configs.values()))
+            for candidate_id, workload_configs in candidate_configs.items()
+        },
         coverage_matrix=benchmark_workload_coverage_matrix(),
         latency_budget=latency_budget,
     )
 
 
-def _candidate_config_for_workloads(workloads, *, candidate_id: str):
-    from modular_simulation.connection.benchmarking.contracts import BenchmarkCandidateConfig
-
+def _candidate_configs_by_candidate(
+    workloads,
+) -> dict[str, dict[str, BenchmarkCandidateConfig]]:
+    candidate_configs = build_phase5_candidate_configs(workloads)
+    grouped: dict[str, dict[str, BenchmarkCandidateConfig]] = {}
+    for config in candidate_configs:
+        grouped.setdefault(config.candidate_id, {})[config.checkpoint_id] = config
+    workload_id_lookup = {workload.checkpoint_id: workload.workload_id for workload in workloads}
     return {
-        workload.workload_id: BenchmarkCandidateConfig(
-            candidate_id=candidate_id,
-            candidate_label="Disciplined split baseline",
-            checkpoint_id=workload.checkpoint_id,
-            tolerance_profile=workload.tolerance_profile,
-            physical_acceptance_profile=workload.physical_acceptance_profile,
-            telemetry_contract_version=workload.telemetry_contract_version,
-            delay_semantics_label=workload.delay_semantics_label,
-            candidate_family="split",
-        )
-        for workload in workloads
+        candidate_id: {
+            workload_id_lookup[checkpoint_id]: config
+            for checkpoint_id, config in checkpoint_configs.items()
+        }
+        for candidate_id, checkpoint_configs in grouped.items()
     }
+
+
+def _runtime_orchestrator_for_seed(seed):
+    runtime_orchestrator = getattr(seed.session.network, "_runtime_orchestrator", None)
+    if runtime_orchestrator is None:
+        runtime_orchestrator = getattr(seed.session, "runtime_orchestrator", None)
+    if runtime_orchestrator is None:
+        runtime_orchestrator = object()
+    return runtime_orchestrator
 
 
 __all__ = ["run_benchmark"]

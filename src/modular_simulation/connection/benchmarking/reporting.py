@@ -69,6 +69,9 @@ def score_candidate_report(
         and meets_minimum_rtf_gate
     )
     return {
+        "workload_id": representative_record.workload_id
+        if representative_record is not None
+        else None,
         "candidate_id": candidate_config.candidate_id,
         "candidate_label": candidate_config.candidate_label,
         "candidate_family": candidate_config.candidate_family,
@@ -210,26 +213,34 @@ def _build_candidate_aggregate_row(
         for row in workload_rows
         if row["accepted_step_p95_fraction_of_step_size"] is not None
     ]
+    checkpoint_ids = [str(row["checkpoint_id"]) for row in workload_rows if row["checkpoint_id"]]
+    workload_ids = [str(row["workload_id"]) for row in workload_rows if row["workload_id"]]
+    median_values = [
+        float(row["accepted_step_latency_median_s"])
+        for row in workload_rows
+        if row["accepted_step_latency_median_s"] is not None
+    ]
+    p99_values = [
+        float(row["accepted_step_latency_p99_s"])
+        for row in workload_rows
+        if row["accepted_step_latency_p99_s"] is not None
+    ]
     return {
         "candidate_id": candidate_config.candidate_id,
         "candidate_label": candidate_config.candidate_label,
         "candidate_family": candidate_config.candidate_family,
-        "checkpoint_id": candidate_config.checkpoint_id,
+        "checkpoint_id": checkpoint_ids[0] if len(set(checkpoint_ids)) == 1 else None,
+        "checkpoint_ids": checkpoint_ids,
+        "workload_ids": workload_ids,
         "tolerance_profile": candidate_config.tolerance_profile,
         "physical_acceptance_profile": candidate_config.physical_acceptance_profile,
         "telemetry_contract_version": candidate_config.telemetry_contract_version,
         "delay_semantics_label": candidate_config.delay_semantics_label,
         "accepted_attempt_count": accepted_attempt_count,
         "rejected_attempt_count": rejected_attempt_count,
-        "accepted_step_latency_median_s": max(
-            (row["accepted_step_latency_median_s"] for row in workload_rows),
-            default=None,
-        ),
+        "accepted_step_latency_median_s": max(median_values, default=None),
         "accepted_step_latency_p95_s": max(p95_values, default=None),
-        "accepted_step_latency_p99_s": max(
-            (row["accepted_step_latency_p99_s"] for row in workload_rows),
-            default=None,
-        ),
+        "accepted_step_latency_p99_s": max(p99_values, default=None),
         "accepted_step_p95_fraction_of_step_size": max(fraction_values, default=None),
         "latency_budget_fraction": latency_budget.accepted_step_p95_fraction_of_step_size,
         "realtime_factor": min(realtime_values, default=None),

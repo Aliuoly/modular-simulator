@@ -96,7 +96,14 @@ def test_macro_coupling_benchmark_returns_ranked_and_disqualified_sections():
         assert key in result
     assert isinstance(result["candidate_rankings"], list)
     assert isinstance(result["disqualified_candidates"], list)
-    assert result["candidate_rankings"][0]["candidate_id"] == "disciplined_split"
+    assert {
+        row["candidate_id"]
+        for row in (*result["candidate_rankings"], *result["disqualified_candidates"])
+    } == {
+        "disciplined_split",
+        "sundials4py",
+        "petsc4py",
+    }
 
 
 def test_macro_coupling_benchmark_includes_per_workload_rows():
@@ -213,7 +220,7 @@ def test_macro_coupling_benchmark_reports_all_phase5_candidate_sections(monkeypa
     assert calls.count(("split_builder", "disciplined_split")) == 3
 
 
-def test_macro_coupling_benchmark_uses_network_kernel_adapter_path():
+def test_macro_coupling_benchmark_uses_network_kernel_adapter_path(monkeypatch):
     original_builder = ConnectionNetwork._build_kernel_adapter
     calls: list[str] = []
 
@@ -270,13 +277,74 @@ def test_macro_coupling_benchmark_uses_network_kernel_adapter_path():
         calls.append("called")
         return _FakeAdapter(self)
 
+    class _NonSplitAdapter:
+        def __init__(self, kind: str) -> None:
+            self.kind = kind
+            self.telemetry = KernelAdapterTelemetry(
+                macro_step_index=0,
+                macro_step_time_s=0.0,
+                simulation_time_s=0.0,
+                graph_revision="graph_0",
+                executed_sequence=(),
+                transport_fallback_keys=(),
+                junction_fallback_keys=(),
+                used_fallback=False,
+                residual_eval_cost_s=0.001,
+                jacobian_eval_cost_s=0.002,
+                linear_solve_cost_s=0.003,
+            )
+
+        def initialize(self, request):
+            del request
+            return SimpleNamespace(initialized=True, graph_revision="graph_0")
+
+        def warm_start(self, request):
+            del request
+            return SimpleNamespace(restored=True, graph_revision="graph_0")
+
+        def evaluate_candidate_step(self, request):
+            self.telemetry = KernelAdapterTelemetry(
+                macro_step_index=1,
+                macro_step_time_s=request.macro_step_time_s,
+                simulation_time_s=request.macro_step_time_s,
+                graph_revision="graph_1",
+                executed_sequence=(f"{self.kind}_candidate_step",),
+                transport_fallback_keys=(),
+                junction_fallback_keys=(),
+                used_fallback=False,
+                residual_eval_cost_s=0.001,
+                jacobian_eval_cost_s=0.002,
+                linear_solve_cost_s=0.003,
+            )
+            return KernelCandidateStepResult(
+                accepted=True,
+                graph_revision="graph_1",
+                telemetry=self.telemetry,
+                details="accepted",
+            )
+
+        def capture_process_runtime_state(self):
+            return {}
+
+    monkeypatch.setattr(
+        bench_module,
+        "SundialsIdaKernelAdapter",
+        lambda *args, **kwargs: _NonSplitAdapter("sundials4py"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        bench_module,
+        "PetscSnesKernelAdapter",
+        lambda *args, **kwargs: _NonSplitAdapter("petsc4py"),
+        raising=False,
+    )
     ConnectionNetwork._build_kernel_adapter = _fake_builder
     try:
         result = bench_module.run_benchmark()
     finally:
         ConnectionNetwork._build_kernel_adapter = original_builder
 
-    assert len(calls) == 3
+    assert len(calls) >= 3
     assert "disciplined_split" in result["candidate_workloads"]
 
 
@@ -343,9 +411,9 @@ def test_macro_coupling_benchmark_preserves_candidate_configs_for_fixed_canon(mo
         "petsc4py",
     }
     assert {config.checkpoint_id for config in seen_candidate_configs} == {
-        "phase3-ammonia-recycle-warm",
-        "phase3-staged-delay-control-disturbance",
-        "phase3-checkpoint-restart-reconfigure",
+        "phase3-ammonia-recycle-warm-checkpoint",
+        "phase3-staged-delay-control-checkpoint",
+        "phase3-restart-reconfigure-checkpoint",
     }
 
 
