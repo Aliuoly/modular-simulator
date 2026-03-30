@@ -111,6 +111,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 Plans:
 - [x] 05-01-PLAN.md — Define the Phase 5 hard-coded comparison contract, binding metadata, and dependency declarations.
-- [ ] 05-02-PLAN.md — Implement the SUNDIALS-backed runnable adapter with accepted-snapshot and delay-state parity.
+- [x] 05-02-PLAN.md — Implement the SUNDIALS-backed runnable adapter with accepted-snapshot and delay-state parity.
 - [ ] 05-03-PLAN.md — Implement the PETSc-backed runnable adapter with accepted-snapshot and delay-state parity.
 - [ ] 05-04-PLAN.md — Wire the hard-coded three-candidate benchmark surface and verify visible multi-candidate reporting.

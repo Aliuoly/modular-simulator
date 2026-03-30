@@ -39,7 +39,7 @@ Requirements for milestone v1.0 Kernel stability. Each maps to roadmap phases.
 - [x] **DELY-02**: Team can define how deadtime is represented in each candidate kernel direction, including whether delay remains external history/buffer state, becomes augmented state, or requires a different hybrid treatment.
 - [x] **DELY-03**: Team can restore and safely update deadtime or transport-history state across checkpoint reloads, warm starts, and runtime edits.
 - [x] **DELY-04**: Team can benchmark delay-heavy and transport-lag-sensitive scenarios so whole-flowsheet directions are not approved without evidence that delay semantics still behave credibly.
-- [ ] **DELY-05**: Team can restore accepted snapshots and transport-history or delay payloads across every runnable comparison candidate so same-workload benchmark runs start from comparable checkpoint state rather than fresh starts.
+- [x] **DELY-05**: Team can restore accepted snapshots and transport-history or delay payloads across every runnable comparison candidate so same-workload benchmark runs start from comparable checkpoint state rather than fresh starts.
 
 ## Future Requirements
 
@@ -91,7 +91,7 @@ Deferred until after the milestone establishes the kernel direction and benchmar
 | DELY-02 | Phase 2 | Complete |
 | DELY-03 | Phase 2 | Complete |
 | DELY-04 | Phase 3 | Complete |
-| DELY-05 | Phase 5 | Pending |
+| DELY-05 | Phase 5 | Complete |
 
 **Coverage:**
 - v1 requirements: 22 total

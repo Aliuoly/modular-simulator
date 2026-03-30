@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 05-01-PLAN.md
-last_updated: "2026-03-30T20:49:51.902Z"
+stopped_at: Completed 05-02-PLAN.md
+last_updated: "2026-03-30T20:57:38.186Z"
 last_activity: 2026-03-30
 progress:
   total_phases: 5
   completed_phases: 3
   total_plans: 17
-  completed_plans: 10
+  completed_plans: 11
   percent: 69
 ---
 
@@ -26,7 +26,7 @@ See: `.planning/PROJECT.md` (updated 2026-03-29)
 ## Current Position
 
 Phase: 05 (runnable-solver-candidates) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-03-30
 
@@ -62,6 +62,7 @@ Progress: [███████░░░] 69%
 | Phase 04 P01 | 1 min | 2 tasks | 3 files |
 | Phase 04 P02 | 6 min | 2 tasks | 4 files |
 | Phase 05 P01 | 3 min | 2 tasks | 4 files |
+| Phase 05 P02 | 4 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -90,6 +91,7 @@ Recent decisions affecting current work:
 - [Phase 04]: Leave SciPy only when Phase 3 gates miss and profiling shows `solver_core_fraction >= 0.5`; try `sundials4py` before PETSc. — The reusable decision gate, public wrapper, and docs now enforce `sundials4py` as the first post-SciPy path and keep `petsc4py` later-only.
 - [Phase 05]: Keep the Phase 5 runnable comparison set hard-coded and phase-local instead of introducing discovery or registry logic.
 - [Phase 05]: Preserve public slot ids as disciplined_split, sundials4py, and petsc4py while recording concrete bindings separately as split_kernel_adapter, scikits.odes.ida, and petsc4py.PETSc.SNES.
+- [Phase 05]: Preserve external transport-history delay semantics by reusing runtime export/restore payloads instead of inventing a new delay model.
 
 ### Pending Todos
 
@@ -105,6 +107,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-30T20:49:51.899Z
-Stopped at: Completed 05-01-PLAN.md
+Last session: 2026-03-30T20:57:38.184Z
+Stopped at: Completed 05-02-PLAN.md
 Resume file: None
