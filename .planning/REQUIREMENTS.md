@@ -17,10 +17,10 @@ Requirements for milestone v1.0 Kernel stability. Each maps to roadmap phases.
 
 ### Performance Evidence
 
-- [x] **PERF-01**: Team can run a version-controlled benchmark harness over canonical checkpointed workloads covering warm runs, disturbances, recycle-heavy cases, controller/network coupling, and restart/reconfiguration paths.
+- [x] **PERF-01**: Team can run a version-controlled benchmark harness over canonical checkpointed workloads covering warm runs, disturbances, recycle-heavy cases, transport-history-sensitive staged flow paths, and restart/reconfiguration paths.
 - [x] **PERF-02**: Team can record per-step telemetry for accepted/rejected steps, residual/convergence status, Jacobian or residual assembly cost, linear-solve cost, and wall-clock latency.
 - [x] **PERF-03**: Team can evaluate candidate kernels against explicit realtime viability thresholds using realtime factor plus median, p95, and p99 accepted-step latency.
-- [x] **PERF-04**: Team can disqualify any candidate from performance comparison when it violates physical-acceptance gates, hides solver failure, or depends on emergency clipping/fallback to appear stable.
+- [x] **PERF-04**: Team can disqualify any candidate from performance comparison when benchmark traces carry producer-backed rank-blocking evidence such as fallback use, hidden solver failure, telemetry-contract failure, or future physical-acceptance/clipping/hidden-recovery signals.
 - [ ] **PERF-05**: Team can decide whether leaving the current SciPy baseline is justified using benchmark evidence rather than intuition or single-scenario timing.
 
 ### Solver Substrate Comparison

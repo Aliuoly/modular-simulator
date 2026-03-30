@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 03-03-PLAN.md
-last_updated: "2026-03-30T04:41:25.429Z"
+stopped_at: Phase 03 ready for verification
+last_updated: "2026-03-30T11:59:40.874Z"
 last_activity: 2026-03-30
 progress:
   total_phases: 4
   completed_phases: 2
-  total_plans: 11
-  completed_plans: 7
+  total_plans: 13
+  completed_plans: 8
   percent: 43
 ---
 
@@ -21,12 +21,12 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-03-29)
 
 **Core value:** Deliver a grounded, composable process-simulation backend that stays physically credible enough for teaching while still usable as a realtime game substrate.
-**Current focus:** Phase 03 — benchmark-harness-disciplined-baseline-comparison
+**Current focus:** Phase 04 — hybrid-decision-gate-migration-roadmap
 
 ## Current Position
 
-Phase: 03 (benchmark-harness-disciplined-baseline-comparison) — EXECUTING
-Plan: 3 of 3
+Phase: 04 (hybrid-decision-gate-migration-roadmap) — EXECUTING
+Plan: 2 of 2
 Status: Ready to execute
 Last activity: 2026-03-30
 
@@ -36,7 +36,7 @@ Progress: [████░░░░░░] 43%
 
 **Velocity:**
 
-- Total plans completed: 3
+- Total plans completed: 6
 - Average duration: 3 min
 - Total execution time: 0.2 hours
 
@@ -48,7 +48,7 @@ Progress: [████░░░░░░] 43%
 
 **Recent Trend:**
 
-- Last 5 plans: 02-01 (3 min), 02-02 (4 min), 02-03 (2 min)
+- Last 5 plans: 02-02 (4 min), 02-03 (2 min), 03-01 (4 min), 03-02 (18 min), 03-03 (5 min)
 - Trend: Stable
 
 | Phase 02 P01 | 3 min | 2 tasks | 4 files |
@@ -80,7 +80,7 @@ Recent decisions affecting current work:
 - [Phase 03]: Reject candidate and workload fairness mismatches before execution so checkpoints, tolerances, physical-acceptance profiles, telemetry versions, and delay semantics cannot drift per candidate. — Phase 3 requires fair substrate comparison under one shared contract, so the reusable harness validates fairness metadata eagerly rather than relying on wrapper discipline or post-hoc report inspection.
 - [Phase 03]: Make the macro benchmark example a thin wrapper that returns JSON-serializable attempt-record summaries from the reusable Phase 3 harness. — The example benchmark must stop being a disconnected smoke stub; returning serialized harness traces keeps example behavior aligned with the reusable substrate and gives Phase 3 reporting work one stable summary shape.
 - [Phase 03]: Separate minimum viability from headline target in benchmark reports — Reports now keep minimum_rtf_gate=4.0 distinct from headline_rtf_target=100.0 so viability and aspirational headroom stay explicit.
-- [Phase 03]: Keep disqualified baseline visible but unranked — Phase 3 reporting now always shows the disciplined split/SciPy baseline while excluding fallback or other disqualified runs from candidate_rankings.
+- [Phase 03]: Keep disqualified baseline visible but unranked — Phase 3 reporting now always shows the disciplined split/SciPy baseline while excluding producer-backed disqualified runs from `candidate_rankings`.
 
 ### Pending Todos
 
@@ -92,6 +92,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-30T04:41:12.706Z
-Stopped at: Completed 03-03-PLAN.md
+Last session: 2026-03-30T05:05:00.000Z
+Stopped at: Phase 03 ready for verification
 Resume file: None
