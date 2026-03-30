@@ -11,6 +11,7 @@ from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSystemDefinition,
     LinearResidualEquation,
 )
+from modular_simulation.connection.runtime.split_kernel_adapter import SplitKernelAdapter
 from modular_simulation.connection.topology.network import ConnectionNetwork
 from modular_simulation.connection.runtime.runtime import (
     ConnectionRuntimeOrchestrator,
@@ -727,3 +728,58 @@ def test_runtime_snapshot_round_trip_restores_holding_tank_process_runtime_state
             "resolved_outlet_flow_mol_s": 1.1,
         }
     }
+
+
+def test_adapter_delay_restore_survives_checkpoint_reload_and_post_edit_recovery() -> None:
+    runtime = ConnectionRuntimeOrchestrator()
+    network = _network(runtime)
+    adapter = SplitKernelAdapter(network=network, runtime_orchestrator=runtime)
+    process_runtime_state: dict[str, object] = {}
+
+    delay_bundle = {
+        "transport_runtime_state": {
+            "edge_states": [
+                {
+                    "edge_id": "edge_0001",
+                    "composition": [0.8, 0.2],
+                    "temperature": 315.0,
+                }
+            ],
+            "previous_edge_flow_rates": [{"edge_id": "edge_0001", "flow_rate": 1.25}],
+            "junction_states": [
+                {
+                    "junction_id": "mix",
+                    "state": {
+                        "pressure": 120000.0,
+                        "temperature": 310.0,
+                        "mole_fractions": [0.6, 0.4],
+                    },
+                }
+            ],
+        }
+    }
+    adapter.restore_delay_state(delay_bundle)
+    expected_transport_runtime_state = adapter.capture_delay_state()["transport_runtime_state"]
+
+    checkpoint = save_runtime_snapshot_contract(
+        runtime=runtime,
+        network=network,
+        process_runtime_state=process_runtime_state,
+    )
+
+    runtime.restore_transport_runtime_state({})
+    restore_runtime_snapshot_contract(
+        runtime=runtime,
+        network=network,
+        process_runtime_state_sink=process_runtime_state,
+        snapshot=checkpoint,
+    )
+    assert (
+        adapter.capture_delay_state()["transport_runtime_state"] == expected_transport_runtime_state
+    )
+
+    runtime.restore_transport_runtime_state({})
+    network.recover_from_checkpoint_after_edit(snapshot=checkpoint)
+    assert (
+        adapter.capture_delay_state()["transport_runtime_state"] == expected_transport_runtime_state
+    )

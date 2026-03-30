@@ -118,3 +118,19 @@ def test_split_kernel_delay_mapping_requires_explicit_future_replacement_contrac
 
     step_result = adapter.evaluate_candidate_step(KernelCandidateStepRequest(macro_step_time_s=0.1))
     assert step_result.accepted is True
+
+
+def test_resume_from_snapshot_restores_adapter_delay_bundle_shape() -> None:
+    network, runtime = _make_runtime_fixture()
+    adapter = SplitKernelAdapter(network=network, runtime_orchestrator=runtime)
+    runtime.restore_transport_runtime_state(_transport_runtime_payload())
+
+    snapshot = network.save_runtime_snapshot()
+    expected_transport_runtime_state = adapter.capture_delay_state()["transport_runtime_state"]
+
+    runtime.restore_transport_runtime_state({})
+    network.resume_from_snapshot(snapshot=snapshot)
+
+    assert (
+        adapter.capture_delay_state()["transport_runtime_state"] == expected_transport_runtime_state
+    )
