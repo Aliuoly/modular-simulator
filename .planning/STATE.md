@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 05-03-PLAN.md
-last_updated: "2026-03-30T20:59:03.931Z"
+status: verifying
+stopped_at: Completed 05-04-PLAN.md
+last_updated: "2026-03-30T21:08:36.145Z"
 last_activity: 2026-03-30
 progress:
   total_phases: 5
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 17
-  completed_plans: 12
-  percent: 69
+  completed_plans: 13
+  percent: 76
 ---
 
 # Project State
@@ -27,10 +27,10 @@ See: `.planning/PROJECT.md` (updated 2026-03-29)
 
 Phase: 05 (runnable-solver-candidates) — EXECUTING
 Plan: 4 of 4
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-03-30
 
-Progress: [███████░░░] 69%
+Progress: [████████░░] 76%
 
 ## Performance Metrics
 
@@ -64,6 +64,7 @@ Progress: [███████░░░] 69%
 | Phase 05 P01 | 3 min | 2 tasks | 4 files |
 | Phase 05 P02 | 4 min | 2 tasks | 2 files |
 | Phase 05 P03 | 6 min | 2 tasks | 2 files |
+| Phase 05 P04 | 3 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -95,6 +96,8 @@ Recent decisions affecting current work:
 - [Phase 05]: Preserve external transport-history delay semantics by reusing runtime export/restore payloads instead of inventing a new delay model.
 - [Phase 05]: Implement PETSc as a lazy-imported SNES adapter over the compiled hydraulic residual/Jacobian seam so the public runtime facade stays unchanged. — Phase 5 requires a real PETSc-backed comparison candidate behind the existing CandidateKernelAdapter seam, and lazy import keeps the facade stable while allowing test doubles in environments without a native PETSc install.
 - [Phase 05]: Reuse the existing external transport-history delay bundle and validated snapshot restore path for PETSc so same-canon fairness remains checkpoint-first. — D-08 and D-09 require every runnable comparison candidate to start from comparable accepted snapshots and delay payloads rather than a PETSc-specific fresh-start path.
+- [Phase 05]: Keep the Phase 5 benchmark wrapper hard-coded to disciplined_split, sundials4py, and petsc4py using explicit factories instead of discovery or registry logic.
+- [Phase 05]: Preserve failed or disqualified candidate visibility by reusing the Phase 3 report surface and filtering nullable aggregate latency fields instead of dropping candidates.
 
 ### Pending Todos
 
@@ -110,6 +113,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-30T20:59:03.929Z
-Stopped at: Completed 05-03-PLAN.md
+Last session: 2026-03-30T21:08:36.143Z
+Stopped at: Completed 05-04-PLAN.md
 Resume file: None

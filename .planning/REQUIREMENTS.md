@@ -22,7 +22,7 @@ Requirements for milestone v1.0 Kernel stability. Each maps to roadmap phases.
 - [x] **PERF-03**: Team can evaluate candidate kernels against explicit realtime viability thresholds using realtime factor plus median, p95, and p99 accepted-step latency.
 - [x] **PERF-04**: Team can disqualify any candidate from performance comparison when benchmark traces carry producer-backed rank-blocking evidence such as fallback use, hidden solver failure, telemetry-contract failure, or future physical-acceptance/clipping/hidden-recovery signals.
 - [x] **PERF-05**: Team can decide whether leaving the current SciPy baseline is justified using benchmark evidence rather than intuition or single-scenario timing.
-- [ ] **PERF-06**: Team can run the disciplined split baseline plus the chosen SUNDIALS-backed and PETSc-backed candidates through the fixed canonical workloads and publish one same-harness report that keeps disqualified candidates visible.
+- [x] **PERF-06**: Team can run the disciplined split baseline plus the chosen SUNDIALS-backed and PETSc-backed candidates through the fixed canonical workloads and publish one same-harness report that keeps disqualified candidates visible.
 
 ### Solver Substrate Comparison
 
@@ -80,7 +80,7 @@ Deferred until after the milestone establishes the kernel direction and benchmar
 | PERF-03 | Phase 3 | Complete |
 | PERF-04 | Phase 3 | Complete |
 | PERF-05 | Phase 4 | Complete |
-| PERF-06 | Phase 5 | Pending |
+| PERF-06 | Phase 5 | Complete |
 | SOLV-01 | Phase 3 | Complete |
 | SOLV-02 | Phase 2 | Complete |
 | SOLV-03 | Phase 3 | Complete |
