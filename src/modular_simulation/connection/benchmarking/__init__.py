@@ -23,6 +23,11 @@ from modular_simulation.connection.benchmarking.reporting import (
     build_phase3_report,
     score_candidate_report,
 )
+from modular_simulation.connection.benchmarking.decision_gate import (
+    KernelDirectionDecision,
+    KernelProfilingSummary,
+    build_kernel_direction_decision,
+)
 from modular_simulation.connection.benchmarking.workloads import (
     BenchmarkCheckpointSeed,
     benchmark_workload_coverage_matrix,
@@ -40,8 +45,11 @@ __all__ = [
     "BenchmarkScenarioTag",
     "BenchmarkSummaryRow",
     "BenchmarkWorkloadDefinition",
+    "KernelDirectionDecision",
+    "KernelProfilingSummary",
     "benchmark_attempt_records_to_dicts",
     "benchmark_workload_coverage_matrix",
+    "build_kernel_direction_decision",
     "build_phase3_report",
     "build_benchmark_attempt_record",
     "build_phase3_workloads",
