@@ -67,7 +67,7 @@ Plans:
 Plans:
 - [x] 03-01-PLAN.md — Define reusable benchmark contracts, fairness metadata, and telemetry normalization for candidate comparison.
 - [x] 03-02-PLAN.md — Build the fixed 3-workload checkpoint-first catalog and reusable benchmark harness runner.
-- [ ] 03-03-PLAN.md — Add viability scoring, disqualification, and disciplined split/SciPy baseline reporting.
+- [x] 03-03-PLAN.md — Add viability scoring, disqualification, and disciplined split/SciPy baseline reporting.
 
 ### Phase 4: Hybrid Decision Gate & Migration Roadmap
 **Goal**: Team can choose the default kernel direction for v1.0, justify whether SciPy remains sufficient, and publish a concrete migration roadmap for any needed escalation.
