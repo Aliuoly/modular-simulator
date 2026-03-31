@@ -22,6 +22,7 @@ from .macro_step_acceptance import (
     clone_observability_payload,
     restore_macro_step_rollback_capsule,
 )
+from ..domain.plant_physical_acceptance import evaluate_plant_physical_acceptance
 from modular_simulation.validation.exceptions import MeasurableConfigurationError
 
 if TYPE_CHECKING:
@@ -422,6 +423,7 @@ class ConnectedPlantOrchestrator:
                             deferred_until_next_barrier=deferred_until_next_barrier,
                         )
                     )
+            evaluate_plant_physical_acceptance(subsystems=self._subsystems)
             self._accepted_observability_observables = (
                 self._compute_current_observability_observables()
             )
