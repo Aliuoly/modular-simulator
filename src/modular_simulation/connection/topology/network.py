@@ -153,6 +153,10 @@ class _HydraulicSystemBuilder(Protocol):
 
 
 class _RuntimeOrchestrator(Protocol):
+    def assert_structural_pre_step_ready(
+        self, *, network: "ConnectionNetwork", macro_step_time_s: float
+    ) -> None: ...
+
     def step(self, *, network: "ConnectionNetwork", macro_step_time_s: float) -> object: ...
 
     def save_runtime_snapshot(self, *, network: "ConnectionNetwork") -> Mapping[str, object]: ...
@@ -734,6 +738,10 @@ class ConnectionNetwork:
             raise RuntimeError(
                 "runtime step is unavailable: runtime orchestrator not configured for ConnectionNetwork"
             )
+        self._runtime_orchestrator.assert_structural_pre_step_ready(
+            network=self,
+            macro_step_time_s=macro_step_time_s,
+        )
         return self._runtime_orchestrator.step(network=self, macro_step_time_s=macro_step_time_s)
 
     def queue_reconfiguration(self, request: object) -> str:

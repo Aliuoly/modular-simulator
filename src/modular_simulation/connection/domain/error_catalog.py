@@ -133,6 +133,12 @@ def coerce_diagnostic_payload(
             revision=revision,
         )
 
+    extras = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"code", "message", "path", "hint", "revision"}
+    }
+
     payload_code = payload.get("code")
     resolved_code = payload_code if isinstance(payload_code, str) else default_code
 
@@ -154,13 +160,15 @@ def coerce_diagnostic_payload(
     payload_revision = _normalize_revision(payload.get("revision"))
     resolved_revision = payload_revision if revision is None else revision
 
-    return build_diagnostic_payload(
+    coerced = build_diagnostic_payload(
         code=resolved_code,
         message=resolved_message,
         path=resolved_path,
         hint=resolved_hint,
         revision=resolved_revision,
     )
+    coerced.update(extras)
+    return coerced
 
 
 def _normalize_payload(payload: object) -> DiagnosticPayload | None:
@@ -192,13 +200,21 @@ def _normalize_payload(payload: object) -> DiagnosticPayload | None:
         hint = str(hint_raw)
 
     revision = _normalize_revision(mapping_payload.get("revision"))
-    return build_diagnostic_payload(
+    normalized = build_diagnostic_payload(
         code=code,
         message=message,
         path=path,
         hint=hint,
         revision=revision,
     )
+    normalized.update(
+        {
+            key: value
+            for key, value in mapping_payload.items()
+            if key not in {"code", "message", "path", "hint", "revision"}
+        }
+    )
+    return normalized
 
 
 def _normalize_revision(value: object) -> RevisionDetails | None:

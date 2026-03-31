@@ -12,6 +12,7 @@ from ..domain.error_catalog import (
     VALIDATION_FAILURE_CODE,
     diagnostic_value_error,
 )
+from ..domain.structural_rejection import translate_hydraulic_failure
 from ..domain.state import MaterialState, PortCondition
 from ..domain.transport import LagTransportState
 from ..hydraulics.hydraulic_solver import HydraulicSolveResult
@@ -135,6 +136,7 @@ class ConnectionRuntimeStepResult:
     macro_step_time_s: float
     simulation_time_s: float
     graph_revision: str | None
+    hydraulic_result: HydraulicSolveResult
     bookkeeping: MacroStepBookkeeping
     barrier_reconfiguration: BarrierReconfigurationReport
 
@@ -762,6 +764,7 @@ class ConnectionRuntimeOrchestrator:
             macro_step_time_s=macro_step_time_s,
             simulation_time_s=self._simulation_time_s,
             graph_revision=current_graph_revision,
+            hydraulic_result=macro_step_result.hydraulic_result,
             bookkeeping=macro_step_result.bookkeeping,
             barrier_reconfiguration=BarrierReconfigurationReport(
                 queue_size_before=barrier_report.queue_size_before,
@@ -771,6 +774,28 @@ class ConnectionRuntimeOrchestrator:
                 graph_revision=current_graph_revision,
             ),
         )
+
+    def assert_structural_pre_step_ready(
+        self, *, network: ConnectionNetwork, macro_step_time_s: float
+    ) -> None:
+        if macro_step_time_s < 0.0 or not isfinite(macro_step_time_s):
+            raise ValueError("macro_step_time_s must be finite and non-negative")
+        network_snapshot = network.capture_reconfiguration_state()
+        runtime_snapshot = self._capture_barrier_runtime_state()
+        try:
+            barrier_report = self._reconfiguration_barrier_processor.apply_reconfiguration_batch(
+                network=network
+            )
+            if network.compiled is None:
+                return
+            if network.compiled.hydraulic is None:
+                return
+            if barrier_report.graph_revision is None and network.compiled.hydraulic is None:
+                return
+            _ = self._hydraulic_solve_step(network=network, macro_step_time_s=macro_step_time_s)
+        finally:
+            network.restore_reconfiguration_state(network_snapshot)
+            self._restore_barrier_runtime_state(runtime_snapshot)
 
     def get_observability_state(self) -> Mapping[str, object]:
         """Return a serialisable copy of the runtime observability state.
@@ -1469,7 +1494,10 @@ class ConnectionRuntimeOrchestrator:
         if pending_heat_commands:
             network.apply_heat_actuator_rate_commands(pending_heat_commands)
 
-        return hydraulic_graph.solve()
+        try:
+            return hydraulic_graph.solve()
+        except Exception as error:
+            raise translate_hydraulic_failure(error) from error
 
     def _default_transport_and_mixing_step(
         self,

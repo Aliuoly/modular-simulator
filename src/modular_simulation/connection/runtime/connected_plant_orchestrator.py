@@ -341,6 +341,11 @@ class ConnectedPlantOrchestrator:
         simulation_time_s = self._runtime_orchestrator.simulation_time_s + macro_step_time_s
         queue_snapshot = self._network.queued_reconfigurations
 
+        self._runtime_orchestrator.assert_structural_pre_step_ready(
+            network=self._network,
+            macro_step_time_s=macro_step_time_s,
+        )
+
         self._macro_step_active = True
         try:
             self._run_phase(

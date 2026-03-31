@@ -15,6 +15,7 @@ from ..domain.error_catalog import (
     diagnostic_value_error,
     revision_details,
 )
+from ..domain.structural_rejection import translate_barrier_failure
 from ..topology.network import (
     ConnectionNetwork,
     QueuedReconfigurationTransaction,
@@ -150,14 +151,7 @@ class ReconfigurationBarrierProcessor:
         except Exception as error:
             network.restore_reconfiguration_state(network_snapshot)
             self._runtime_owner._restore_barrier_runtime_state(runtime_snapshot)
-            rollback_message = f"reconfiguration transaction rollback: {error}"
-            raise DiagnosticRuntimeError(
-                coerce_diagnostic_payload(
-                    error=error,
-                    default_code=VALIDATION_FAILURE_CODE,
-                    message=rollback_message,
-                )
-            ) from error
+            raise translate_barrier_failure(error) from error
 
     def _parse_lifecycle_stage(
         self,
@@ -339,7 +333,6 @@ class ReconfigurationBarrierProcessor:
                         error=error,
                         default_code=VALIDATION_FAILURE_CODE,
                         message=f"request '{request.request_id}' mutation {mutation_index} failed: {error}",
-                        path=f"mutations[{mutation_index}]",
                     )
                 ) from error
         return requires_compile
@@ -380,14 +373,7 @@ class ReconfigurationBarrierProcessor:
         try:
             compiled = network.compile()
         except Exception as error:
-            raise DiagnosticValueError(
-                coerce_diagnostic_payload(
-                    error=error,
-                    default_code=VALIDATION_FAILURE_CODE,
-                    message=f"queued reconfiguration compile validation failed: {error}",
-                    path="compile",
-                )
-            ) from error
+            raise error from error
         return compiled.graph_revision
 
     def _request_payload_fingerprint(

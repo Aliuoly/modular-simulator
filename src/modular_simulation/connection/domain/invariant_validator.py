@@ -97,6 +97,7 @@ class DestructiveEditInvariantError(DiagnosticValueError):
             "remove or detach listed dependents first, or retry with "
             + "metadata.destructive_edit_mode='safe_detach'"
         )
+        payload["structural_rejection_source"] = "invariant"
         super().__init__(payload)
 
 
