@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Completed 01-02-PLAN.md
-last_updated: "2026-03-31T00:37:21.802Z"
+status: completed
+stopped_at: Completed 01-04-PLAN.md
+last_updated: "2026-03-31T01:09:00.000Z"
 last_activity: 2026-03-31
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 19
-  completed_plans: 17
-  percent: 89
+  completed_plans: 19
+  percent: 100
 ---
 
 # Project State
@@ -25,33 +25,33 @@ See: `.planning/PROJECT.md` (updated 2026-03-29)
 
 ## Current Position
 
-Phase: 01 (failure-semantics-acceptance-gates) — EXECUTING
-Plan: 3 of 4
-Status: Ready for 01-03-PLAN.md
-Last activity: 2026-03-31 -- Completed 01-02-PLAN.md
+Phase: 01 (failure-semantics-acceptance-gates) — COMPLETED
+Plan: 4 of 4
+Status: Completed 01-04-PLAN.md
+Last activity: 2026-03-31 -- Completed 01-04-PLAN.md
 
-Progress: [█████████░] 89%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 17
-- Average duration: 5 min
-- Total execution time: 1.4 hours
+- Total plans completed: 19
+- Average duration: 6 min
+- Total execution time: 1.9 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01 | 2 | 23 min | 12 min |
+| 01 | 4 | 62 min | 16 min |
 | 02 | 3 | 9 min | 3 min |
 | 03 | 3 | 27 min | 9 min |
 | 04 | 2 | 7 min | 4 min |
 
 **Recent Trend:**
 
-- Last 5 plans: 05-02 (4 min), 05-03 (6 min), 05-04 (3 min), 01-01 (13 min), 01-02 (10 min)
+- Last 5 plans: 05-03 (6 min), 05-04 (3 min), 01-01 (13 min), 01-02 (10 min), 01-03 (17 min)
 - Trend: Stable
 
 | Phase 01 P01 | 13 min | 2 tasks | 6 files |
@@ -68,6 +68,8 @@ Progress: [█████████░] 89%
 | Phase 05 P03 | 6 min | 2 tasks | 2 files |
 | Phase 05 P04 | 3 min | 2 tasks | 3 files |
 | Phase 01 P02 | 10 min | 2 tasks | 13 files |
+| Phase 01 P03 | 17 min | 2 tasks | 8 files |
+| Phase 01 P04 | 22 min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -104,6 +106,9 @@ Recent decisions affecting current work:
 - [Phase 01]: Keep Wave 0 on one shared failure-taxonomy contract module and checkpoint-first pytest fixtures; later Phase 1 plans should extend those names instead of redefining ad hoc dicts.
 - [Phase 01]: Normalize structural failures through one dedicated translator module so barrier, compile, invariant, and hydraulic rejection payloads share explicit pre-step semantics instead of relying on string parsing.
 - [Phase 01]: Run structural preflight before both ConnectionNetwork.step() and ConnectedPlantOrchestrator.step() so structural invalidity never reaches subsystem phases or connection macro-coupling work.
+- [Phase 01]: Carry Phase 1 runtime-step rejection metadata on one dedicated diagnostic payload helper so MacroCoupler failures expose failure family, executed sequence, fallback keys, Picard status, and residual context without string parsing. — Plan 01-03 required machine-readable runtime-step evidence for D-01 and D-08 while keeping macro-coupler behavior compatible with later benchmark work.
+- [Phase 01]: Build canonical Phase 1 evidence as scenario rows that mutate checkpoint-first runtime fixtures per scenario class and assert selected replay hashes plus bookkeeping expectations rather than gameplay-side snapshots. — Plan 01-03 required deterministic reproduction for D-02 and D-07, so checkpoint and replay-hash evidence needed to stay explicit in one reusable scenario matrix.
+- [Phase 01]: Plant-level physical guards evaluate actual process model state, not clipped observability projections; guard ordering prioritizes masking/zero-inventory detection before composition normalization. — Plan 01-04 required that observability clipping alone cannot make a non-physical state look acceptable.
 
 ### Pending Todos
 
@@ -119,6 +124,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-31T00:36:45.027Z
-Stopped at: Completed 01-02-PLAN.md
+Last session: 2026-03-31T01:09:00.000Z
+Stopped at: Completed 01-04-PLAN.md
 Resume file: None
