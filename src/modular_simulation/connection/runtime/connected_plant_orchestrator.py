@@ -17,6 +17,11 @@ from .runtime import (
     ConnectionRuntimeOrchestrator,
     ConnectionRuntimeStepResult,
 )
+from .macro_step_acceptance import (
+    capture_macro_step_rollback_capsule,
+    clone_observability_payload,
+    restore_macro_step_rollback_capsule,
+)
 from modular_simulation.validation.exceptions import MeasurableConfigurationError
 
 if TYPE_CHECKING:
@@ -104,6 +109,9 @@ class ConnectedPlantOrchestrator:
         self._plant_calculation_outputs: dict[str, float] = {}
         self._initialized: bool = False
         self._macro_step_active: bool = False
+        self._accepted_observability_observables: Mapping[str, Mapping[str, float]] = (
+            self._compute_current_observability_observables()
+        )
 
     @property
     def initialized(self) -> bool:
@@ -122,6 +130,9 @@ class ConnectedPlantOrchestrator:
         return dict(self._plant_calculation_outputs)
 
     def get_observability_observables(self) -> Mapping[str, Mapping[str, float]]:
+        return clone_observability_payload(self._accepted_observability_observables)
+
+    def _compute_current_observability_observables(self) -> Mapping[str, Mapping[str, float]]:
         process_state_values = self._snapshot_process_state_values()
         for subsystem in self._subsystems:
             system = getattr(subsystem, "system", None)
@@ -346,6 +357,13 @@ class ConnectedPlantOrchestrator:
             macro_step_time_s=macro_step_time_s,
         )
 
+        rollback_capsule = capture_macro_step_rollback_capsule(
+            runtime=self._runtime_orchestrator,
+            network=self._network,
+            process_runtime_owner=self,
+            accepted_observability=self._accepted_observability_observables,
+        )
+
         self._macro_step_active = True
         try:
             self._run_phase(
@@ -404,6 +422,17 @@ class ConnectedPlantOrchestrator:
                             deferred_until_next_barrier=deferred_until_next_barrier,
                         )
                     )
+            self._accepted_observability_observables = (
+                self._compute_current_observability_observables()
+            )
+        except Exception:
+            self._accepted_observability_observables = restore_macro_step_rollback_capsule(
+                runtime=self._runtime_orchestrator,
+                network=self._network,
+                process_runtime_owner=self,
+                capsule=rollback_capsule,
+            )
+            raise
         finally:
             self._macro_step_active = False
 
