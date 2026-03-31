@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Completed 05-04-PLAN.md
-last_updated: "2026-03-30T21:08:36.145Z"
-last_activity: 2026-03-30
+status: executing
+stopped_at: Completed 01-01-PLAN.md
+last_updated: "2026-03-31T00:18:54Z"
+last_activity: 2026-03-31 -- Completed 01-01-PLAN.md
 progress:
   total_phases: 5
   completed_phases: 4
-  total_plans: 17
-  completed_plans: 13
-  percent: 76
+  total_plans: 19
+  completed_plans: 16
+  percent: 84
 ---
 
 # Project State
@@ -21,38 +21,40 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-03-29)
 
 **Core value:** Deliver a grounded, composable process-simulation backend that stays physically credible enough for teaching while still usable as a realtime game substrate.
-**Current focus:** Phase 05 — runnable-solver-candidates
+**Current focus:** Phase 01 — failure-semantics-acceptance-gates
 
 ## Current Position
 
-Phase: 05 (runnable-solver-candidates) — EXECUTING
-Plan: 4 of 4
-Status: Phase complete — ready for verification
-Last activity: 2026-03-30
+Phase: 01 (failure-semantics-acceptance-gates) — EXECUTING
+Plan: 2 of 4
+Status: Ready for 01-02-PLAN.md
+Last activity: 2026-03-31 -- Completed 01-01-PLAN.md
 
-Progress: [████████░░] 76%
+Progress: [████████░░] 84%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 8
+- Total plans completed: 16
 - Average duration: 5 min
-- Total execution time: 0.7 hours
+- Total execution time: 1.2 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
+| 01 | 1 | 13 min | 13 min |
 | 02 | 3 | 9 min | 3 min |
 | 03 | 3 | 27 min | 9 min |
 | 04 | 2 | 7 min | 4 min |
 
 **Recent Trend:**
 
-- Last 5 plans: 03-01 (4 min), 03-02 (18 min), 03-03 (5 min), 04-01 (1 min), 04-02 (6 min)
+- Last 5 plans: 05-01 (3 min), 05-02 (4 min), 05-03 (6 min), 05-04 (3 min), 01-01 (13 min)
 - Trend: Stable
 
+| Phase 01 P01 | 13 min | 2 tasks | 6 files |
 | Phase 02 P01 | 3 min | 2 tasks | 4 files |
 | Phase 02 P02 | 4 min | 2 tasks | 6 files |
 | Phase 02 P03 | 2 min | 2 tasks | 5 files |
@@ -98,6 +100,7 @@ Recent decisions affecting current work:
 - [Phase 05]: Reuse the existing external transport-history delay bundle and validated snapshot restore path for PETSc so same-canon fairness remains checkpoint-first. — D-08 and D-09 require every runnable comparison candidate to start from comparable accepted snapshots and delay payloads rather than a PETSc-specific fresh-start path.
 - [Phase 05]: Keep the Phase 5 benchmark wrapper hard-coded to disciplined_split, sundials4py, and petsc4py using explicit factories instead of discovery or registry logic.
 - [Phase 05]: Preserve failed or disqualified candidate visibility by reusing the Phase 3 report surface and filtering nullable aggregate latency fields instead of dropping candidates.
+- [Phase 01]: Keep Wave 0 on one shared failure-taxonomy contract module and checkpoint-first pytest fixtures; later Phase 1 plans should extend those names instead of redefining ad hoc dicts.
 
 ### Pending Todos
 
@@ -113,6 +116,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-30T21:08:36.143Z
-Stopped at: Completed 05-04-PLAN.md
+Last session: 2026-03-31T00:18:54Z
+Stopped at: Completed 01-01-PLAN.md
 Resume file: None

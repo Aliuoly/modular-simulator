@@ -12,7 +12,7 @@ This roadmap turns the v1.0 kernel-stability milestone into a decision-driven se
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Failure Semantics & Acceptance Gates** - Make current kernel failures, coupled-state acceptance, and physical rejection rules explicit.
+- [ ] **Phase 1: Failure Semantics & Acceptance Gates** - Make current kernel failures, coupled-state acceptance, and physical rejection rules explicit. (in progress)
 - [x] **Phase 2: Kernel Adapter, Warm Starts & Delay State** - Create the substrate for fair candidate comparison without breaking live runtime facades. (completed 2026-03-30)
 - [x] **Phase 3: Benchmark Harness & Disciplined Baseline Comparison** - Compare candidates on the same workloads, telemetry, and realtime acceptance thresholds.
 - [x] **Phase 4: Hybrid Decision Gate & Migration Roadmap** - End the milestone with an evidence-backed kernel direction and escalation path. (completed 2026-03-30)
@@ -31,7 +31,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 4 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Create the Python 3.13 test substrate, shared failure taxonomy contracts, and Phase 1 test modules.
+- [x] 01-01-PLAN.md — Create the Python 3.13 test substrate, shared failure taxonomy contracts, and Phase 1 test modules.
 - [ ] 01-02-PLAN.md — Route structural compile/barrier/hydraulic failures into explicit pre-step structural rejections.
 - [ ] 01-03-PLAN.md — Add runtime-step failure classification, replay-hash evidence, and scenario-matrix coverage.
 - [ ] 01-04-PLAN.md — Implement whole-plant macro-step acceptance transaction and plant-level physical acceptance guards.
@@ -91,7 +91,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Failure Semantics & Acceptance Gates | 0/4 | Not started | - |
+| 1. Failure Semantics & Acceptance Gates | 1/4 | In Progress | 2026-03-31 |
 | 2. Kernel Adapter, Warm Starts & Delay State | 3/3 | Complete   | 2026-03-30 |
 | 3. Benchmark Harness & Disciplined Baseline Comparison | 3/3 | Complete   | 2026-03-30 |
 | 4. Hybrid Decision Gate & Migration Roadmap | 2/2 | Complete   | 2026-03-30 |
