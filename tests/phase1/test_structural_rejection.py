@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 
 import numpy as np
 import pytest
@@ -17,8 +18,13 @@ from modular_simulation.connection.hydraulics.hydraulic_solver import (
     HydraulicSolveResult,
     LinearResidualEquation,
 )
+from modular_simulation.connection.runtime.connected_plant_orchestrator import (
+    ConnectedPlantOrchestrator,
+)
+from modular_simulation.connection.runtime.connection_layer import TransportAndMixingUpdate
 from modular_simulation.connection.runtime.runtime import ConnectionRuntimeOrchestrator
 from modular_simulation.connection.topology.network import ConnectionNetwork
+from modular_simulation.connection.topology.subsystem_descriptor import SubsystemRuntimeDescriptor
 
 
 def _linear_equation(
@@ -46,9 +52,34 @@ def _hydraulic_result() -> HydraulicSolveResult:
     )
 
 
+@dataclass
+class _FakeSubsystem:
+    descriptor: SubsystemRuntimeDescriptor
+    calls: list[str]
+
+    def run_sensor_phase(self) -> None:
+        self.calls.append("sensor")
+
+    def run_calculation_phase(self) -> None:
+        self.calls.append("calculation")
+
+    def run_controller_phase(self) -> None:
+        self.calls.append("controller")
+
+    def run_process_phase(self, duration: float) -> None:
+        del duration
+        self.calls.append("process")
+
+    def snapshot_published_measurements(self) -> dict[str, float]:
+        return {"temperature": 300.0}
+
+
 def _network(
     *,
     hydraulic_system_builder: Callable[[object], HydraulicSystemDefinition] | None = None,
+    runtime: ConnectionRuntimeOrchestrator | None = None,
+    transport_calls: list[str] | None = None,
+    boundary_calls: list[str] | None = None,
 ) -> ConnectionNetwork:
     compile_count = {"count": 0}
 
@@ -64,27 +95,33 @@ def _network(
             )
         return hydraulic_system_builder(topology)
 
-    runtime = ConnectionRuntimeOrchestrator(
-        hydraulic_solve_step=(
-            None
-            if hydraulic_system_builder is not None
-            else lambda *, network, macro_step_time_s: _hydraulic_result()
-        ),
-        transport_and_mixing_step=(
-            lambda *, network, hydraulic_result, macro_step_time_s: pytest.fail(
-                "transport update must not run for structural pre-step rejections"
-            )
-        ),
-        boundary_propagation_step=(
-            lambda *,
-            network,
-            hydraulic_result,
-            transport_and_mixing_update,
-            macro_step_time_s: pytest.fail(
-                "boundary propagation must not run for structural pre-step rejections"
-            )
-        ),
-    )
+    if runtime is None:
+
+        def _transport_step(*, network, hydraulic_result, macro_step_time_s):
+            del network, hydraulic_result, macro_step_time_s
+            if transport_calls is None:
+                pytest.fail("transport update must not run for structural pre-step rejections")
+            transport_calls.append("transport")
+            return TransportAndMixingUpdate(transport_results={})
+
+        def _boundary_step(
+            *, network, hydraulic_result, transport_and_mixing_update, macro_step_time_s
+        ):
+            del network, hydraulic_result, transport_and_mixing_update, macro_step_time_s
+            if boundary_calls is None:
+                pytest.fail("boundary propagation must not run for structural pre-step rejections")
+            boundary_calls.append("boundary")
+            return {}
+
+        runtime = ConnectionRuntimeOrchestrator(
+            hydraulic_solve_step=(
+                None
+                if hydraulic_system_builder is not None
+                else lambda *, network, macro_step_time_s: _hydraulic_result()
+            ),
+            transport_and_mixing_step=_transport_step,
+            boundary_propagation_step=_boundary_step,
+        )
     network = ConnectionNetwork(
         compile_lifecycle=(
             HydraulicCompileLifecycle() if hydraulic_system_builder is not None else None
@@ -99,6 +136,19 @@ def _network(
     _ = network.connect("reactor.product", "product_boundary")
     _ = network.compile()
     return network
+
+
+def _subsystem(calls: list[str]) -> _FakeSubsystem:
+    return _FakeSubsystem(
+        descriptor=SubsystemRuntimeDescriptor(
+            descriptor_id="subsystem_runtime",
+            process_id="reactor",
+            inlet_ports=("feed",),
+            outlet_ports=("product",),
+            publication_map={"temperature": 300.0},
+        ),
+        calls=calls,
+    )
 
 
 def _missing_anchor_system(_: object) -> HydraulicSystemDefinition:
@@ -279,3 +329,96 @@ def test_kern_03_barrier_revision_failures_surface_structural_pre_step_payloads(
         "expected": "graph_rev_0999",
         "actual": "graph_rev_0001",
     }
+
+
+def test_kern_03_connected_plant_structural_rejection_blocks_process_transport_and_boundary() -> (
+    None
+):
+    subsystem_calls: list[str] = []
+    transport_calls: list[str] = []
+    boundary_calls: list[str] = []
+    network = _network(transport_calls=transport_calls, boundary_calls=boundary_calls)
+    orchestrator = ConnectedPlantOrchestrator(
+        subsystems=(_subsystem(subsystem_calls),),
+        network=network,
+        runtime_orchestrator=network._runtime_orchestrator,
+    )
+    _ = network.queue_reconfiguration(
+        {
+            "operation": "batch_update",
+            "metadata": {
+                "control_dependencies": {
+                    "unit:reactor": ["controller:reactor_pid"],
+                }
+            },
+            "mutations": [
+                {
+                    "operation": "remove_unit",
+                    "process_id": "reactor",
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        _ = orchestrator.step(macro_step_time_s=0.25)
+
+    payload = extract_diagnostic_payload(error.value)
+    assert payload is not None
+    assert payload["code"] == "STRUCTURAL_PRE_STEP_INVARIANT_REJECTION"
+    assert subsystem_calls == []
+    assert transport_calls == []
+    assert boundary_calls == []
+
+
+def test_kern_03_runtime_edit_restart_rejection_stays_at_barrier_after_resume() -> None:
+    subsystem_calls: list[str] = []
+    transport_calls: list[str] = []
+    boundary_calls: list[str] = []
+    runtime = ConnectionRuntimeOrchestrator(
+        hydraulic_solve_step=lambda *, network, macro_step_time_s: _hydraulic_result(),
+        transport_and_mixing_step=lambda *, network, hydraulic_result, macro_step_time_s: (
+            transport_calls.append("transport") or TransportAndMixingUpdate(transport_results={})
+        ),
+        boundary_propagation_step=lambda *,
+        network,
+        hydraulic_result,
+        transport_and_mixing_update,
+        macro_step_time_s: (boundary_calls.append("boundary") or {}),
+    )
+    network = _network(runtime=runtime)
+    checkpoint = network.save_runtime_snapshot()
+    network.resume_from_snapshot(snapshot=checkpoint)
+    orchestrator = ConnectedPlantOrchestrator(
+        subsystems=(_subsystem(subsystem_calls),),
+        network=network,
+        runtime_orchestrator=runtime,
+    )
+    _ = network.queue_reconfiguration(
+        {
+            "operation": "batch_update",
+            "metadata": {
+                "control_dependencies": {
+                    "unit:reactor": ["controller:restart_guard"],
+                }
+            },
+            "mutations": [
+                {
+                    "operation": "remove_unit",
+                    "process_id": "reactor",
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        _ = orchestrator.step(macro_step_time_s=0.25)
+
+    payload = extract_diagnostic_payload(error.value)
+    assert payload is not None
+    assert payload["code"] == "STRUCTURAL_PRE_STEP_INVARIANT_REJECTION"
+    assert payload["rejection_stage"] == "pre_step"
+    assert network.queued_reconfigurations[0].request_id == "rq_0001"
+    assert subsystem_calls == []
+    assert transport_calls == []
+    assert boundary_calls == []

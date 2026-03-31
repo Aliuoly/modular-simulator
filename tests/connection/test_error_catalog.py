@@ -61,6 +61,13 @@ def _assert_schema(payload: dict[str, object]) -> None:
     assert set(payload) >= {"code", "message", "path", "hint", "revision"}
 
 
+def _assert_structural_pre_step_payload(payload: dict[str, object], *, source: str) -> None:
+    _assert_schema(payload)
+    assert payload["failure_family"] == "structural_inconsistency"
+    assert payload["rejection_stage"] == "pre_step"
+    assert payload["rejection_source"] == source
+
+
 def test_revision_mismatch_includes_expected_and_actual_revision_details() -> None:
     runtime = ConnectionRuntimeOrchestrator()
     network = _network(runtime)
@@ -78,8 +85,9 @@ def test_revision_mismatch_includes_expected_and_actual_revision_details() -> No
 
     payload = extract_diagnostic_payload(error.value)
     assert payload is not None
-    _assert_schema(payload)
-    assert payload["code"] == REVISION_MISMATCH_CODE
+    _assert_structural_pre_step_payload(payload, source="barrier")
+    assert payload["code"] == "STRUCTURAL_PRE_STEP_BARRIER_REJECTION"
+    assert payload["source_code"] == REVISION_MISMATCH_CODE
     assert payload["path"] == "expected_revision"
     assert payload["hint"] == "retry with the current graph revision or omit expected_revision"
     assert "expected_revision 'graph_rev_0999'" in str(payload["message"])
@@ -105,6 +113,7 @@ def test_invalid_endpoint_direction_uses_validation_failure_payload() -> None:
 
     payload = extract_diagnostic_payload(error.value)
     assert payload is not None
-    _assert_schema(payload)
-    assert payload["code"] == VALIDATION_FAILURE_CODE
-    assert payload["path"] == "mutations[1]"
+    _assert_structural_pre_step_payload(payload, source="barrier")
+    assert payload["code"] == "STRUCTURAL_PRE_STEP_BARRIER_REJECTION"
+    assert payload["source_code"] == VALIDATION_FAILURE_CODE
+    assert payload["path"] == "source/target"
