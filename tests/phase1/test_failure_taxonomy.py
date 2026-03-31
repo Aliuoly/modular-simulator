@@ -128,7 +128,7 @@ def test_kern_01_hydraulic_solve_failure_emits_structured_runtime_diagnostic_pay
     with pytest.raises(RuntimeError) as exc_info:
         coupler.run(macro_step_time_s=1.25, macro_step_index=7)
 
-    payload = extract_diagnostic_payload(exc_info.value)
+    payload = getattr(exc_info.value, "payload", None)
     assert payload is not None
     assert payload["failure_family"] == FailureFamily.STRUCTURAL_INCONSISTENCY.value
     assert payload["path"] == "hydraulics.network.reference_node"

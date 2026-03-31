@@ -3,9 +3,12 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from modular_simulation.connection.domain.error_catalog import DiagnosticPayload
-from modular_simulation.connection.runtime.connection_layer import MacroStepBookkeeping
+
+if TYPE_CHECKING:
+    from modular_simulation.connection.runtime.connection_layer import MacroStepBookkeeping
 
 
 class FailureFamily(StrEnum):

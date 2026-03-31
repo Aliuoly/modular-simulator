@@ -11,6 +11,7 @@ from ..domain.state import PortCondition
 from ..domain.transport import LagTransportUpdateResult
 from ..hydraulics.hydraulic_solver import HydraulicSolveResult
 from ..topology.junction import JunctionMixingResult
+from .phase1_runtime_diagnostics import raise_runtime_diagnostic_error
 
 
 MACRO_COUPLING_SEQUENCE: tuple[str, str, str] = (
@@ -135,18 +136,29 @@ class MacroCoupler:
             TransportAndMixingUpdate,
             Mapping[str, PortCondition],
         ]:
+            executed_sequence: list[str] = []
             try:
+                executed_sequence.append(MACRO_COUPLING_SEQUENCE[0])
                 hydraulic_result = self._hydraulic_solve_step(macro_step_time_s=macro_step_time_s)
             except Exception as exc:
-                raise RuntimeError(
-                    "hydraulic solve failed before transport update and boundary propagation: "
-                    + f"{exc}"
-                ) from exc
-            _raise_if_invalid_hydraulic_result(hydraulic_result)
+                raise_runtime_diagnostic_error(
+                    cause=exc,
+                    macro_step_time_s=macro_step_time_s,
+                    macro_step_index=macro_step_index,
+                    executed_sequence=tuple(executed_sequence),
+                )
+            _raise_if_invalid_hydraulic_result(
+                hydraulic_result,
+                macro_step_time_s=macro_step_time_s,
+                macro_step_index=macro_step_index,
+                executed_sequence=tuple(executed_sequence),
+            )
+            executed_sequence.append(MACRO_COUPLING_SEQUENCE[1])
             transport_and_mixing_update = self._transport_update_step(
                 hydraulic_result=hydraulic_result,
                 macro_step_time_s=macro_step_time_s,
             )
+            executed_sequence.append(MACRO_COUPLING_SEQUENCE[2])
             port_conditions = self._boundary_propagation_step(
                 hydraulic_result=hydraulic_result,
                 transport_and_mixing_update=transport_and_mixing_update,
@@ -220,12 +232,24 @@ class MacroCoupler:
         )
 
 
-def _raise_if_invalid_hydraulic_result(hydraulic_result: HydraulicSolveResult) -> None:
+def _raise_if_invalid_hydraulic_result(
+    hydraulic_result: HydraulicSolveResult,
+    *,
+    macro_step_time_s: float,
+    macro_step_index: int | None,
+    executed_sequence: tuple[str, ...],
+) -> None:
     if hydraulic_result.converged:
         return
-    raise RuntimeError(
-        "hydraulic solve did not converge; aborting transport update and boundary propagation "
-        + f"(iterations={hydraulic_result.iterations}, residual_norm={hydraulic_result.residual_norm})."
+    raise_runtime_diagnostic_error(
+        cause=RuntimeError(
+            "hydraulic solve did not converge; aborting transport update and boundary propagation "
+            + f"(iterations={hydraulic_result.iterations}, residual_norm={hydraulic_result.residual_norm})."
+        ),
+        macro_step_time_s=macro_step_time_s,
+        macro_step_index=macro_step_index,
+        executed_sequence=executed_sequence,
+        residual_norm=hydraulic_result.residual_norm,
     )
 
 
