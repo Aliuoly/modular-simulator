@@ -6,7 +6,6 @@ import pytest
 from modular_simulation.connection.domain.error_catalog import (
     VALIDATION_FAILURE_CODE,
     diagnostic_value_error,
-    extract_diagnostic_payload,
 )
 from modular_simulation.connection.domain.phase1_failure_semantics import (
     CandidateMacroStepAcceptance,
@@ -22,6 +21,10 @@ from modular_simulation.connection.runtime.connection_layer import (
 )
 from modular_simulation.connection.runtime.phase1_runtime_diagnostics import (
     classify_runtime_failure_family,
+)
+from modular_simulation.connection.runtime.runtime_persistence import (
+    RUNTIME_SNAPSHOT_SCHEMA_MARKER,
+    verify_runtime_replay_hashes,
 )
 
 
@@ -255,3 +258,84 @@ def test_kern_01_runtime_classification_preserves_all_four_locked_failure_famili
         FailureFamily.STRUCTURAL_INCONSISTENCY,
         FailureFamily.SOLVER_MASKING_OR_FAKE_STABILITY,
     }
+
+
+def test_kern_01_canonical_scenario_matrix_covers_all_four_locked_scenario_classes_with_replay_evidence(
+    phase1_scenario_evidence_rows,
+) -> None:
+    assert {row.scenario.scenario_class for row in phase1_scenario_evidence_rows} == {
+        ScenarioClass.INVENTORY_SENSITIVE,
+        ScenarioClass.DELAY_HEAVY,
+        ScenarioClass.STRONGLY_COUPLED,
+        ScenarioClass.RUNTIME_EDIT_OR_RESTART,
+    }
+
+
+@pytest.mark.parametrize(
+    "scenario_class, expected_family",
+    [
+        pytest.param(
+            ScenarioClass.INVENTORY_SENSITIVE,
+            FailureFamily.INVENTORY_OR_PHYSICAL_FEASIBILITY_BREAK,
+            id="inventory-sensitive",
+        ),
+        pytest.param(
+            ScenarioClass.DELAY_HEAVY,
+            FailureFamily.STALE_HYDRAULIC_LAG,
+            id="delay-heavy",
+        ),
+        pytest.param(
+            ScenarioClass.STRONGLY_COUPLED,
+            FailureFamily.SOLVER_MASKING_OR_FAKE_STABILITY,
+            id="strongly-coupled",
+        ),
+        pytest.param(
+            ScenarioClass.RUNTIME_EDIT_OR_RESTART,
+            FailureFamily.STRUCTURAL_INCONSISTENCY,
+            id="runtime-edit-or-restart",
+        ),
+    ],
+)
+def test_kern_01_scenario_rows_assert_expected_failure_family_replay_hashes_and_bookkeeping_markers(
+    phase1_scenario_evidence_rows,
+    scenario_class: ScenarioClass,
+    expected_family: FailureFamily,
+) -> None:
+    row = next(
+        item
+        for item in phase1_scenario_evidence_rows
+        if item.scenario.scenario_class is scenario_class
+    )
+
+    assert row.evidence.scenario.scenario_class is scenario_class
+    assert row.evidence.failure_family is expected_family
+    assert row.evidence.checkpoint_schema_marker == RUNTIME_SNAPSHOT_SCHEMA_MARKER
+    assert tuple(sorted(row.evidence.replay_hashes.keys())) == row.selected_ticks
+    verify_runtime_replay_hashes(
+        baseline_hashes=row.evidence.replay_hashes,
+        replay_hashes=dict(row.evidence.replay_hashes),
+    )
+    row.bookkeeping_expectation.assert_matches(row.evidence.bookkeeping)
+
+
+def test_kern_01_replay_hash_evidence_uses_runtime_checkpoint_path_not_gameplay_mirrors(
+    phase1_scenario_evidence_rows,
+) -> None:
+    for row in phase1_scenario_evidence_rows:
+        assert row.evidence.checkpoint_schema_marker == "connection.runtime.snapshot"
+        assert row.evidence.replay_hashes
+        assert all(
+            isinstance(hash_value, str) and hash_value
+            for hash_value in row.evidence.replay_hashes.values()
+        )
+        assert row.evidence.notes == ("replay-backed", "phase1")
+
+
+def test_kern_01_runtime_persistence_contract_still_round_trips_replay_hash_inputs() -> None:
+    from tests.phase1.conftest import build_phase1_runtime_fixture, capture_phase1_replay_hashes
+
+    fixture = build_phase1_runtime_fixture()
+    baseline = capture_phase1_replay_hashes(fixture, ticks=(0, 1, 2))
+    replay = capture_phase1_replay_hashes(fixture, ticks=(0, 1, 2))
+
+    verify_runtime_replay_hashes(baseline_hashes=baseline, replay_hashes=replay)
