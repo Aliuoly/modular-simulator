@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed 01-01-PLAN.md
-last_updated: "2026-03-31T00:18:54Z"
-last_activity: 2026-03-31 -- Completed 01-01-PLAN.md
+stopped_at: Completed 01-02-PLAN.md
+last_updated: "2026-03-31T00:37:21.802Z"
+last_activity: 2026-03-31
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 19
-  completed_plans: 16
-  percent: 84
+  completed_plans: 17
+  percent: 89
 ---
 
 # Project State
@@ -26,32 +26,32 @@ See: `.planning/PROJECT.md` (updated 2026-03-29)
 ## Current Position
 
 Phase: 01 (failure-semantics-acceptance-gates) — EXECUTING
-Plan: 2 of 4
-Status: Ready for 01-02-PLAN.md
-Last activity: 2026-03-31 -- Completed 01-01-PLAN.md
+Plan: 3 of 4
+Status: Ready for 01-03-PLAN.md
+Last activity: 2026-03-31 -- Completed 01-02-PLAN.md
 
-Progress: [████████░░] 84%
+Progress: [█████████░] 89%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 16
+- Total plans completed: 17
 - Average duration: 5 min
-- Total execution time: 1.2 hours
+- Total execution time: 1.4 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 01 | 1 | 13 min | 13 min |
+| 01 | 2 | 23 min | 12 min |
 | 02 | 3 | 9 min | 3 min |
 | 03 | 3 | 27 min | 9 min |
 | 04 | 2 | 7 min | 4 min |
 
 **Recent Trend:**
 
-- Last 5 plans: 05-01 (3 min), 05-02 (4 min), 05-03 (6 min), 05-04 (3 min), 01-01 (13 min)
+- Last 5 plans: 05-02 (4 min), 05-03 (6 min), 05-04 (3 min), 01-01 (13 min), 01-02 (10 min)
 - Trend: Stable
 
 | Phase 01 P01 | 13 min | 2 tasks | 6 files |
@@ -67,6 +67,7 @@ Progress: [████████░░] 84%
 | Phase 05 P02 | 4 min | 2 tasks | 2 files |
 | Phase 05 P03 | 6 min | 2 tasks | 2 files |
 | Phase 05 P04 | 3 min | 2 tasks | 3 files |
+| Phase 01 P02 | 10 min | 2 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -101,6 +102,8 @@ Recent decisions affecting current work:
 - [Phase 05]: Keep the Phase 5 benchmark wrapper hard-coded to disciplined_split, sundials4py, and petsc4py using explicit factories instead of discovery or registry logic.
 - [Phase 05]: Preserve failed or disqualified candidate visibility by reusing the Phase 3 report surface and filtering nullable aggregate latency fields instead of dropping candidates.
 - [Phase 01]: Keep Wave 0 on one shared failure-taxonomy contract module and checkpoint-first pytest fixtures; later Phase 1 plans should extend those names instead of redefining ad hoc dicts.
+- [Phase 01]: Normalize structural failures through one dedicated translator module so barrier, compile, invariant, and hydraulic rejection payloads share explicit pre-step semantics instead of relying on string parsing.
+- [Phase 01]: Run structural preflight before both ConnectionNetwork.step() and ConnectedPlantOrchestrator.step() so structural invalidity never reaches subsystem phases or connection macro-coupling work.
 
 ### Pending Todos
 
@@ -116,6 +119,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-03-31T00:18:54Z
-Stopped at: Completed 01-01-PLAN.md
+Last session: 2026-03-31T00:36:45.027Z
+Stopped at: Completed 01-02-PLAN.md
 Resume file: None

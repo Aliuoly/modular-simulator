@@ -11,7 +11,7 @@ Requirements for milestone v1.0 Kernel stability. Each maps to roadmap phases.
 
 - [ ] **KERN-01**: Team can classify and reproduce the current split-kernel failure modes that create stale-coupling, non-physical inventory, or stale-pressure-driven flow on representative complex flowsheets. Phase 1 Wave 0 substrate and collecting tests landed in `01-01-SUMMARY.md`; implementation waves remain.
 - [ ] **KERN-02**: Team can validate whether a candidate kernel step produced one accepted coupled plant state rather than publishing partially updated unit and connection states. Phase 1 Wave 0 substrate and collecting tests landed in `01-01-SUMMARY.md`; implementation waves remain.
-- [ ] **KERN-03**: Team can reject under-specified, over-specified, or structurally inconsistent flowsheet states before runtime stepping begins. Phase 1 Wave 0 substrate and collecting tests landed in `01-01-SUMMARY.md`; implementation waves remain.
+- [x] **KERN-03**: Team can reject under-specified, over-specified, or structurally inconsistent flowsheet states before runtime stepping begins. Structural pre-step rejection routing and regression coverage landed in `01-02-SUMMARY.md`.
 - [x] **KERN-04**: Team can initialize and warm-start candidate kernels from the last accepted plant state, checkpoint restore, or post-edit recovery path.
 - [ ] **KERN-05**: Team can enforce physical feasibility guards that prevent accepted states with negative inventory, invalid composition normalization, or other non-physical plant states. Phase 1 Wave 0 substrate and collecting tests landed in `01-01-SUMMARY.md`; implementation waves remain.
 
@@ -72,7 +72,7 @@ Deferred until after the milestone establishes the kernel direction and benchmar
 |-------------|-------|--------|
 | KERN-01 | Phase 1 | In Progress |
 | KERN-02 | Phase 1 | In Progress |
-| KERN-03 | Phase 1 | In Progress |
+| KERN-03 | Phase 1 | Complete |
 | KERN-04 | Phase 2 | Complete |
 | KERN-05 | Phase 1 | In Progress |
 | PERF-01 | Phase 3 | Complete |
@@ -100,4 +100,4 @@ Deferred until after the milestone establishes the kernel direction and benchmar
 
 ---
 *Requirements defined: 2026-03-29*
-*Last updated: 2026-03-31 after Phase 01 Plan 01 execution*
+*Last updated: 2026-03-31 after Phase 01 Plan 02 execution*
