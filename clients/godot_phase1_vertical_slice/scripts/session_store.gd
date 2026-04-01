@@ -5,11 +5,19 @@ signal snapshot_updated
 
 @export var backend_client_path: NodePath = NodePath("../BackendClient")
 
+const POLL_INTERVAL_S := 0.6
+
 var backend_client: Node
 var bootstrap_data: Dictionary = {}
 var latest_snapshot: Dictionary = {}
 var active_session_id: String = ""
 var active_mode_id: String = ""
+var is_polling_active: bool = false
+var poll_success_count: int = 0
+var stop_polling_count: int = 0
+var snapshot_update_count: int = 0
+var last_snapshot_update_source: String = ""
+var _poll_generation: int = 0
 
 
 func _ready() -> void:
@@ -37,6 +45,7 @@ func supported_mode_ids() -> Array:
 
 
 func start_mode(mode_id: String) -> bool:
+	stop_polling()
 	var create_result: Dictionary = await backend_client.create_session(mode_id)
 	if not bool(create_result.get("ok", false)):
 		return false
@@ -44,19 +53,28 @@ func start_mode(mode_id: String) -> bool:
 	var payload: Dictionary = create_result.get("payload", {})
 	active_mode_id = mode_id
 	active_session_id = String(payload.get("session_id", ""))
-	latest_snapshot = payload.get("snapshot", {})
-	snapshot_updated.emit()
+	_apply_authoritative_snapshot(payload.get("snapshot", {}), "session_start")
+	if active_session_id != "":
+		_start_polling()
 	return active_session_id != ""
 
 
 func refresh_snapshot() -> bool:
+	return await _refresh_snapshot_with_source("manual")
+
+
+func _refresh_snapshot_with_source(source: String, generation: int = -1) -> bool:
 	if active_session_id == "":
 		return false
-	var snapshot_result: Dictionary = await backend_client.get_snapshot(active_session_id)
+	var requested_session_id := active_session_id
+	var snapshot_result: Dictionary = await backend_client.get_snapshot(requested_session_id)
 	if not bool(snapshot_result.get("ok", false)):
 		return false
-	latest_snapshot = snapshot_result.get("payload", {})
-	snapshot_updated.emit()
+	if source == "poll":
+		if generation != _poll_generation or not is_polling_active or requested_session_id != active_session_id:
+			return false
+		poll_success_count += 1
+	_apply_authoritative_snapshot(snapshot_result.get("payload", {}), source)
 	return true
 
 
@@ -69,8 +87,7 @@ func submit_research(research_id: String, submitted_quantities_by_product_id: Di
 		submitted_quantities_by_product_id,
 	)
 	if bool(result.get("ok", false)):
-		latest_snapshot = result.get("payload", {}).get("snapshot", latest_snapshot)
-		snapshot_updated.emit()
+		_apply_authoritative_snapshot(result.get("payload", {}).get("snapshot", latest_snapshot), "command:research")
 	return result
 
 
@@ -79,8 +96,7 @@ func build_item(item_id: String, config: Dictionary = {}, layout: Dictionary = {
 		return {"ok": false, "error_code": "no_active_session", "message": "No active session"}
 	var result: Dictionary = await backend_client.build(active_session_id, item_id, config, layout)
 	if bool(result.get("ok", false)):
-		latest_snapshot = result.get("payload", {}).get("snapshot", latest_snapshot)
-		snapshot_updated.emit()
+		_apply_authoritative_snapshot(result.get("payload", {}).get("snapshot", latest_snapshot), "command:build")
 	return result
 
 
@@ -89,8 +105,7 @@ func buy_feed(material_id: String, quantity_mol: float) -> Dictionary:
 		return {"ok": false, "error_code": "no_active_session", "message": "No active session"}
 	var result: Dictionary = await backend_client.buy_feed(active_session_id, material_id, quantity_mol)
 	if bool(result.get("ok", false)):
-		latest_snapshot = result.get("payload", {}).get("snapshot", latest_snapshot)
-		snapshot_updated.emit()
+		_apply_authoritative_snapshot(result.get("payload", {}).get("snapshot", latest_snapshot), "command:buy_feed")
 	return result
 
 
@@ -99,8 +114,7 @@ func sell_product(product_id: String, quantity_mol: float) -> Dictionary:
 		return {"ok": false, "error_code": "no_active_session", "message": "No active session"}
 	var result: Dictionary = await backend_client.sell_product(active_session_id, product_id, quantity_mol)
 	if bool(result.get("ok", false)):
-		latest_snapshot = result.get("payload", {}).get("snapshot", latest_snapshot)
-		snapshot_updated.emit()
+		_apply_authoritative_snapshot(result.get("payload", {}).get("snapshot", latest_snapshot), "command:sell_product")
 	return result
 
 
@@ -109,8 +123,7 @@ func restart_session() -> Dictionary:
 		return {"ok": false, "error_code": "no_active_session", "message": "No active session"}
 	var result: Dictionary = await backend_client.restart(active_session_id)
 	if bool(result.get("ok", false)):
-		latest_snapshot = result.get("payload", {}).get("snapshot", latest_snapshot)
-		snapshot_updated.emit()
+		_apply_authoritative_snapshot(result.get("payload", {}).get("snapshot", latest_snapshot), "command:restart")
 	return result
 
 
@@ -137,5 +150,33 @@ func product_inventory() -> Dictionary:
 
 
 func stop_polling() -> void:
-	# No background polling in this narrow slice.
-	pass
+	stop_polling_count += 1
+	is_polling_active = false
+	_poll_generation += 1
+
+
+func _apply_authoritative_snapshot(snapshot: Variant, source: String) -> void:
+	if snapshot is Dictionary:
+		latest_snapshot = snapshot
+	else:
+		latest_snapshot = {}
+	last_snapshot_update_source = source
+	snapshot_update_count += 1
+	snapshot_updated.emit()
+
+
+func _start_polling() -> void:
+	if active_session_id == "":
+		return
+	_poll_generation += 1
+	is_polling_active = true
+	_poll_loop(_poll_generation)
+
+
+func _poll_loop(generation: int) -> void:
+	while generation == _poll_generation and is_polling_active and active_session_id != "":
+		var timer := get_tree().create_timer(POLL_INTERVAL_S)
+		await timer.timeout
+		if generation != _poll_generation or not is_polling_active or active_session_id == "":
+			return
+		await _refresh_snapshot_with_source("poll", generation)

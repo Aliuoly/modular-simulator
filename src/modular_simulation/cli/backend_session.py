@@ -126,9 +126,15 @@ class PreviewResult:
     """Human-readable validation error descriptions, if any."""
 
 
+class _TopologyPort(TypedDict):
+    port_name: str
+    direction: str
+
+
 class _TopologyNode(TypedDict):
     node_id: str
-    ports: list[str]
+    node_kind: str
+    ports: list[_TopologyPort]
 
 
 class _TopologyEdgeEndpoint(TypedDict):
@@ -842,12 +848,71 @@ class PlantBackendSession:
 
         topo = compiled.topology
         nodes: list[_TopologyNode] = []
+        process_nodes = {node.process_id: node for node in getattr(topo, "process_nodes", ())}
+        boundary_nodes = {node.boundary_id: node for node in getattr(topo, "boundary_nodes", ())}
+        junction_nodes = {node.junction_id: node for node in getattr(topo, "junction_nodes", ())}
         for node_id in topo.node_ids:
+            process_node = process_nodes.get(node_id)
+            if process_node is not None:
+                nodes.append(
+                    {
+                        "node_id": node_id,
+                        "node_kind": "process",
+                        "ports": [
+                            {"port_name": port_name, "direction": "inlet"}
+                            for port_name in process_node.inlet_ports
+                        ]
+                        + [
+                            {"port_name": port_name, "direction": "outlet"}
+                            for port_name in process_node.outlet_ports
+                        ],
+                    }
+                )
+                continue
+
+            boundary_node = boundary_nodes.get(node_id)
+            if boundary_node is not None:
+                nodes.append(
+                    {
+                        "node_id": node_id,
+                        "node_kind": "boundary",
+                        "ports": [
+                            {
+                                "port_name": boundary_node.port_name,
+                                "direction": boundary_node.direction,
+                            }
+                        ],
+                    }
+                )
+                continue
+
+            junction_node = junction_nodes.get(node_id)
+            if junction_node is not None:
+                nodes.append(
+                    {
+                        "node_id": node_id,
+                        "node_kind": "junction",
+                        "ports": [
+                            {"port_name": port_name, "direction": "inlet"}
+                            for port_name in junction_node.inlet_ports
+                        ]
+                        + [
+                            {"port_name": port_name, "direction": "outlet"}
+                            for port_name in junction_node.outlet_ports
+                        ],
+                    }
+                )
+                continue
+
             port_names = self._network.process_ports(process_id=node_id)
             nodes.append(
                 {
                     "node_id": node_id,
-                    "ports": list(port_names) if port_names else [],
+                    "node_kind": "unknown",
+                    "ports": [
+                        {"port_name": port_name, "direction": "unknown"}
+                        for port_name in (list(port_names) if port_names else [])
+                    ],
                 }
             )
 

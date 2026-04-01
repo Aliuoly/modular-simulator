@@ -57,7 +57,19 @@ Client behavior for this slice:
 
 - fixed camera, no free rotation,
 - 2.5D board presentation,
+- panel-first process-line authoring using explicit source/target endpoint selection,
+- active background snapshot polling after session start,
+- serialized HTTP request use on the shared Godot `HTTPRequest` node so polling and commands do not overlap,
 - no pause button and no pause hotkey.
+
+## Current Client Interaction Notes
+
+- `build_process_line` is now authored from the existing build panel rather than hard-stopping with an endpoint error.
+- Source choices come from public source boundaries plus process outlet endpoints in the authoritative snapshot.
+- Target choices come from public sink boundaries plus process inlet endpoints in the authoritative snapshot.
+- The client generates orthogonal `layout.path_xy` polylines with 90-degree elbows from authoritative process anchors plus fixed boundary anchors for the current slice.
+- The first pass uses simple keep-out rectangles around placed unit anchors to avoid routing lines directly through occupied unit positions.
+- Richer in-world line drawing and direct click/drag authoring remain deferred.
 
 ## Run Godot Headless Smoke
 
@@ -76,6 +88,13 @@ MODSIM_GAME_API_BASE_URL=http://127.0.0.1:8000 \
 MODSIM_GODOT_SMOKE_MODE=heater_flash_guided_build_v1 \
 godot4 --headless --path clients/godot_phase1_vertical_slice --script res://tests/smoke_test.gd
 ```
+
+Smoke expectations for this pack:
+
+- sandbox mode proves panel-driven line building from explicit endpoint selections,
+- sandbox mode observes at least one post-mount polling-only snapshot update,
+- tutorial mode proves the same polling startup/teardown lifecycle without widening tutorial scope,
+- teardown returns through the real title-screen path and stops polling cleanly.
 
 ## Persistence Limitation (Current)
 

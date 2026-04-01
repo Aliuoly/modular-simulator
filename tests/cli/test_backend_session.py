@@ -659,6 +659,12 @@ class TestGetTopology:
             target=SimpleNamespace(node_id="B", port_name="in"),
         )
         topology = _FakeTopology(node_ids=("A", "B"), edges=(fake_edge,))
+        topology.process_nodes = (
+            SimpleNamespace(process_id="A", inlet_ports=(), outlet_ports=("out",)),
+            SimpleNamespace(process_id="B", inlet_ports=("in",), outlet_ports=()),
+        )
+        topology.boundary_nodes = ()
+        topology.junction_nodes = ()
         compiled = _FakeCompiled(graph_revision="rev_002", topology=topology)
         net = _FakeNetwork(compiled=compiled)
         net._port_registry = {"A": ("out",), "B": ("in",)}
@@ -672,6 +678,9 @@ class TestGetTopology:
         edges = topo["topology"]["edges"]  # type: ignore[index]
         assert len(nodes) == 2
         assert len(edges) == 1
+        assert nodes[0]["node_kind"] == "process"
+        assert nodes[0]["ports"] == [{"port_name": "out", "direction": "outlet"}]
+        assert nodes[1]["ports"] == [{"port_name": "in", "direction": "inlet"}]
         assert edges[0]["edge_id"] == "edge_001"
         assert edges[0]["source"]["node_id"] == "A"
         assert edges[0]["target"]["node_id"] == "B"

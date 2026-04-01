@@ -31,7 +31,7 @@ func _ready() -> void:
 
 
 func _show_title_screen() -> void:
-	_clear_screen_root()
+	_clear_screen_root(true)
 	var title_screen := TITLE_SCENE.instantiate()
 	title_screen.mode_selected.connect(_on_mode_selected)
 	_screen_root.add_child(title_screen)
@@ -45,11 +45,13 @@ func _on_mode_selected(mode_id: String) -> void:
 
 
 func _show_main_game() -> void:
-	_clear_screen_root()
+	_clear_screen_root(false)
 	var main_game := MAIN_SCENE.instantiate()
 	_screen_root.add_child(main_game)
 
 
-func _clear_screen_root() -> void:
+func _clear_screen_root(stop_polling: bool) -> void:
+	if stop_polling and _session_store != null and _session_store.has_method("stop_polling"):
+		_session_store.stop_polling()
 	for child in _screen_root.get_children():
 		child.queue_free()
