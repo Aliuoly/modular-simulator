@@ -120,6 +120,22 @@ text = "Next Build Item"
 layout_mode = 2
 text = "Build Selected Item"
 
+[node name="LineSourceLabel" type="Label" parent="CanvasLayer/HUD/BuildPanel"]
+layout_mode = 2
+text = "Line source: --"
+
+[node name="LineSourceNextButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
+layout_mode = 2
+text = "Next Line Source"
+
+[node name="LineTargetLabel" type="Label" parent="CanvasLayer/HUD/BuildPanel"]
+layout_mode = 2
+text = "Line target: --"
+
+[node name="LineTargetNextButton" type="Button" parent="CanvasLayer/HUD/BuildPanel"]
+layout_mode = 2
+text = "Next Line Target"
+
 [node name="ResearchStatusLabel" type="Label" parent="CanvasLayer/HUD/BuildPanel"]
 layout_mode = 2
 text = "Research target: --"
