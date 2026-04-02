@@ -1,34 +1,22 @@
 ## Smoke harness for the Phase-1 vertical slice Godot client.
 ##
 ## Exercises the real production wiring:
-##   Bootstrap → TitleScreen (via BootstrapController._ready)
-##   mode_selected signal → session creation → MainGame added by BootstrapController
-##   SessionStore.snapshot_updated signal → HUD label update (not a direct call)
+##   Bootstrap -> TitleScreen (via BootstrapController._ready)
+##   mode_selected signal -> session creation -> MainGame added by BootstrapController
+##   SessionStore.snapshot_updated signal -> HUD label update
+##   SessionStore background polling -> post-mount authoritative snapshot refresh
 ##
 ## Both supported modes are validated by bootstrap discovery, and one supported
 ## mode is exercised per run via MODSIM_GODOT_SMOKE_MODE:
 ##   - phase1_process_sandbox_v1  (default)
 ##   - heater_flash_guided_build_v1  (set MODSIM_GODOT_SMOKE_MODE to run it)
-##
-## The harness is designed to be correct and inspectable in headless Godot.
-## It does NOT fake success: if the backend is unavailable the assertions will
-## surface the real failure reason via push_error / quit(1).
-##
-## Timing notes:
-##   BootstrapController._ready() is async (awaits load_bootstrap).  We await
-##   SessionStore.bootstrap_updated before proceeding.
-##
-##   BootstrapController._on_mode_selected() awaits start_mode() (which emits
-##   snapshot_updated from the create-session response) *before* calling
-##   _show_main_game(), so the initial snapshot fires before the HUD exists.
-##   After _show_main_game() the HUD _ready() connects to snapshot_updated.
-##   We then call store.refresh_snapshot() to fire a new snapshot_updated that
-##   the HUD is already listening for, proving the signal-path is wired.
 
 extends SceneTree
 
 const BOOTSTRAP_SCENE := preload("res://scenes/Bootstrap.tscn")
 const DEFAULT_SMOKE_MODE := "phase1_process_sandbox_v1"
+const KEEP_OUT_HALF_WIDTH := 0.8
+const KEEP_OUT_HALF_HEIGHT := 0.65
 
 
 func _init() -> void:
@@ -41,10 +29,6 @@ func _assert(condition: bool, message: String) -> void:
 		quit(1)
 
 
-## ── helpers ──────────────────────────────────────────────────────────────────
-
-## Instantiate and add Bootstrap.tscn so that Bootstrap is accessible at the
-## NodePath /root/Bootstrap that MainGame's HUD and WorldRenderer expect.
 func _add_bootstrap_to_root() -> Node:
 	var bootstrap_root := BOOTSTRAP_SCENE.instantiate()
 	_assert(bootstrap_root != null, "Bootstrap scene should instantiate")
@@ -64,8 +48,6 @@ func _get_backend(bootstrap_root: Node) -> Node:
 	return backend
 
 
-## Await SessionStore.bootstrap_updated if bootstrap has not yet been loaded.
-## BootstrapController._ready() is async and emits this signal on success.
 func _wait_for_bootstrap_loaded(store: Node) -> void:
 	if store.bootstrap_data.is_empty():
 		await store.bootstrap_updated
@@ -80,8 +62,6 @@ func _wait_for_title_screen(bootstrap_root: Node, max_frames: int = 10) -> Node:
 	return null
 
 
-## Return the TitleScreenController that BootstrapController added to ScreenRoot,
-## or null if it is not present yet.
 func _find_active_title_screen(bootstrap_root: Node) -> Node:
 	var screen_root: Node = bootstrap_root.get_node_or_null("ScreenRoot")
 	_assert(screen_root != null, "ScreenRoot Control must exist on Bootstrap")
@@ -91,10 +71,25 @@ func _find_active_title_screen(bootstrap_root: Node) -> Node:
 	return null
 
 
-## Await the next snapshot_updated from the given store and return the snapshot.
 func _wait_for_snapshot(store: Node) -> Dictionary:
 	await store.snapshot_updated
 	return store.latest_snapshot
+
+
+func _wait_for_poll_update(store: Node, previous_poll_count: int, max_frames: int = 240) -> void:
+	for _frame in range(max_frames):
+		if int(store.poll_success_count) > previous_poll_count and String(store.last_snapshot_update_source) == "poll":
+			return
+		await process_frame
+	_assert(false, "Expected a post-mount polling-only snapshot update")
+
+
+func _wait_for_backend_request_in_flight(backend: Node, max_frames: int = 240) -> void:
+	for _frame in range(max_frames):
+		if bool(backend.is_request_in_flight()):
+			return
+		await process_frame
+	_assert(false, "Expected BackendClient to have an in-flight request")
 
 
 func _selected_mode_id() -> String:
@@ -104,7 +99,6 @@ func _selected_mode_id() -> String:
 	return requested
 
 
-## Return the first non-TitleScreenController child in ScreenRoot (i.e. MainGame).
 func _find_main_game(bootstrap_root: Node) -> Node:
 	var screen_root: Node = bootstrap_root.get_node_or_null("ScreenRoot")
 	if screen_root == null:
@@ -168,12 +162,110 @@ func _press_selected_title_button(title_screen: Node, selected_mode: String) -> 
 	button.pressed.emit()
 
 
-## ── main flow ─────────────────────────────────────────────────────────────────
+func _select_build_item(build_panel: Node, desired_item_id: String, max_steps: int = 20) -> void:
+	var build_item_label: Label = build_panel.get_node_or_null("BuildItemLabel") as Label
+	var build_item_next_button: Button = build_panel.get_node_or_null("BuildItemNextButton") as Button
+	_assert(build_item_label != null, "BuildItemLabel must exist")
+	_assert(build_item_next_button != null, "BuildItemNextButton must exist")
+	for _step in range(max_steps):
+		if build_item_label.text == "Selected build item: %s" % desired_item_id:
+			return
+		build_item_next_button.pressed.emit()
+		await process_frame
+	_assert(false, "Expected build item selection for %s, got '%s'" % [desired_item_id, build_item_label.text])
+
+
+func _select_line_endpoint(label: Label, next_button: Button, label_prefix: String, desired_endpoint_id: String, max_steps: int = 40) -> void:
+	for _step in range(max_steps):
+		if label.text == "%s%s" % [label_prefix, desired_endpoint_id]:
+			return
+		next_button.pressed.emit()
+		await process_frame
+	_assert(false, "Expected endpoint selection %s%s, got '%s'" % [label_prefix, desired_endpoint_id, label.text])
+
+
+func _latest_line_entity(snapshot: Dictionary, source_id: String, target_id: String) -> Dictionary:
+	var board_layout: Dictionary = snapshot.get("board_layout", {})
+	var line_entities: Dictionary = board_layout.get("line_entities_by_line_id", {})
+	for line_id in line_entities.keys():
+		var entity: Variant = line_entities[line_id]
+		if entity is Dictionary \
+		and String(entity.get("source", "")) == source_id \
+		and String(entity.get("target", "")) == target_id:
+			return entity
+	return {}
+
+
+func _sorted_keys(value: Dictionary) -> PackedStringArray:
+	var keys := PackedStringArray()
+	for key in value.keys():
+		keys.append(String(key))
+	keys.sort()
+	return keys
+
+
+func _expected_boundary_ids(snapshot: Dictionary) -> PackedStringArray:
+	var ids := PackedStringArray()
+	var topology_envelope: Dictionary = snapshot.get("topology", {})
+	var topology: Dictionary = topology_envelope.get("topology", {})
+	var nodes: Array = topology.get("nodes", [])
+	for node_value in nodes:
+		if not (node_value is Dictionary):
+			continue
+		var node: Dictionary = node_value
+		if String(node.get("node_kind", "")) == "boundary":
+			ids.append(String(node.get("node_id", "")))
+	ids.sort()
+	return ids
+
+
+func _assert_path_is_orthogonal(path_xy: Array, message_prefix: String) -> void:
+	_assert(path_xy.size() >= 2, "%s must contain at least two points" % message_prefix)
+	for index in range(path_xy.size() - 1):
+		var start_point: Variant = path_xy[index]
+		var end_point: Variant = path_xy[index + 1]
+		_assert(start_point is Array and end_point is Array, "%s points must be arrays" % message_prefix)
+		var start_point_array: Array = start_point
+		var end_point_array: Array = end_point
+		_assert(start_point_array.size() == 2 and end_point_array.size() == 2,
+			"%s points must be [x, y] pairs" % message_prefix)
+		var start_x := float(start_point_array[0])
+		var start_y := float(start_point_array[1])
+		var end_x := float(end_point_array[0])
+		var end_y := float(end_point_array[1])
+		_assert(is_equal_approx(start_x, end_x) or is_equal_approx(start_y, end_y),
+			"%s must use only orthogonal segments" % message_prefix)
+
+
+func _assert_path_avoids_keepout(path_xy: Array, center: Vector2, message_prefix: String) -> void:
+	var min_x := center.x - KEEP_OUT_HALF_WIDTH
+	var max_x := center.x + KEEP_OUT_HALF_WIDTH
+	var min_y := center.y - KEEP_OUT_HALF_HEIGHT
+	var max_y := center.y + KEEP_OUT_HALF_HEIGHT
+	for index in range(path_xy.size() - 1):
+		var start_point := path_xy[index] as Array
+		var end_point := path_xy[index + 1] as Array
+		var start_x := float(start_point[0])
+		var start_y := float(start_point[1])
+		var end_x := float(end_point[0])
+		var end_y := float(end_point[1])
+		if is_equal_approx(start_y, end_y):
+			if start_y <= min_y or start_y >= max_y:
+				continue
+			var segment_min_x := minf(start_x, end_x)
+			var segment_max_x := maxf(start_x, end_x)
+			_assert(segment_max_x <= min_x or segment_min_x >= max_x,
+				"%s horizontal segment must avoid obstacle keep-out" % message_prefix)
+		else:
+			if start_x <= min_x or start_x >= max_x:
+				continue
+			var segment_min_y := minf(start_y, end_y)
+			var segment_max_y := maxf(start_y, end_y)
+			_assert(segment_max_y <= min_y or segment_min_y >= max_y,
+				"%s vertical segment must avoid obstacle keep-out" % message_prefix)
+
 
 func _run() -> void:
-	## ── PHASE 1: Bootstrap wiring ─────────────────────────────────────────────
-	## Bootstrap.tscn root node is named "Bootstrap", so it lands at
-	## /root/Bootstrap — matching the NodePaths hard-coded in MainGame.tscn.
 	var bootstrap_root: Node = _add_bootstrap_to_root()
 
 	var backend: Node = _get_backend(bootstrap_root)
@@ -182,9 +274,6 @@ func _run() -> void:
 	var store: Node = _get_store(bootstrap_root)
 	_assert(store != null, "SessionStore node must be present before bootstrap loads")
 
-	## BootstrapController._ready() calls configure_from_environment(), then
-	## configure_client(), then load_bootstrap().  load_bootstrap() emits
-	## bootstrap_updated on success.  Await that signal.
 	await _wait_for_bootstrap_loaded(store)
 
 	var modes: Array = store.supported_mode_ids()
@@ -193,10 +282,6 @@ func _run() -> void:
 	_assert(modes.has("heater_flash_guided_build_v1"),
 		"heater_flash_guided_build_v1 must be listed in bootstrap supported_mode_ids")
 
-	## After bootstrap BootstrapController calls _show_title_screen(), which
-	## instantiates TitleScreen.tscn and adds it to ScreenRoot.
-	## One process frame is sufficient for _show_title_screen() to run since
-	## it is called synchronously from _ready() after the awaited load_bootstrap.
 	var title_screen: Node = await _wait_for_title_screen(bootstrap_root)
 	_assert(title_screen != null,
 		"TitleScreen must be the active screen inside ScreenRoot after bootstrap")
@@ -208,13 +293,7 @@ func _run() -> void:
 		"MODSIM_GODOT_SMOKE_MODE must be phase1_process_sandbox_v1 or heater_flash_guided_build_v1"
 	)
 
-	## ── PHASE 2: Selected mode via actual title-screen button path ───────────
-	## Drive the real UI button that TitleScreen.tscn wires to the controller.
 	_press_selected_title_button(title_screen, selected_mode)
-
-	## Await snapshot_updated.  start_mode() calls apply_authoritative_snapshot()
-	## with the initial snapshot from the create-session response, which emits
-	## snapshot_updated.
 	await _wait_for_snapshot(store)
 
 	_assert(store.active_session_id != "",
@@ -224,37 +303,30 @@ func _run() -> void:
 	_assert(store.latest_snapshot.has("simulation_snapshot"),
 		"latest_snapshot must contain simulation_snapshot key after session creation")
 
-	## ── PHASE 3: MainGame structure and HUD signal-path ──────────────────────
-	## _on_mode_selected awaits start_mode() *before* calling _show_main_game(),
-	## so MainGame may not yet be in the tree.  Wait until it appears.
 	var main_game: Node = await _wait_for_main_game(bootstrap_root)
 	_assert(main_game != null,
 		"MainGame must be added to ScreenRoot by BootstrapController after mode start")
 
-	## Fixed camera must exist and be the active camera.
 	var fixed_camera: Camera3D = main_game.get_node_or_null("World/FixedCamera") as Camera3D
 	_assert(fixed_camera != null, "Fixed camera must exist at World/FixedCamera")
 	_assert(fixed_camera.current, "Fixed camera must be marked current")
 
-	## Pause button and hotkey must be absent (no pause mechanics in this slice).
 	var pause_button: Node = main_game.find_child("PauseButton", true, false)
 	_assert(pause_button == null, "Pause button must be omitted from MainGame")
 	_assert(not InputMap.has_action("pause"), "Pause hotkey action must not exist")
 
-	## HUD must exist.
 	var hud: Node = main_game.get_node_or_null("CanvasLayer/HUD")
 	_assert(hud != null, "HudController must exist at CanvasLayer/HUD in MainGame")
+	var world_renderer: Node = main_game.get_node_or_null("World/WorldRenderer")
+	_assert(world_renderer != null, "WorldRenderer must exist at World/WorldRenderer in MainGame")
 
-	## Prove the signal-path: HUD._ready() connects to SessionStore.snapshot_updated
-	## via the NodePath /root/Bootstrap/SessionStore.  The initial snapshot fired
-	## before MainGame was added, so the HUD labels are still at defaults ("--").
-	## We call store.refresh_snapshot() to emit a new snapshot_updated that the
-	## HUD is now subscribed to, then verify the label text was updated by the
-	## signal handler (not by a direct call).
-	var refresh_ok: bool = await store.refresh_snapshot()
-	_assert(refresh_ok, "store.refresh_snapshot() must succeed for signal-path test")
-	## Allow one frame for the signal to dispatch through the HUD handler.
+	var snapshot_update_count_before_mount: int = int(store.snapshot_update_count)
+	var poll_count_before_mount: int = int(store.poll_success_count)
+	_assert(store.is_polling_active, "Background polling must start after session creation")
+	await _wait_for_poll_update(store, poll_count_before_mount)
 	await process_frame
+	_assert(int(store.snapshot_update_count) > snapshot_update_count_before_mount,
+		"Polling must deliver at least one post-mount snapshot update")
 
 	_assert(hud.cash_label.text.begins_with("Cash:"),
 		"HUD cash label must start with 'Cash:' after snapshot_updated signal")
@@ -268,13 +340,20 @@ func _run() -> void:
 		"HUD research label must render available research state")
 	_assert(hud.unlocked_items_label.text.begins_with("Unlocked Build Items:"),
 		"HUD unlocked items label must render progression item state")
+	_assert(world_renderer.has_method("rendered_boundary_ids"),
+		"WorldRenderer must expose rendered boundary ids for smoke inspection")
+	var rendered_boundary_ids: PackedStringArray = world_renderer.rendered_boundary_ids()
+	_assert(rendered_boundary_ids == _expected_boundary_ids(store.latest_snapshot),
+		"WorldRenderer boundary ids must match authoritative topology presence")
 
-	## ── PHASE 4: Production BuildCommandPanel command path ───────────────────
 	var build_panel: Node = main_game.get_node_or_null("CanvasLayer/HUD/BuildPanel")
 	_assert(build_panel != null, "BuildCommandPanel must exist at CanvasLayer/HUD/BuildPanel")
 
-	var build_item_next_button: Button = build_panel.get_node_or_null("BuildItemNextButton") as Button
 	var build_selected_button: Button = build_panel.get_node_or_null("BuildSelectedButton") as Button
+	var line_source_label: Label = build_panel.get_node_or_null("LineSourceLabel") as Label
+	var line_source_next_button: Button = build_panel.get_node_or_null("LineSourceNextButton") as Button
+	var line_target_label: Label = build_panel.get_node_or_null("LineTargetLabel") as Label
+	var line_target_next_button: Button = build_panel.get_node_or_null("LineTargetNextButton") as Button
 	var submit_research_button: Button = build_panel.get_node_or_null("SubmitResearchButton") as Button
 	var buy_feed_button: Button = build_panel.get_node_or_null("BuyFeedButton") as Button
 	var sell_product_button: Button = build_panel.get_node_or_null("SellProductButton") as Button
@@ -283,8 +362,11 @@ func _run() -> void:
 	var research_status_label: Label = build_panel.get_node_or_null("ResearchStatusLabel") as Label
 	var status_label: Label = build_panel.get_node_or_null("StatusLabel") as Label
 
-	_assert(build_item_next_button != null, "BuildItemNextButton must exist")
 	_assert(build_selected_button != null, "BuildSelectedButton must exist")
+	_assert(line_source_label != null, "LineSourceLabel must exist")
+	_assert(line_source_next_button != null, "LineSourceNextButton must exist")
+	_assert(line_target_label != null, "LineTargetLabel must exist")
+	_assert(line_target_next_button != null, "LineTargetNextButton must exist")
 	_assert(submit_research_button != null, "SubmitResearchButton must exist")
 	_assert(buy_feed_button != null, "BuyFeedButton must exist")
 	_assert(sell_product_button != null, "SellProductButton must exist")
@@ -293,19 +375,78 @@ func _run() -> void:
 	_assert(research_status_label != null, "ResearchStatusLabel must exist")
 	_assert(status_label != null, "StatusLabel must exist")
 
-	build_item_next_button.pressed.emit()
-	await process_frame
 	_assert(build_item_label.text.begins_with("Selected build item:"),
 		"Build item label must show currently selected unlocked item")
 
-	buy_feed_button.pressed.emit()
-	if selected_mode == "heater_flash_guided_build_v1":
-		await _wait_for_status_contains(status_label, "Feed purchase unavailable")
-	else:
-		await _wait_for_status_contains_any(status_label, PackedStringArray(["Bought", "Buy feed failed"]))
+	if selected_mode == "phase1_process_sandbox_v1":
+		await _select_build_item(build_panel, "place_inlet_gas_separator")
+		build_selected_button.pressed.emit()
+		await _wait_for_status_contains(status_label, "Built place_inlet_gas_separator")
 
-	build_selected_button.pressed.emit()
-	await _wait_for_status_contains_any(status_label, PackedStringArray(["Built", "Build failed", "Line build requires explicit endpoints"]))
+		build_selected_button.pressed.emit()
+		await _wait_for_status_contains(status_label, "Built place_inlet_gas_separator")
+
+		await _select_build_item(build_panel, "build_process_line")
+		await _select_line_endpoint(line_source_label, line_source_next_button, "Line source: ", "sweet_wet_gas")
+		await _select_line_endpoint(line_target_label, line_target_next_button, "Line target: ", "separator_1.inlet")
+		build_selected_button.pressed.emit()
+		await _wait_for_status_contains(status_label, "Built build_process_line")
+		_assert(not status_label.text.contains("Line build requires explicit endpoints"),
+			"Explicit line endpoint authoring must replace the old fixed rejection")
+		var feed_line_entity := _latest_line_entity(store.latest_snapshot, "sweet_wet_gas", "separator_1.inlet")
+		_assert(not feed_line_entity.is_empty(),
+			"Sandbox snapshot must store the sweet_wet_gas -> separator_1.inlet line")
+		_assert_path_is_orthogonal(feed_line_entity.get("path_xy", []),
+			"Feed line path")
+		var rendered_unit_ids: PackedStringArray = world_renderer.rendered_unit_ids()
+		var expected_unit_ids: PackedStringArray = _sorted_keys(
+			store.latest_snapshot.get("board_layout", {}).get("unit_entities_by_process_id", {})
+		)
+		_assert(rendered_unit_ids == expected_unit_ids,
+			"WorldRenderer unit ids must match authoritative unit ids after sandbox builds")
+		var rendered_line_ids: PackedStringArray = world_renderer.rendered_line_ids()
+		var expected_line_ids: PackedStringArray = _sorted_keys(
+			store.latest_snapshot.get("board_layout", {}).get("line_entities_by_line_id", {})
+		)
+		_assert(rendered_line_ids == expected_line_ids,
+			"WorldRenderer line ids must match authoritative line ids after first line build")
+
+		await _select_line_endpoint(line_source_label, line_source_next_button, "Line source: ", "separator_1.vapor_outlet")
+		await _select_line_endpoint(line_target_label, line_target_next_button, "Line target: ", "separator_gas")
+		var request_started_before_line: int = int(backend.request_started_count)
+		var request_wait_before_line: int = int(backend.request_wait_count)
+		await _wait_for_backend_request_in_flight(backend)
+		build_selected_button.pressed.emit()
+		await _wait_for_status_contains(status_label, "Built build_process_line")
+		_assert(int(backend.request_started_count) > request_started_before_line,
+			"Line build should issue a real HTTP request through BackendClient")
+		_assert(int(backend.request_wait_count) > request_wait_before_line,
+			"Line build should wait behind an in-flight background poll request at least once")
+		_assert(int(backend.request_timeout_count) == 0,
+			"Serialized request sequencing should not require transport timeouts")
+		var vapor_line_entity := _latest_line_entity(store.latest_snapshot, "separator_1.vapor_outlet", "separator_gas")
+		_assert(not vapor_line_entity.is_empty(),
+			"Sandbox snapshot must store the separator_1.vapor_outlet -> separator_gas line")
+		var vapor_path_xy: Array = vapor_line_entity.get("path_xy", [])
+		_assert_path_is_orthogonal(vapor_path_xy, "Vapor outlet line path")
+		_assert(vapor_path_xy.size() >= 3,
+			"Vapor outlet line should use an elbowed path when separator_2 occupies the direct route")
+		_assert_path_avoids_keepout(vapor_path_xy, Vector2(4.0, 0.0),
+			"Vapor outlet line path")
+		rendered_line_ids = world_renderer.rendered_line_ids()
+		expected_line_ids = _sorted_keys(
+			store.latest_snapshot.get("board_layout", {}).get("line_entities_by_line_id", {})
+		)
+		_assert(rendered_line_ids == expected_line_ids,
+			"WorldRenderer line ids must match authoritative line ids after vapor line build")
+
+		buy_feed_button.pressed.emit()
+		await _wait_for_status_contains_any(status_label, PackedStringArray(["Bought", "Buy feed failed"]))
+	else:
+		buy_feed_button.pressed.emit()
+		await _wait_for_status_contains(status_label, "Feed purchase unavailable in tutorial")
+		_assert(world_renderer.rendered_boundary_ids() == _expected_boundary_ids(store.latest_snapshot),
+			"Tutorial mode must render authoritative boundary ids")
 
 	submit_research_button.pressed.emit()
 	await _wait_for_status_contains_any(status_label, PackedStringArray(["Research submitted", "Research failed", "No research available"]))
@@ -316,9 +457,6 @@ func _run() -> void:
 	await _wait_for_status_contains_any(status_label, PackedStringArray(["Sold", "Sell product failed"]))
 
 	if selected_mode == "heater_flash_guided_build_v1":
-		var refresh_tutorial_ok: bool = await store.refresh_snapshot()
-		_assert(refresh_tutorial_ok, "Tutorial mode refresh_snapshot() must succeed after UI wiring")
-		await process_frame
 		_assert(hud.goals_label.text.begins_with("Tutorial Goals:"),
 			"HUD goals label must remain wired for tutorial mode")
 	else:
@@ -329,9 +467,21 @@ func _run() -> void:
 	await _wait_for_status_contains(status_label, "Session restarted")
 	_assert(store.active_session_id == original_session_id,
 		"Restart via UI must preserve active session id")
+	var restarted_board_layout: Dictionary = store.latest_snapshot.get("board_layout", {})
+	var restarted_units: PackedStringArray = _sorted_keys(restarted_board_layout.get("unit_entities_by_process_id", {}))
+	var restarted_lines: PackedStringArray = _sorted_keys(restarted_board_layout.get("line_entities_by_line_id", {}))
+	_assert(world_renderer.rendered_unit_ids() == restarted_units,
+		"WorldRenderer unit ids must match authoritative restart state")
+	_assert(world_renderer.rendered_line_ids() == restarted_lines,
+		"WorldRenderer line ids must match authoritative restart state")
 
-	## ── DONE ─────────────────────────────────────────────────────────────────
-	store.stop_polling()
+	var stop_polling_count_before_teardown: int = int(store.stop_polling_count)
+	bootstrap_root.call("_show_title_screen")
+	await process_frame
+	_assert(int(store.stop_polling_count) > stop_polling_count_before_teardown,
+		"Title-screen teardown path must stop polling through BootstrapController")
+	_assert(not store.is_polling_active, "Polling must stop cleanly on scene teardown")
+
 	bootstrap_root.queue_free()
 	await process_frame
 	quit(0)

@@ -405,6 +405,17 @@ def test_combined_snapshot_contains_required_authoritative_sections() -> None:
     assert tuple(cast(Any, _field(snapshot, "supported_build_item_ids"))) == STARTER_BATCH_ITEM_IDS
     assert cast(float, _field(snapshot, "lag_backlog_s")) >= 0.0
 
+    topology = cast(Mapping[str, object], _field(snapshot, "topology"))
+    topology_graph = cast(Mapping[str, object], topology["topology"])
+    topology_nodes = cast(list[Mapping[str, object]], topology_graph["nodes"])
+    assert topology_nodes
+    for node in topology_nodes:
+        assert isinstance(node["node_kind"], str)
+        for port in cast(list[Mapping[str, object]], node["ports"]):
+            assert set(port) == {"port_name", "direction"}
+            assert isinstance(port["port_name"], str)
+            assert isinstance(port["direction"], str)
+
     simulation_snapshot = cast(SimulationSessionSnapshot, _field(snapshot, "simulation_snapshot"))
     assert _field(snapshot, "session_kind") == simulation_snapshot.session_kind
     assert _field(snapshot, "active_start_id") == simulation_snapshot.active_start_id
