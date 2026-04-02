@@ -196,6 +196,29 @@ func _latest_line_entity(snapshot: Dictionary, source_id: String, target_id: Str
 	return {}
 
 
+func _sorted_keys(value: Dictionary) -> PackedStringArray:
+	var keys := PackedStringArray()
+	for key in value.keys():
+		keys.append(String(key))
+	keys.sort()
+	return keys
+
+
+func _expected_boundary_ids(snapshot: Dictionary) -> PackedStringArray:
+	var ids := PackedStringArray()
+	var topology_envelope: Dictionary = snapshot.get("topology", {})
+	var topology: Dictionary = topology_envelope.get("topology", {})
+	var nodes: Array = topology.get("nodes", [])
+	for node_value in nodes:
+		if not (node_value is Dictionary):
+			continue
+		var node: Dictionary = node_value
+		if String(node.get("node_kind", "")) == "boundary":
+			ids.append(String(node.get("node_id", "")))
+	ids.sort()
+	return ids
+
+
 func _assert_path_is_orthogonal(path_xy: Array, message_prefix: String) -> void:
 	_assert(path_xy.size() >= 2, "%s must contain at least two points" % message_prefix)
 	for index in range(path_xy.size() - 1):
@@ -294,6 +317,8 @@ func _run() -> void:
 
 	var hud: Node = main_game.get_node_or_null("CanvasLayer/HUD")
 	_assert(hud != null, "HudController must exist at CanvasLayer/HUD in MainGame")
+	var world_renderer: Node = main_game.get_node_or_null("World/WorldRenderer")
+	_assert(world_renderer != null, "WorldRenderer must exist at World/WorldRenderer in MainGame")
 
 	var snapshot_update_count_before_mount: int = int(store.snapshot_update_count)
 	var poll_count_before_mount: int = int(store.poll_success_count)
@@ -315,6 +340,11 @@ func _run() -> void:
 		"HUD research label must render available research state")
 	_assert(hud.unlocked_items_label.text.begins_with("Unlocked Build Items:"),
 		"HUD unlocked items label must render progression item state")
+	_assert(world_renderer.has_method("rendered_boundary_ids"),
+		"WorldRenderer must expose rendered boundary ids for smoke inspection")
+	var rendered_boundary_ids: PackedStringArray = world_renderer.rendered_boundary_ids()
+	_assert(rendered_boundary_ids == _expected_boundary_ids(store.latest_snapshot),
+		"WorldRenderer boundary ids must match authoritative topology presence")
 
 	var build_panel: Node = main_game.get_node_or_null("CanvasLayer/HUD/BuildPanel")
 	_assert(build_panel != null, "BuildCommandPanel must exist at CanvasLayer/HUD/BuildPanel")
@@ -368,6 +398,18 @@ func _run() -> void:
 			"Sandbox snapshot must store the sweet_wet_gas -> separator_1.inlet line")
 		_assert_path_is_orthogonal(feed_line_entity.get("path_xy", []),
 			"Feed line path")
+		var rendered_unit_ids: PackedStringArray = world_renderer.rendered_unit_ids()
+		var expected_unit_ids: PackedStringArray = _sorted_keys(
+			store.latest_snapshot.get("board_layout", {}).get("unit_entities_by_process_id", {})
+		)
+		_assert(rendered_unit_ids == expected_unit_ids,
+			"WorldRenderer unit ids must match authoritative unit ids after sandbox builds")
+		var rendered_line_ids: PackedStringArray = world_renderer.rendered_line_ids()
+		var expected_line_ids: PackedStringArray = _sorted_keys(
+			store.latest_snapshot.get("board_layout", {}).get("line_entities_by_line_id", {})
+		)
+		_assert(rendered_line_ids == expected_line_ids,
+			"WorldRenderer line ids must match authoritative line ids after first line build")
 
 		await _select_line_endpoint(line_source_label, line_source_next_button, "Line source: ", "separator_1.vapor_outlet")
 		await _select_line_endpoint(line_target_label, line_target_next_button, "Line target: ", "separator_gas")
@@ -391,12 +433,20 @@ func _run() -> void:
 			"Vapor outlet line should use an elbowed path when separator_2 occupies the direct route")
 		_assert_path_avoids_keepout(vapor_path_xy, Vector2(4.0, 0.0),
 			"Vapor outlet line path")
+		rendered_line_ids = world_renderer.rendered_line_ids()
+		expected_line_ids = _sorted_keys(
+			store.latest_snapshot.get("board_layout", {}).get("line_entities_by_line_id", {})
+		)
+		_assert(rendered_line_ids == expected_line_ids,
+			"WorldRenderer line ids must match authoritative line ids after vapor line build")
 
 		buy_feed_button.pressed.emit()
 		await _wait_for_status_contains_any(status_label, PackedStringArray(["Bought", "Buy feed failed"]))
 	else:
 		buy_feed_button.pressed.emit()
 		await _wait_for_status_contains(status_label, "Feed purchase unavailable in tutorial")
+		_assert(world_renderer.rendered_boundary_ids() == _expected_boundary_ids(store.latest_snapshot),
+			"Tutorial mode must render authoritative boundary ids")
 
 	submit_research_button.pressed.emit()
 	await _wait_for_status_contains_any(status_label, PackedStringArray(["Research submitted", "Research failed", "No research available"]))
@@ -417,6 +467,13 @@ func _run() -> void:
 	await _wait_for_status_contains(status_label, "Session restarted")
 	_assert(store.active_session_id == original_session_id,
 		"Restart via UI must preserve active session id")
+	var restarted_board_layout: Dictionary = store.latest_snapshot.get("board_layout", {})
+	var restarted_units: PackedStringArray = _sorted_keys(restarted_board_layout.get("unit_entities_by_process_id", {}))
+	var restarted_lines: PackedStringArray = _sorted_keys(restarted_board_layout.get("line_entities_by_line_id", {}))
+	_assert(world_renderer.rendered_unit_ids() == restarted_units,
+		"WorldRenderer unit ids must match authoritative restart state")
+	_assert(world_renderer.rendered_line_ids() == restarted_lines,
+		"WorldRenderer line ids must match authoritative restart state")
 
 	var stop_polling_count_before_teardown: int = int(store.stop_polling_count)
 	bootstrap_root.call("_show_title_screen")

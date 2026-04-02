@@ -57,6 +57,7 @@ Client behavior for this slice:
 
 - fixed camera, no free rotation,
 - 2.5D board presentation,
+- snapshot-driven world rendering of authoritative boundaries, units, and process lines,
 - panel-first process-line authoring using explicit source/target endpoint selection,
 - active background snapshot polling after session start,
 - serialized HTTP request use on the shared Godot `HTTPRequest` node so polling and commands do not overlap,
@@ -70,6 +71,14 @@ Client behavior for this slice:
 - The client generates orthogonal `layout.path_xy` polylines with 90-degree elbows from authoritative process anchors plus fixed boundary anchors for the current slice.
 - The first pass uses simple keep-out rectangles around placed unit anchors to avoid routing lines directly through occupied unit positions.
 - Richer in-world line drawing and direct click/drag authoring remain deferred.
+
+## Current World Rendering Notes
+
+- `WorldRenderer` rebuilds the visible board state from each authoritative snapshot instead of maintaining a separate client-side simulation.
+- Units render from `board_layout.unit_entities_by_process_id[*].anchor_xy`.
+- Process lines render from `board_layout.line_entities_by_line_id[*].path_xy`.
+- Public boundaries render only when they are present in the authoritative topology payload, but keep their current slice-local fixed anchor positions.
+- Rendering remains intentionally minimal: deterministic primitive meshes, fixed heights per layer, and no animated flow or richer overlay claims in this pack.
 
 ## Run Godot Headless Smoke
 
@@ -93,7 +102,9 @@ Smoke expectations for this pack:
 
 - sandbox mode proves panel-driven line building from explicit endpoint selections,
 - sandbox mode observes at least one post-mount polling-only snapshot update,
+- the world renderer exposes authoritative boundary, unit, and line ids that match the current snapshot,
 - tutorial mode proves the same polling startup/teardown lifecycle without widening tutorial scope,
+- restart re-renders the authoritative world state after reset,
 - teardown returns through the real title-screen path and stops polling cleanly.
 
 ## Persistence Limitation (Current)

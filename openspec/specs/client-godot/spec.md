@@ -212,6 +212,24 @@ The first playable slice SHALL ship with a Godot 4 client that uses a fixed non-
 - **WHEN** the player is inside the main playable scene
 - **THEN** the camera remains fixed and the player cannot freely rotate it
 
+### Requirement: The Godot World Renders The Authoritative Board State
+The playable Godot client SHALL render a readable in-world view directly from the authoritative topology and board-layout snapshot rather than from a second client-side simulation model.
+
+#### Scenario: Boundary markers appear from authoritative topology presence
+- **WHEN** `WorldRenderer` refreshes from an authoritative snapshot
+- **THEN** the client renders public boundary markers only for boundary node ids currently present in the authoritative topology payload
+- **AND** the current slice continues to use fixed client-side anchor positions for those public boundary ids.
+
+#### Scenario: Sandbox builds refresh rendered units and lines from authoritative layout state
+- **WHEN** the player places units and process lines in `phase1_process_sandbox_v1`
+- **THEN** `WorldRenderer` rebuilds visible unit markers from `board_layout.unit_entities_by_process_id`
+- **AND** visible line markers from `board_layout.line_entities_by_line_id`
+- **AND** the rendered ids/counts match the authoritative snapshot after each update.
+
+#### Scenario: Restart clears rendered world state back to the authoritative restart snapshot
+- **WHEN** the player restarts the active playable session
+- **THEN** the rendered unit and line ids are rebuilt to match the authoritative restarted snapshot rather than preserving stale pre-restart nodes.
+
 ### Requirement: The Godot HUD Exposes The Current Slice State
 The client SHALL surface the state needed to play the slice: cash, feed inventory, product inventory, published signals, progression state for the main sandbox, tutorial goals when applicable, the supported build/feed/sell/research/restart commands, and panel-first process-line authoring for the currently supported slice topology.
 
