@@ -1,6 +1,6 @@
 ---
 description: Implement tasks from an OpenSpec change (Experimental)
-agent: build
+agent: hybrid-orchestrator
 ---
 
 Implement tasks from an OpenSpec change.

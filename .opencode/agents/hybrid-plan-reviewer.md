@@ -2,9 +2,10 @@
 description: Review OpenSpec proposal, design, spec, and task artifacts for ambiguity, sequencing risk, and execution readiness in the hybrid workflow.
 mode: subagent
 model: github-copilot/gpt-5.4
-variant: high
+variant: medium
 temperature: 0.1
 color: warning
+enable: false
 permission:
   edit: deny
   bash: allow

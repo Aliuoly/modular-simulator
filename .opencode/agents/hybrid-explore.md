@@ -1,7 +1,7 @@
 ---
 description: Read-only codebase exploration agent for fast reconnaissance without modifying files.
 mode: subagent
-model: zai-coding-plan/glm-5-turbo
+model: zai-coding-plan/glm-5.1
 temperature: 0.1
 color: secondary
 permission:
@@ -9,8 +9,6 @@ permission:
   bash: allow
   webfetch: deny
   task:
-    "*": deny
-  skill:
     "*": deny
 ---
 You are a read-only exploration agent.

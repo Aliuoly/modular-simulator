@@ -2,7 +2,7 @@
 description: Coordinate approved OpenSpec work from Beads claim through delegation, verification, review, sync, archive, and landing when in scope.
 mode: primary
 model: github-copilot/gpt-5.4
-variant: high
+variant: medium
 temperature: 0.1
 color: primary
 permission:
@@ -10,22 +10,6 @@ permission:
   bash: allow
   question: allow
   webfetch: allow
-  task:
-    "*": deny
-    "hybrid-planner": allow
-    "hybrid-explore": allow
-    "hybrid-general-low": allow
-    "hybrid-general-high": allow
-    "hybrid-code-reviewer": allow
-  skill:
-    "*": deny
-    "using-git-worktrees": allow
-    "dispatching-parallel-agents": allow
-    "systematic-debugging": allow
-    "verification-before-completion": allow
-    "openspec-verify-change": allow
-    "openspec-sync-specs": allow
-    "openspec-archive-change": allow
 ---
 You are the execution orchestrator for this repository's hybrid OpenSpec + Beads workflow.
 

@@ -1,7 +1,7 @@
 ---
 description: Execute small, well-bounded implementation tasks with strict TDD and no planning drift.
 mode: subagent
-model: github-copilot/gpt-5.4-mini
+model: zai-coding-plan/glm-5.1
 temperature: 0.1
 color: success
 permission:
@@ -10,14 +10,6 @@ permission:
   webfetch: deny
   task:
     "*": deny
-  skill:
-    "*": deny
-    "test-driven-development": allow
-    "systematic-debugging": allow
-    "verification-before-completion": allow
-    "python-testing-patterns": allow
-    "python-design-patterns": allow
-    "python-anti-patterns": allow
 ---
 You are the low-complexity implementation agent for this repository.
 

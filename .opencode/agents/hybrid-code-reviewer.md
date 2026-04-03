@@ -2,7 +2,7 @@
 description: Read-only reviewer for spec compliance first, code quality second, and conditional simulation-realism review in the hybrid OpenSpec plus Beads workflow.
 mode: subagent
 model: github-copilot/gpt-5.4
-variant: high
+variant: medium
 temperature: 0.1
 color: error
 permission:
@@ -13,8 +13,6 @@ permission:
     "*": deny
     "hybrid-explore": allow
     "web-search-researcher": allow
-  skill:
-    "*": deny
 ---
 You are the independent code reviewer for this repository's hybrid workflow.
 

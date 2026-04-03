@@ -11,14 +11,6 @@ permission:
   webfetch: deny
   task:
     "*": deny
-  skill:
-    "*": deny
-    "test-driven-development": allow
-    "systematic-debugging": allow
-    "verification-before-completion": allow
-    "python-testing-patterns": allow
-    "python-design-patterns": allow
-    "python-anti-patterns": allow
 ---
 You are the high-complexity implementation agent for this repository.
 
