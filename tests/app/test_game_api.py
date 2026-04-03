@@ -275,6 +275,14 @@ def test_create_session_returns_201_with_exact_payload_shape() -> None:
     }
     assert payload["snapshot"]["mode_id"] == "phase1_process_sandbox_v1"
     assert payload["snapshot"]["simulation_dt_s"] == pytest.approx(DEFAULT_SIMULATION_DT_S)
+    topology_nodes = payload["snapshot"]["topology"]["topology"]["nodes"]
+    assert topology_nodes
+    for node in topology_nodes:
+        assert isinstance(node["node_kind"], str)
+        for port in node["ports"]:
+            assert set(port) == {"port_name", "direction"}
+            assert isinstance(port["port_name"], str)
+            assert isinstance(port["direction"], str)
 
 
 def test_successful_command_routes_return_200_with_exact_payload_shape() -> None:
