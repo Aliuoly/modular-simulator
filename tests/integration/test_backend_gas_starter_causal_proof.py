@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sys
+from typing import cast
 
 import pytest
 
@@ -9,8 +10,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import examples.dynamic_simulation_demos.backend_gas_starter_causal_proof as proof_module
 from examples.dynamic_simulation_demos.backend_gas_starter_causal_proof import (
     build_backend_gas_starter_proof_harness,
+    plot_backend_gas_starter_causal_proof,
     run_backend_gas_starter_causal_proof,
 )
 
@@ -143,3 +146,99 @@ def test_stagewise_proof_claims_remain_honest_and_name_q_over_lambda_limitation(
     assert "modularsimulator-9tr.5.2" in deferred
     assert "passive product-flow readouts" in demonstrated
     assert "passive product-withdrawal readouts" in demonstrated
+
+
+def test_plotting_helper_renders_expected_panels_and_disturbance_markers() -> None:
+    report = run_backend_gas_starter_causal_proof(
+        dt_s=0.2,
+        baseline_steps=3,
+        post_disturbance_steps=10,
+    )
+
+    proof = report["proof"]
+    history = proof["history"]
+    first_window = max(2, int(proof["post_disturbance_steps"]) // 2)
+
+    figure = plot_backend_gas_starter_causal_proof(
+        history=history,
+        dt_s=0.2,
+        baseline_steps=int(proof["baseline_steps"]),
+        first_window=first_window,
+        show=False,
+    )
+
+    axes = figure.axes
+    assert len(axes) == 6
+
+    expected_ylabels = [
+        "Duty [W]",
+        "Holdup [mol]",
+        "Flow [mol/s]",
+        "Flow [mol/s]",
+        "Mole fraction [-]",
+        "Mole fraction [-]",
+    ]
+    expected_titles = [
+        "Duty requests",
+        "Column holdups",
+        "Product withdrawal readouts",
+        "Realized internal flows",
+        "Product composition indicators",
+        "Stage 1 light-component composition",
+    ]
+    expected_series = [
+        ["condenser_duty_request_W", "reboiler_duty_request_W"],
+        ["reflux_drum_holdup_mol", "bottoms_sump_holdup_mol"],
+        ["distillate_flow_mol_s", "bottoms_flow_mol_s"],
+        ["realized_condensed_flow_mol_s", "realized_reboiler_boilup_flow_mol_s"],
+        ["distillate_light_key_component_x", "bottoms_heavy_key_component_x"],
+        ["feed_stage_light_component_x"],
+    ]
+    first_marker_time = int(proof["baseline_steps"]) * 0.2
+    second_marker_time = (int(proof["baseline_steps"]) + first_window) * 0.2
+
+    for axis, expected_ylabel, expected_title, expected_labels in zip(
+        axes, expected_ylabels, expected_titles, expected_series, strict=True
+    ):
+        assert axis.get_ylabel() == expected_ylabel
+        assert axis.get_title() == expected_title
+        plotted_labels = [
+            line.get_label() for line in axis.lines if not line.get_label().startswith("_")
+        ]
+        assert plotted_labels == expected_labels
+        assert any(line.get_xdata()[0] == pytest.approx(first_marker_time) for line in axis.lines)
+        assert any(line.get_xdata()[0] == pytest.approx(second_marker_time) for line in axis.lines)
+
+
+def test_main_prints_summary_before_invoking_plotting_helper(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    plot_calls: list[dict[str, object]] = []
+
+    def fake_plot(**kwargs: object) -> object:
+        plot_calls.append(
+            {
+                "kwargs": kwargs,
+                "printed_output": capsys.readouterr().out,
+            }
+        )
+        return object()
+
+    monkeypatch.setattr(proof_module, "plot_backend_gas_starter_causal_proof", fake_plot)
+
+    proof_module.main()
+
+    assert len(plot_calls) == 1
+    plotted = plot_calls[0]
+    printed_output = cast(str, plotted["printed_output"])
+    assert "BACKEND GAS STARTER STAGEWISE CAUSAL PROOF" in printed_output
+    assert "DEMONSTRATED" in printed_output
+    assert "DEFERRED" in printed_output
+
+    kwargs = cast(dict[str, object], plotted["kwargs"])
+    assert kwargs["dt_s"] == pytest.approx(0.2)
+    assert kwargs["baseline_steps"] == 100
+    assert kwargs["first_window"] == 500
+
+    history = cast(list[dict[str, float]], kwargs["history"])
+    assert len(history) == 1100

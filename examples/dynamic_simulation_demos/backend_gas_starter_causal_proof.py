@@ -200,11 +200,102 @@ def run_backend_gas_starter_causal_proof(
     }
 
 
+def plot_backend_gas_starter_causal_proof(
+    *,
+    history: list[dict[str, float]],
+    dt_s: float,
+    baseline_steps: int,
+    first_window: int,
+    show: bool = True,
+) -> object:
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise RuntimeError(
+            "Plotting requires matplotlib. Install it with 'uv add --dev matplotlib'."
+        ) from exc
+
+    times = [point["time_s"] for point in history]
+    first_marker_time = baseline_steps * dt_s
+    second_marker_time = (baseline_steps + first_window) * dt_s
+
+    figure, axes = plt.subplots(3, 2, figsize=(14, 11), sharex=True)
+    plot_axes = list(axes.flat)
+
+    panel_specs = (
+        (
+            plot_axes[0],
+            "Duty requests",
+            "Duty [W]",
+            ("condenser_duty_request_W", "reboiler_duty_request_W"),
+        ),
+        (
+            plot_axes[1],
+            "Column holdups",
+            "Holdup [mol]",
+            ("reflux_drum_holdup_mol", "bottoms_sump_holdup_mol"),
+        ),
+        (
+            plot_axes[2],
+            "Product withdrawal readouts",
+            "Flow [mol/s]",
+            ("distillate_flow_mol_s", "bottoms_flow_mol_s"),
+        ),
+        (
+            plot_axes[3],
+            "Realized internal flows",
+            "Flow [mol/s]",
+            ("realized_condensed_flow_mol_s", "realized_reboiler_boilup_flow_mol_s"),
+        ),
+        (
+            plot_axes[4],
+            "Product composition indicators",
+            "Mole fraction [-]",
+            ("distillate_light_key_component_x", "bottoms_heavy_key_component_x"),
+        ),
+        (
+            plot_axes[5],
+            "Stage 1 light-component composition",
+            "Mole fraction [-]",
+            ("feed_stage_light_component_x",),
+        ),
+    )
+
+    for axis, title, ylabel, series_keys in panel_specs:
+        for series_key in series_keys:
+            axis.plot(
+                times, [point[series_key] for point in history], label=series_key, linewidth=2.0
+            )
+        axis.axvline(first_marker_time, color="black", linestyle=":", linewidth=1.2)
+        axis.axvline(second_marker_time, color="black", linestyle="--", linewidth=1.2)
+        axis.set_title(title)
+        axis.set_ylabel(ylabel)
+        axis.grid(True, alpha=0.3)
+        axis.legend(loc="best")
+
+    plot_axes[4].set_xlabel("Time [s]")
+    plot_axes[5].set_xlabel("Time [s]")
+    figure.tight_layout()
+
+    if show:
+        plt.show()
+
+    return figure
+
+
 def main() -> None:
-    report = run_backend_gas_starter_causal_proof()
+    baseline_steps = 100
+    post_disturbance_steps = 1000
+    dt_s = 0.2
+    report = run_backend_gas_starter_causal_proof(
+        dt_s=dt_s,
+        baseline_steps=baseline_steps,
+        post_disturbance_steps=post_disturbance_steps,
+    )
     proof = cast(dict[str, Any], report["proof"])
     history = cast(list[dict[str, float]], proof["history"])
     claims = cast(dict[str, list[str]], report["claims"])
+    first_window = max(2, post_disturbance_steps // 2)
 
     print("BACKEND GAS STARTER STAGEWISE CAUSAL PROOF")
     print(f"baseline_steps={proof['baseline_steps']}")
@@ -232,6 +323,14 @@ def main() -> None:
     print("DEFERRED")
     for claim in claims["deferred"]:
         print(f"- {claim}")
+
+    if history:
+        _ = plot_backend_gas_starter_causal_proof(
+            history=history,
+            dt_s=dt_s,
+            baseline_steps=baseline_steps,
+            first_window=first_window,
+        )
 
 
 if __name__ == "__main__":
