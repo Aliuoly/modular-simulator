@@ -1,4 +1,4 @@
-schema: spec-driven
+schema: modsim-contract
 context: |
   ModularSimulator is a chemical-process simulation project being built to support a serious process-optimization game while also standing on its own as a reasonably high-fidelity simulation substrate.
 
@@ -12,9 +12,20 @@ context: |
 
   The primary implementation stack is Python with Pydantic, FastAPI/Uvicorn, SciPy, Astropy, and thermo/chemicals, with a Godot client layer on top.
 
-  OpenSpec is the source of truth for requirements and acceptance criteria. Beads tracks execution work.
+  OpenSpec is the durable contract for requirements, design intent, delta specs, and change planning.
+  Beads is the live execution ledger for status, blockers, notes, and discovered work.
+  Use `tasks.md` as the planning breakdown and `beads-identity.md` as the OpenSpec-to-Beads linkage record.
 
 rules:
-  - Use plain language in all OpenSpec artifacts. Prefer direct, concrete wording over jargon, abstract labels, or vague framework terms.
-  - Domain specs under openspec/specs/ should be organized by durable capability domains, not by work items or release milestones.
-  - Requirements and scenarios must describe observable behavior, not implementation internals.
+  proposal:
+    - Use plain language. Prefer direct, concrete wording over jargon, abstract labels, or vague framework terms.
+  specs:
+    - Organize domain specs under `openspec/specs/` by durable capability domain, not by work item or release milestone.
+    - Describe observable behavior and acceptance criteria, not implementation internals.
+  design:
+    - Record explicit decisions, risks, trade-offs, and verification strategy.
+  tasks:
+    - Treat `tasks.md` as the planning breakdown, not the live execution ledger.
+    - Organize work into dependency gates and execution waves with concrete verification commands and expected evidence.
+  beads-identity:
+    - Record the linked Beads epic ID, child task IDs, sync note, and a clear statement that Beads is the live execution ledger.

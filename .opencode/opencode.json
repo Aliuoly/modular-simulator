@@ -3,15 +3,28 @@
   "default_agent": "orchestrator",
   "plugin": [],
   "mcp": {
-    "scholar_mcp": {
+    "paper_search_mcp": {
       "type": "local",
-      "command": ["npx", "-y", "scholar-mcp", "--transport=stdio"],
+      "command": [
+        "uv",
+        "run",
+        "--directory",
+        "/home/alden/.local/share/opencode/paper-search-mcp",
+        "-m",
+        "paper_search_mcp.server"
+      ],
       "enabled": true,
       "environment": {
-        "SCHOLAR_MCP_TRANSPORT": "stdio",
-        "SCHOLAR_REQUEST_DELAY_MS": "350",
-        "RESEARCH_ALLOW_REMOTE_PDFS": "true",
-        "RESEARCH_ALLOW_LOCAL_PDFS": "true"
+        "PAPER_SEARCH_MCP_UNPAYWALL_EMAIL": "{env:PAPER_SEARCH_MCP_UNPAYWALL_EMAIL}",
+        "PAPER_SEARCH_MCP_CORE_API_KEY": "{env:PAPER_SEARCH_MCP_CORE_API_KEY}",
+        "PAPER_SEARCH_MCP_SEMANTIC_SCHOLAR_API_KEY": "{env:PAPER_SEARCH_MCP_SEMANTIC_SCHOLAR_API_KEY}",
+        "PAPER_SEARCH_MCP_DOAJ_API_KEY": "{env:PAPER_SEARCH_MCP_DOAJ_API_KEY}",
+        "PAPER_SEARCH_MCP_ZENODO_ACCESS_TOKEN": "{env:PAPER_SEARCH_MCP_ZENODO_ACCESS_TOKEN}",
+        "PAPER_SEARCH_MCP_GOOGLE_SCHOLAR_PROXY_URL": "{env:PAPER_SEARCH_MCP_GOOGLE_SCHOLAR_PROXY_URL}",
+        "PAPER_SEARCH_MCP_OPENAIRE_API_KEY": "{env:PAPER_SEARCH_MCP_OPENAIRE_API_KEY}",
+        "PAPER_SEARCH_MCP_CITESEERX_API_KEY": "{env:PAPER_SEARCH_MCP_CITESEERX_API_KEY}",
+        "PAPER_SEARCH_MCP_IEEE_API_KEY": "{env:PAPER_SEARCH_MCP_IEEE_API_KEY}",
+        "PAPER_SEARCH_MCP_ACM_API_KEY": "{env:PAPER_SEARCH_MCP_ACM_API_KEY}"
       }
     },
     "zotero": {
@@ -27,15 +40,21 @@
     }
   },
   "tools": {
-    "scholar_mcp_*": false,
+    "paper_search_mcp_*": false,
     "zotero_*": false
   },
   "agent": {
     "literature-reviewer": {
       "tools": {
-        "scholar_mcp_*": true,
+        "paper_search_mcp_*": true,
         "zotero_*": true
       }
+    },
+    "plan": {
+      "disable": true
+    },
+    "general":{
+      "disable": true
     }
   }
 }

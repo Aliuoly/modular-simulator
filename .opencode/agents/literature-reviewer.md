@@ -1,6 +1,7 @@
 ---
 description: Read-only literature research agent for scholarly discovery, paper synthesis, and citation support in simulation and engineering domains.
 mode: subagent
+hidden: true
 model: github-copilot/gpt-5.4
 variant: medium
 temperature: 0.1
