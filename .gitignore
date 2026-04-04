@@ -3,19 +3,6 @@
 scripts/
 
 # opencode stuff
-opencode.*
-!opencode.json
-.opencode/*
-!.opencode/.gitignore
-!.opencode/plugins/
-!.opencode/plugins/**
-!.opencode/package.json
-!.opencode/bun.lock
-!.opencode/agents/
-!.opencode/agents/**
-!.opencode/command/
-!.opencode/command/**
-.sisyphus/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

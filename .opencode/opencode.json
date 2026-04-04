@@ -1,0 +1,41 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "orchestrator",
+  "plugin": [],
+  "mcp": {
+    "scholar_mcp": {
+      "type": "local",
+      "command": ["npx", "-y", "scholar-mcp", "--transport=stdio"],
+      "enabled": true,
+      "environment": {
+        "SCHOLAR_MCP_TRANSPORT": "stdio",
+        "SCHOLAR_REQUEST_DELAY_MS": "350",
+        "RESEARCH_ALLOW_REMOTE_PDFS": "true",
+        "RESEARCH_ALLOW_LOCAL_PDFS": "true"
+      }
+    },
+    "zotero": {
+      "type": "local",
+      "command": ["npx", "-y", "@xevos117/mcp-zotero"],
+      "enabled": false,
+      "environment": {
+        "ZOTERO_API_KEY": "{env:ZOTERO_API_KEY}",
+        "ZOTERO_USER_ID": "{env:ZOTERO_USER_ID}",
+        "UNPAYWALL_EMAIL": "{env:UNPAYWALL_EMAIL}",
+        "UNSAFE_OPERATIONS": "none"
+      }
+    }
+  },
+  "tools": {
+    "scholar_mcp_*": false,
+    "zotero_*": false
+  },
+  "agent": {
+    "literature-reviewer": {
+      "tools": {
+        "scholar_mcp_*": true,
+        "zotero_*": true
+      }
+    }
+  }
+}
