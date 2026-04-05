@@ -93,6 +93,7 @@ artifacts:
       - the mapping from planning waves to Beads items
       - the last sync note or timestamp
       - a clear statement that Beads is the live execution ledger
+      - the execution rule that delegated implementation and review agents append packet-level notes while the orchestrator owns final status transitions
 
       Do not leave placeholder IDs once planning is ready for execution.
     requires:
@@ -107,5 +108,7 @@ apply:
     Read all context files.
     Use `tasks.md` as the planning breakdown.
     Use `beads-identity.md` to resolve linked Beads work.
-    Treat Beads as the live execution ledger for status, blockers, and notes.
+    Treat Beads as the live execution ledger for status, blockers, packet-level implementation notes, and review notes.
+    Require delegated implementation and review agents to append packet-level notes to the claimed Beads task before they return.
+    Keep final `closed` and top-level `blocked` status transitions with the orchestrator unless the workflow explicitly delegates that authority.
     Route back to planning if the contract is incomplete or contradicted by implementation.

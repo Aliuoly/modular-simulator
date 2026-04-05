@@ -21,3 +21,5 @@
 
 - Beads is the live execution ledger for status, blockers, execution notes, and closure.
 - `tasks.md` remains the planning breakdown.
+- Delegated implementation and review agents append packet-level notes to linked child tasks before returning.
+- The orchestrator owns final `closed` and top-level `blocked` status transitions.
