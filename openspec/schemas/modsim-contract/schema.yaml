@@ -44,6 +44,7 @@ artifacts:
       - current context and constraints
       - goals and non-goals
       - key decisions and rejected alternatives when they matter
+      - referenced sources or related work when they matter
       - risks and trade-offs
       - migration or rollout notes when needed
       - verification strategy with concrete commands when known
