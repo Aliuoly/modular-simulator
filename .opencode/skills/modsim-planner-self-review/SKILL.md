@@ -23,9 +23,10 @@ This is a defect-finding pass, not a formatting pass. Assume an implementation a
 4. Interface consistency: names, APIs, file paths, data shapes, flags, and artifact references stay consistent across proposal, specs, design, tasks, and Beads linkage.
 5. Bug traps: catch likely implementation mistakes such as missing edge cases, error paths, state transitions, integration seams, migrations/backfills, ordering hazards, or regressions that the tasks fail to cover.
 6. Verification quality: commands are concrete and would actually detect the intended failure or regression instead of producing weak evidence.
-7. Review routing: `simulation-realism-required: true` appears when the change touches simulation behavior, engineering heuristics, thermo, chemistry, controls, fluids, or economics realism, and the realism-sensitive areas are named clearly enough for review.
-8. Beads linkage: `beads-identity.md` contains real Beads IDs, correct wave mapping, and no stale or placeholder linkage.
-9. Placeholder and filler scan: remove TODOs, unresolved blanks, vague steps, and any instruction that forces executors to guess.
+7. Equation fidelity: when a requirement depends on scientific, mathematical, thermodynamic, hydraulic, control, or economic model form, the spec includes the actual governing equations or equation family, symbol/unit definitions, closures or correlations, and named assumptions; equation-bearing scenarios cite the governing equation IDs in their `THEN` outcomes; `design.md` preserves provenance and rationale; if exact form is missing, block readiness.
+8. Review routing: `simulation-realism-required: true` appears when the change touches simulation behavior, engineering heuristics, thermo, chemistry, controls, fluids, or economics realism, and the realism-sensitive areas are named clearly enough for review.
+9. Beads linkage: `beads-identity.md` contains real Beads IDs, correct wave mapping, and no stale or placeholder linkage.
+10. Placeholder and filler scan: remove TODOs, unresolved blanks, vague steps, and any instruction that forces executors to guess.
 
 **Output**
 

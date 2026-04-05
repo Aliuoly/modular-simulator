@@ -25,8 +25,9 @@ Explore the user's topic without implementing application code.
    - `beads-identity.md` when present
 4. Build the analysis with concrete trade-offs, file references, ASCII diagrams, and comparison tables when they help.
 5. Surface options, risks, unknowns, and integration points.
-6. Offer artifact capture only when the user explicitly wants to record an insight.
-7. Suggest `modsim-propose` only when the scope is stable enough for a full change pack or when the user asks to formalize the work.
+6. When exploration settles governing equations, closures, correlations, or state definitions that materially define behavior, treat them as first-class findings rather than disposable background notes.
+7. Offer artifact capture only when the user explicitly wants to record an insight.
+8. Suggest `modsim-propose` only when the scope is stable enough for a full change pack or when the user asks to formalize the work.
 
 **Capture Map**
 
@@ -34,6 +35,7 @@ Explore the user's topic without implementing application code.
 |--------------|------|
 | New requirement | `specs/<capability>/spec.md` |
 | Requirement change | `specs/<capability>/spec.md` |
+| Governing equations or model closure | `specs/<capability>/spec.md` and `design.md` |
 | Design decision | `design.md` |
 | Scope change | `proposal.md` |
 | New planning work | `tasks.md` |

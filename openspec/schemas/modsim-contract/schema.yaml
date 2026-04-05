@@ -14,6 +14,7 @@ artifacts:
       - **What Changes**: concrete scope, additions, removals, or constraints.
       - **Capabilities**: exact capability specs to add or modify.
       - **Impact**: affected code, APIs, dependencies, systems, or workflows.
+      - Name any capability whose spec must carry governing equations, closures, or correlations so planning does not collapse the math into vague prose.
 
       Keep it concise. Keep it contract-level. Do not drift into implementation detail.
     requires: []
@@ -30,6 +31,7 @@ artifacts:
       Keep requirements testable.
       Use `#### Scenario:` headings and concrete WHEN/THEN outcomes.
       For `MODIFIED` requirements, copy the full current requirement block before editing it.
+      When a requirement's meaning depends on scientific, mathematical, thermodynamic, hydraulic, control, or economic model form, include a `#### Governing Equations` block in that requirement with the actual equation family, symbol/unit definitions, closures or correlations, and named assumptions. Label the equations deterministically so scenarios can cite them directly. Scenario `THEN` outcomes for equation-bearing requirements should reference the governing equation IDs that define the promised behavior instead of using vague claims like "changes dynamically" with no mathematical anchor. If exact equation form is still unsettled, the pack is not ready for apply.
     requires:
       - proposal
 
@@ -44,6 +46,7 @@ artifacts:
       - current context and constraints
       - goals and non-goals
       - key decisions and rejected alternatives when they matter
+      - governing equations, closures, correlations, symbol definitions, and equation provenance when the spec depends on them
       - referenced sources or related work when they matter
       - risks and trade-offs
       - migration or rollout notes when needed
@@ -69,6 +72,7 @@ artifacts:
       - Add verification commands and expected evidence.
       - State when TDD should lead implementation.
       - Add `simulation-realism-required: true` inside the relevant task text when the change affects simulation behavior, thermodynamics, flow behavior, controls, chemistry, named engineering heuristics, or rough engineering economics.
+      - When the pack includes equation-bearing requirements, include verification work that proves implementation still matches the frozen governing equations or named closures rather than a prose-only interpretation.
 
       This file is not the live execution ledger. Beads owns live status during apply.
     requires:

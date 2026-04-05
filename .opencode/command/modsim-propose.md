@@ -56,6 +56,7 @@ Never treat `/modsim-propose` as default intake for vague work.
    - Follow the instruction guidance.
    - Treat `context` and `rules` as constraints only. Do not copy them into artifact content.
    - Reuse the repo's local style from nearby high-quality changes.
+   - If the change depends on governing equations, closures, or correlations, preserve them explicitly in `specs/**/*.md` and `design.md` instead of summarizing them away.
    - Re-check status after each artifact and stop only when all `applyRequires` artifacts are done.
 
 5. **Run planner self-review before Beads sync**
@@ -66,6 +67,7 @@ Never treat `/modsim-propose` as default intake for vague work.
    - hidden dependencies, bad wave ordering, or execution dead-ends
    - missing edge cases, error paths, migration/backfill needs, or integration seams that would likely produce wrong implementation
    - verification commands or evidence that are too weak to catch regressions
+   - equation-bearing scientific requirements that still lack actual governing equations, symbol definitions, closures, or assumptions in the spec/design packet
    - missing `simulation-realism-required: true` when simulation or engineering realism is touched
    Fix issues inline before continuing. If a real decision is still missing, stop and report the blocker.
 
@@ -103,6 +105,7 @@ Never treat `/modsim-propose` as default intake for vague work.
 - Keep scope tight to the stable contract.
 - Ask clarifying questions only when needed to resolve blocking ambiguity.
 - If new uncertainty appears that changes scope materially, pause and offer `modsim-explore`.
+- If exact equation form still matters but is not yet frozen, do not force the pack through planning.
 - Do not report readiness until artifact completion, self-review, and Beads sync all succeed.
 - Do not leave placeholder Beads IDs in `beads-identity.md`.
 

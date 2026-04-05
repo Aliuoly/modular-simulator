@@ -77,6 +77,7 @@ Depending on the topic, do one or more of these:
 3. Treat `tasks.md` as planning context.
 4. Treat `beads-identity.md` as the execution-linkage record.
 5. Offer artifact updates only after the user confirms they want the insight captured.
+6. If exploration settles governing equations, closures, correlations, or state definitions that materially define behavior, keep them visible in the analysis and recommend capture into the changepack instead of letting them disappear into prose.
 
 ### Capture Map
 
@@ -84,6 +85,7 @@ Depending on the topic, do one or more of these:
 |--------------|------------------|
 | New requirement discovered | `specs/<capability>/spec.md` |
 | Requirement changed | `specs/<capability>/spec.md` |
+| Governing equations or model closure | `specs/<capability>/spec.md` and `design.md` |
 | Design decision made | `design.md` |
 | Scope changed | `proposal.md` |
 | New implementation work identified | `tasks.md` |

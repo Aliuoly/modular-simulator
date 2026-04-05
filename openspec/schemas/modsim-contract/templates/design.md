@@ -14,6 +14,10 @@
 
 <!-- Key design decisions and rationale -->
 
+## Equation Basis
+
+<!-- When the spec depends on scientific or mathematical model form, record the governing equations, symbol meanings, units, closures/correlations, key assumptions, and provenance here. Remove this section if the change has no equation-bearing requirements. -->
+
 ## Risks / Trade-offs
 
 <!-- Known risks and trade-offs -->

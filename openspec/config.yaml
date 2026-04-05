@@ -23,11 +23,14 @@ context: |
 rules:
   proposal:
     - Use plain language. Prefer direct, concrete wording over jargon, abstract labels, or vague framework terms.
+    - Call out when a capability needs equation-bearing specs so changepack review does not lose the governing model form.
   specs:
     - Organize domain specs under `openspec/specs/` by durable capability domain, not by work item or release milestone.
     - Describe observable behavior and acceptance criteria, not implementation internals.
+    - When a requirement depends on scientific, mathematical, thermodynamic, hydraulic, control, or economic model form, include the governing equations, symbol definitions, closures, and named assumptions in the spec instead of relying on prose alone.
   design:
     - Record explicit decisions, risks, trade-offs, and verification strategy.
+    - Preserve equation provenance, named correlations, simplifying assumptions, and justification whenever the spec depends on scientific or mathematical model form.
   tasks:
     - Treat `tasks.md` as the planning breakdown, not the live execution ledger.
     - Organize work into dependency gates and execution waves with concrete verification commands and expected evidence.
