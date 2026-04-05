@@ -6,6 +6,10 @@ context: |
 
   The long-term product should be both educationally valuable and fun in its own right. The core gameplay loop is to accumulate capital, improve an existing plant through control and process optimization, increase profitability, and repeat.
 
+  Being educational does NOT serve as an excuse to make gross compromise in realism; educational value comes from *how the scenarios are setup* and NOT how this repo implements the first principles. 
+
+  Heuristics or emperical laws may be used to approximate complex phenomena, but they should be clearly documented and justified in the design record. The goal is to strike a balance between realism and simulation stability and speed.
+  
   Player guidance should keep people from feeling lost without replacing the optimization game with a rigid script. Progress is expected to be driven primarily by gradual unlocks tied to production and economic milestones, with guided tutorial scenarios available as an optional onboarding layer.
 
   The architecture separates low-level simulation and plant-runtime concerns—such as flowsheet topology and hydraulic/runtime behavior—from higher-level gameplay, economy, and client concerns.
