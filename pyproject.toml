@@ -48,9 +48,6 @@ classifiers = [
 
 dependencies = [
   "scipy",
-  "scikits.odes",
-  "petsc",
-  "petsc4py",
   "tqdm",
   "pydantic",
   "fastapi",

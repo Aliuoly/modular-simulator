@@ -24,18 +24,6 @@ PHASE5_RUNNABLE_CANDIDATES: tuple[RunnableCandidateDefinition, ...] = (
         candidate_family="split_baseline",
         implementation_binding="split_kernel_adapter",
     ),
-    RunnableCandidateDefinition(
-        candidate_id="sundials4py",
-        candidate_label="SUNDIALS-backed candidate",
-        candidate_family="sundials",
-        implementation_binding="scikits.odes.ida",
-    ),
-    RunnableCandidateDefinition(
-        candidate_id="petsc4py",
-        candidate_label="PETSc-backed candidate",
-        candidate_family="petsc",
-        implementation_binding="petsc4py.PETSc.SNES",
-    ),
 )
 
 PHASE5_RUNNABLE_CANDIDATE_ORDER: tuple[str, ...] = tuple(

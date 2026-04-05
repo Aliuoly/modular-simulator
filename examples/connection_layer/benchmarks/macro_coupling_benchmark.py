@@ -11,12 +11,6 @@ from modular_simulation.connection.benchmarking import (
     build_phase3_workloads,
     build_phase5_candidate_configs,
 )
-from modular_simulation.connection.runtime.petsc_kernel_adapter import (
-    PetscSnesKernelAdapter,
-)
-from modular_simulation.connection.runtime.sundials_kernel_adapter import (
-    SundialsIdaKernelAdapter,
-)
 
 
 def run_benchmark() -> dict[str, object]:
@@ -25,14 +19,6 @@ def run_benchmark() -> dict[str, object]:
     candidate_configs = _candidate_configs_by_candidate(workloads)
     candidate_factories = {
         "disciplined_split": lambda seed: seed.session.network._build_kernel_adapter(),
-        "sundials4py": lambda seed: SundialsIdaKernelAdapter(
-            network=seed.session.network,
-            runtime_orchestrator=_runtime_orchestrator_for_seed(seed),
-        ),
-        "petsc4py": lambda seed: PetscSnesKernelAdapter(
-            network=seed.session.network,
-            runtime_orchestrator=_runtime_orchestrator_for_seed(seed),
-        ),
     }
 
     candidate_attempt_records: dict[str, tuple[object, ...]] = {}
@@ -75,15 +61,6 @@ def _candidate_configs_by_candidate(
         }
         for candidate_id, checkpoint_configs in grouped.items()
     }
-
-
-def _runtime_orchestrator_for_seed(seed):
-    runtime_orchestrator = getattr(seed.session.network, "_runtime_orchestrator", None)
-    if runtime_orchestrator is None:
-        runtime_orchestrator = getattr(seed.session, "runtime_orchestrator", None)
-    if runtime_orchestrator is None:
-        runtime_orchestrator = object()
-    return runtime_orchestrator
 
 
 __all__ = ["run_benchmark"]

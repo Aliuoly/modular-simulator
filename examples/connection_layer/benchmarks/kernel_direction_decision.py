@@ -37,28 +37,10 @@ def run_kernel_direction_decision() -> dict[str, object]:
                 "compatibility": "Highest compatibility with PlantBackendSession and the existing CandidateKernelAdapter seam.",
                 "phase3_workload_basis": _PHASE3_WORKLOAD_BASIS,
             },
-            {
-                "candidate_id": "sundials4py",
-                "stability_case": "First serious post-SciPy path when solver-core limits block the disciplined baseline on the Phase 3 canon.",
-                "latency_case": "Escalate only after profiling shows solver_core_fraction >= 0.5 on representative workloads.",
-                "deployment_risk": "Medium because it introduces a new solver binding while keeping a Python-native runtime.",
-                "compatibility": "Good fit for preserving PlantBackendSession and CandidateKernelAdapter while swapping the kernel solver layer.",
-                "phase3_workload_basis": _PHASE3_WORKLOAD_BASIS,
-            },
-            {
-                "candidate_id": "petsc4py",
-                "stability_case": "Later escalation only if benchmarks justify it after both disciplined SciPy and sundials4py remain insufficient.",
-                "latency_case": "Reserve for sparse nonlinear solves that need PETSc-level solver composition and preconditioning.",
-                "deployment_risk": "High because PETSc adds substantial packaging, operational, and mental-model complexity.",
-                "compatibility": "Lower compatibility than sundials4py, so preserve PlantBackendSession and CandidateKernelAdapter as explicit migration seams.",
-                "phase3_workload_basis": _PHASE3_WORKLOAD_BASIS,
-            },
         ],
         "roadmap_stages": [
             "disciplined_scipy_hardening",
             "hybrid_coupled_default_direction",
-            "sundials4py_adapter_spike",
-            "petsc4py_later_if_justified",
         ],
     }
 

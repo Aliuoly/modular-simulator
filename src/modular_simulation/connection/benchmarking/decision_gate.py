@@ -5,7 +5,7 @@ from typing import Literal
 
 
 ScipyStatus = Literal["sufficient", "solver_limited", "needs_more_evidence"]
-RecommendedSolverStack = Literal["scipy", "sundials4py", "petsc4py"]
+RecommendedSolverStack = Literal["scipy"]
 
 
 @dataclass(frozen=True)
@@ -31,9 +31,6 @@ def build_kernel_direction_decision(
 ) -> KernelDirectionDecision:
     evidence_workload_ids = _extract_evidence_workload_ids(phase3_report)
     disciplined_split_is_viable = _disciplined_split_is_viable(phase3_report)
-    later_escalation_only = (
-        ("petsc4py",) if bool(phase3_report.get("post_sundials_gap_unresolved")) else ()
-    )
 
     if disciplined_split_is_viable:
         return KernelDirectionDecision(
@@ -44,7 +41,7 @@ def build_kernel_direction_decision(
             evidence_workload_ids=evidence_workload_ids,
             blocking_reasons=(),
             missing_evidence=(),
-            later_escalation_only=later_escalation_only,
+            later_escalation_only=(),
         )
 
     solver_core_fraction = profiling_summary.solver_core_fraction
@@ -59,19 +56,21 @@ def build_kernel_direction_decision(
             missing_evidence=(
                 "solver_core_fraction profiling is required before declaring SciPy solver-limited",
             ),
-            later_escalation_only=later_escalation_only,
+            later_escalation_only=(),
         )
 
     if solver_core_fraction >= 0.5:
         return KernelDirectionDecision(
             default_kernel_direction="hybrid_coupled",
             scipy_status="solver_limited",
-            recommended_solver_stack="sundials4py",
+            recommended_solver_stack="scipy",
             preserve_existing_facades=True,
             evidence_workload_ids=evidence_workload_ids,
             blocking_reasons=_gate_failure_reasons(phase3_report),
-            missing_evidence=(),
-            later_escalation_only=later_escalation_only,
+            missing_evidence=(
+                "external benchmark solver candidates were removed; keep the SciPy path until a new migration target exists",
+            ),
+            later_escalation_only=(),
         )
 
     return KernelDirectionDecision(
@@ -84,7 +83,7 @@ def build_kernel_direction_decision(
         missing_evidence=(
             "solver_core_fraction remained below the 0.5 solver-dominance threshold",
         ),
-        later_escalation_only=later_escalation_only,
+        later_escalation_only=(),
     )
 
 

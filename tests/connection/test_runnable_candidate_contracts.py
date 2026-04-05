@@ -1,20 +1,16 @@
 from __future__ import annotations
 
 import importlib
-from pathlib import Path
 
 import pytest
 
 from modular_simulation.connection.benchmarking.workloads import build_phase3_workloads
 
 
-EXPECTED_CANDIDATE_ORDER = ("disciplined_split", "sundials4py", "petsc4py")
+EXPECTED_CANDIDATE_ORDER = ("disciplined_split",)
 EXPECTED_BINDINGS = {
     "disciplined_split": "split_kernel_adapter",
-    "sundials4py": "scikits.odes.ida",
-    "petsc4py": "petsc4py.PETSc.SNES",
 }
-EXPECTED_DEPENDENCIES = ("scikits.odes", "petsc", "petsc4py")
 
 
 def _load_contract_module():
@@ -64,10 +60,3 @@ def test_build_phase5_candidate_configs_copies_workload_fairness_fields() -> Non
             assert config.physical_acceptance_profile == workload.physical_acceptance_profile
             assert config.telemetry_contract_version == workload.telemetry_contract_version
             assert config.delay_semantics_label == workload.delay_semantics_label
-
-
-def test_pyproject_declares_phase5_solver_dependencies() -> None:
-    pyproject_text = Path("pyproject.toml").read_text(encoding="utf-8")
-
-    for dependency_name in EXPECTED_DEPENDENCIES:
-        assert f'"{dependency_name}"' in pyproject_text
