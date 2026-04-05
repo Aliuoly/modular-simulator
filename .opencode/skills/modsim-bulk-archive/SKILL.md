@@ -21,6 +21,7 @@ Archive multiple completed modsim changes in one operation.
    - artifact status
    - linked Beads closure state
    - verification and review state
+   - persisted packet-level implementation and review notes in linked Beads items
    - delta spec coverage
 4. Detect capability conflicts across selected changes.
 5. Resolve conflicts using repo evidence and a justified sync order.

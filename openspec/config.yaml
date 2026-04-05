@@ -17,8 +17,9 @@ context: |
   The primary implementation stack is Python with Pydantic, FastAPI/Uvicorn, SciPy, Astropy, and thermo/chemicals, with a Godot client layer on top.
 
   OpenSpec is the durable contract for requirements, design intent, delta specs, and change planning.
-  Beads is the live execution ledger for status, blockers, notes, and discovered work.
+  Beads is the live execution ledger for status, blockers, packet-level execution and review notes, and discovered work.
   Use `tasks.md` as the planning breakdown and `beads-identity.md` as the OpenSpec-to-Beads linkage record.
+  Delegated implementation and review agents append packet-level notes to the claimed Beads task; the orchestrator owns final close and top-level blocked transitions.
 
 rules:
   proposal:
@@ -36,3 +37,4 @@ rules:
     - Organize work into dependency gates and execution waves with concrete verification commands and expected evidence.
   beads-identity:
     - Record the linked Beads epic ID, child task IDs, sync note, and a clear statement that Beads is the live execution ledger.
+    - Make it clear that delegated implementation and review agents append packet-level notes to child tasks while orchestrators own final status transitions.

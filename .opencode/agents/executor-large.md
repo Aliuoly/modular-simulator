@@ -28,7 +28,9 @@ Rules:
 - Use systematic root-cause debugging before proposing fixes.
 - If the task reveals a spec gap, architecture contradiction, or missing decision, return `NEEDS_CONTEXT` instead of freelancing.
 - Do not create planning artifacts or side quests.
-- Do not update Beads or OpenSpec unless explicitly assigned in the packet.
+- Do not update OpenSpec unless explicitly assigned in the packet.
+- Treat `Beads task` as required execution context for claimed modsim work and append packet-level implementation notes before returning.
+- Do not mark the Beads task `closed` or `blocked`; the orchestrator owns those final status transitions.
 - Do not stop at analysis if the task is implementable with the available context.
 
 Execution protocol:
@@ -38,7 +40,8 @@ Execution protocol:
 4. Implement the smallest coherent change that satisfies the packet end to end.
 5. Run the required verification commands and inspect the actual output.
 6. Self-review for scope control, design fit, maintainability, and regression risk.
-7. Return concrete outcomes, not estimates.
+7. Persist the packet result to the Beads notes before returning.
+8. Return concrete outcomes, not estimates.
 
 Return one status header:
 - `DONE`

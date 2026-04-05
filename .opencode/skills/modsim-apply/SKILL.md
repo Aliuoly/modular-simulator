@@ -33,10 +33,12 @@ Execute an approved `modsim-contract` change by reading the contract, claiming l
 7. Resolve the linked Beads epic and child tasks from `beads-identity.md`.
 8. Claim the correct Beads task before implementation.
 9. When a worktree is needed, use `bd worktree`, not raw `git worktree`, so Beads linkage works inside the worktree.
-10. Delegate bounded packets when useful.
+10. Delegate bounded packets when useful, always passing the claimed Beads task ID.
 11. Update Beads status and notes as the live progress log.
-12. Run fresh verification after each implementation wave.
-13. Send completed work through independent review before closure.
+12. Require delegated executors and reviewers to append packet-level notes to the claimed Beads task before they return.
+13. If execution stops blocked or rerouted, update the claimed Beads task with the blocker reason, evidence, and next action before returning.
+14. Run fresh verification after each implementation wave.
+15. Send completed work through independent review before closure.
 
 **Output**
 
@@ -53,3 +55,4 @@ During execution, report:
 - Do not guess through ambiguous work packets.
 - Stop when `beads-identity.md` is missing or stale, linked Beads work is ambiguous, the contract is defective, or required verification is failing.
 - Keep code changes tightly scoped to the claimed task.
+- Leave final `closed` and top-level `blocked` state changes to the orchestrator even when subagents append packet notes.

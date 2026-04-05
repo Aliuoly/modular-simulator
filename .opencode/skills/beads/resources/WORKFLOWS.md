@@ -140,6 +140,16 @@ Issue Lifecycle:
 - `blocked` → `in_progress` when unblocked
 - `in_progress` → `closed` when complete
 
+**Required on blocked exit**:
+- Before ending the session, persist the blocker in Beads rather than only mentioning it in chat.
+- Use a note shaped like `BLOCKER: ...`, `EVIDENCE: ...`, `NEXT: ...` so the next session can resume without conversation history.
+- Example: `bd update <id> --status blocked --notes "BLOCKER: missing acceptance decision on vapor split. EVIDENCE: spec names two conflicting closures in design.md. NEXT: resolve closure choice, then resume packet." --json`
+
+**Required on delegated packet return**:
+- Before an implementation or review subagent returns to the orchestrator, append a packet note to the claimed Beads item.
+- Suggested shape: `PACKET: implementation|review`, `OUTCOME: ...`, `EVIDENCE: ...`, `CONCERNS: ...`, `NEXT: ...`.
+- Leave final task closure or top-level blocked transitions to the orchestrator.
+
 ---
 
 ## Epic Planning {#epic-planning}

@@ -49,8 +49,10 @@ Prefer `--json` for agent-driven usage. Avoid interactive editing commands such 
 2. `bd show <id>` — Get full context
 3. `bd update <id> --claim` — Claim and start work atomically
 4. Add notes as you work (critical for compaction survival)
-5. `bd close <id> --reason "..."` — Complete task
-6. `bd dolt push` — Push to Dolt remote (if configured)
+5. Delegated executors and reviewers append packet-level outcomes to notes before they return
+6. If work stops blocked or rerouted at the orchestrator level, `bd update <id> --status blocked --notes "BLOCKER: ...\nEVIDENCE: ...\nNEXT: ..."` before returning
+7. `bd close <id> --reason "..."` — Complete task
+8. `bd dolt push` — Push to Dolt remote (if configured)
 
 ## Output
 
@@ -66,6 +68,22 @@ Append `--json` to any command for structured output. Use `bd show <id> --long` 
 | Status updates lag | Use server mode: `bd dolt start` |
 
 See [resources/TROUBLESHOOTING.md](resources/TROUBLESHOOTING.md) for full details.
+
+## Blocked Work Rule
+
+If you claimed a Beads item and cannot continue, do not just report the blocker in chat. Persist it in Beads first.
+
+- Set status to `blocked` when the issue truly cannot proceed.
+- Put the exact blocker, supporting evidence, and the next action needed into `notes`.
+- If work is being handed off or rerouted without a hard block, keep the handoff reason and next action in `notes` before returning.
+
+## Delegated Packet Rule
+
+When a claimed Beads item is delegated to an implementation or review subagent, that subagent should persist its packet result to the same Beads item before returning.
+
+- Append notes, do not overwrite them.
+- Include packet role, outcome, evidence, blockers or concerns, and next action.
+- Leave final `closed` and top-level `blocked` status transitions to the orchestrator unless the workflow explicitly delegates that authority.
 
 ## Examples
 

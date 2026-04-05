@@ -40,10 +40,11 @@ Archive a completed modsim change after checking artifacts, linked Beads state, 
    - proceed only if the user confirms
 
 4. **Check verification and review state**
-   Confirm:
-   - verification evidence exists
-   - independent review passed
-   - realism review passed when `simulation-realism-required: true` applies
+    Confirm:
+    - verification evidence exists
+    - independent review passed
+    - realism review passed when `simulation-realism-required: true` applies
+    - linked Beads notes contain the packet-level implementation and review state needed to justify closure
 
    If evidence or review is missing:
    - display a warning summarizing what is missing

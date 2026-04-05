@@ -33,6 +33,7 @@ Verify whether an implementation satisfies the change contract and is ready to c
    - repo pattern alignment
    - Beads linkage consistency
 8. If `simulation-realism-required: true` is present, include realism review.
+9. Persist the review verdict, evidence summary, and next action to the linked Beads task before returning.
 
 **Output**
 
@@ -50,3 +51,4 @@ Report exactly:
 - Prefer direct evidence over inference.
 - Treat unmet requirements as more important than style issues.
 - Do not approve stale or missing evidence.
+- Append review notes but leave final `closed` and top-level `blocked` transitions to the orchestrator or archive flow.

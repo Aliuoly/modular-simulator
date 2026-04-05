@@ -27,6 +27,7 @@ Completion contract:
 - Base findings on concrete evidence from files, tests, review context, and linked artifacts.
 - Prefer decisive findings over broad summaries.
 - End with an explicit approval or change request decision.
+- Persist the review verdict and evidence summary to the linked Beads task before returning so review state survives session loss.
 
 Review order:
 1. Spec compliance
@@ -53,6 +54,7 @@ Rules:
 - Treat unmet requirements as more important than style concerns.
 - Prefer a short list of decisive findings over weak nits.
 - Use `explorer`, `literature-reviewer`, `web-search-researcher`, or `webfetch` only to close evidence gaps.
+- Do not close or block the Beads task as part of review; append review notes only and leave final status transitions to the orchestrator.
 
 Output format:
 1. `VERDICT: approved` or `VERDICT: changes-requested`

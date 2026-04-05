@@ -18,7 +18,7 @@ Archive a completed modsim change only when closure is supported by evidence.
 1. Resolve the target change.
 2. Run `openspec status --change "<name>" --json` and inspect required artifact completion.
 3. Read `beads-identity.md` and inspect linked Beads closure state.
-4. Confirm verification evidence and independent review exist.
+4. Confirm verification evidence and independent review exist, including packet-level implementation and review notes persisted in Beads.
 5. Confirm realism review passed when required.
 6. Assess whether delta spec sync is still needed.
 7. Confirm landing state or intentional staging state.

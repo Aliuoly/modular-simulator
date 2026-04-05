@@ -39,10 +39,11 @@ This command handles batch archive work, including spec conflicts, linked Beads 
       - resolve linked epic and child tasks
       - note whether linked work is closed, open, blocked, or missing
 
-   c. **Verification and review state**
-      - note whether verification evidence exists
-      - note whether independent review passed
-      - note whether realism review was required and passed
+    c. **Verification and review state**
+       - note whether verification evidence exists
+       - note whether independent review passed
+       - note whether realism review was required and passed
+       - note whether linked Beads notes preserve packet-level implementation and review state
 
    d. **Delta specs**
       - check which capability specs exist

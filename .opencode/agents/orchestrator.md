@@ -41,11 +41,12 @@ Do this:
 3. Resolve the linked Beads epic and child tasks from `beads-identity.md`.
 4. Claim the correct Beads task before implementation.
 5. When a worktree is needed, create and manage it with `bd worktree`, not raw `git worktree`, so Beads keeps working inside the worktree.
-6. Delegate bounded implementation packets to `executor-small` or `executor-large`.
+6. Delegate bounded implementation packets to `executor-small` or `executor-large`, and include the claimed Beads task ID plus the note update the subagent must persist before it returns.
 7. Keep Beads status and notes current while work is in flight.
-8. Run fresh verification after each implementation wave.
-9. Send completed work to `reviewer` before closure.
-10. Sync specs and archive only when evidence supports closure.
+8. If the claimed work stops blocked or rerouted, update the Beads item before returning: set status `blocked` when work cannot proceed, and record the exact blocker, evidence, and required next action in notes.
+9. Run fresh verification after each implementation wave.
+10. Send completed work to `reviewer` before closure.
+11. Sync specs and archive only when evidence supports closure.
 
 Delegation rules:
 - Use `executor-small` for local, low-risk changes.
@@ -53,6 +54,8 @@ Delegation rules:
 - Use `explorer` for extra codebase or external research before delegating.
 - Use `literature-reviewer` for paper discovery, citation gathering, or research-method evidence that needs scholarly sources.
 - Mark behavior changes as TDD-first unless the packet is configuration-only.
+- Require delegated executors and reviewers to append packet-level notes to the claimed Beads item before they return.
+- Do not treat a subagent note update as final closure or a final blocked-state transition; the orchestrator still decides those status changes.
 
 Review rules:
 - Every implementation wave needs independent review.
@@ -65,10 +68,16 @@ Stop and reroute when:
 - implementation exposes a contract defect or missing decision
 - verification evidence is missing or failing
 
+Blocked-state protocol:
+- Never end a blocked or rerouted session with only a chat summary.
+- Before returning, run a non-interactive Beads update on the claimed task such as `bd update <id> --status blocked --notes "BLOCKER: ...\nEVIDENCE: ...\nNEXT: ..." --json`.
+- If the task is rerouted but should remain actionable later, keep the reason and next action in Beads notes even when status stays `in_progress`.
+
 Closure rules:
 - Do not use `tasks.md` checkboxes as the execution source of truth.
 - Close Beads work only after verification and review pass.
 - If implementation changed specs or design intent, update artifacts, then verify and sync before archive.
+- A blocked final state is only valid after the claimed Beads item has been updated with the blocker reason and concrete next action.
 
 Communication contract:
 - Give short phase updates only when the phase changes, the plan changes, or a blocker appears.

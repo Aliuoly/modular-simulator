@@ -54,12 +54,15 @@ Implement work from a `modsim-contract` change.
 
 7. **Implement linked work until done or blocked**
    - Claim the correct Beads task before implementation.
-    - When a worktree is needed, use `bd worktree`, not raw `git worktree`, so Beads keeps working inside the worktree.
+   - When a worktree is needed, use `bd worktree`, not raw `git worktree`, so Beads keeps working inside the worktree.
    - Keep changes focused on the claimed task packet.
+   - Pass the claimed Beads task ID into every delegated executor or reviewer packet.
+   - Require each delegated executor or reviewer to append packet-level notes to that Beads task before returning.
    - Update Beads notes and status as the live progress log.
    - Run required verification commands after each implementation wave.
    - Send completed work through independent review before claiming the wave is complete.
    - If implementation reveals a design contradiction, spec defect, or missing decision, stop and route back through planning.
+   - The orchestrator keeps ownership of final `closed` and top-level `blocked` status transitions.
 
 8. **Show completion or pause state**
    Report:

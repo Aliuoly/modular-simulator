@@ -32,15 +32,15 @@ Verify that an implementation matches the change contract and is ready to close.
    Read all available artifacts from `contextFiles`.
 
 4. **Load linked execution context**
-   - Read `beads-identity.md` when present.
-   - Inspect linked Beads tasks or closure evidence when relevant.
-   - Gather verification outputs, diff scope, and any task packet details available.
+    - Read `beads-identity.md` when present.
+    - Inspect linked Beads tasks or closure evidence when relevant.
+    - Gather verification outputs, diff scope, and any task packet details available.
 
 5. **Initialize the verification dimensions**
-   Review across these dimensions:
-   - **Completeness**: required artifacts, linked execution work, verification evidence, and review prerequisites are present
-   - **Correctness**: requirements and scenarios appear correctly implemented and tested
-   - **Coherence**: design decisions, code patterns, and execution linkage remain internally consistent
+    Review across these dimensions:
+    - **Completeness**: required artifacts, linked execution work, verification evidence, and review prerequisites are present
+    - **Correctness**: requirements and scenarios appear correctly implemented and tested
+    - **Coherence**: design decisions, code patterns, and execution linkage remain internally consistent
 
 6. **Verify completeness**
    Check for:
@@ -74,6 +74,11 @@ Verify that an implementation matches the change contract and is ready to close.
    - `Realism issues:` when required
    - `Next action:` one short recommendation
 
+10. **Persist review state to Beads**
+    - Resolve the linked Beads task that represents the reviewed implementation packet.
+    - Before returning, append the review verdict, evidence summary, key findings, and next action to that task's notes.
+    - Do not close or block the task as part of review; persist review state only.
+
 **Verification heuristics**
 
 - Prefer direct evidence over inference.
@@ -81,5 +86,6 @@ Verify that an implementation matches the change contract and is ready to close.
 - When uncertain, label the uncertainty.
 - Do not auto-approve missing or stale evidence.
 - Prefer a short list of decisive findings over weak nits.
+- Persist the review result to Beads before returning so the next orchestrator session can recover review state.
 
 Finish with the `question` tool and concrete next-step options.
