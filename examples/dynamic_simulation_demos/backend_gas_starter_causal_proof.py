@@ -61,11 +61,30 @@ class BackendGasStarterProofHarness:
             "bottoms_sump_holdup_mol": self._read_value(f"{column_prefix}/bottoms_sump_holdup_mol"),
             "distillate_flow_mol_s": self._read_value(f"{column_prefix}/distillate_flow_mol_s"),
             "bottoms_flow_mol_s": self._read_value(f"{column_prefix}/bottoms_flow_mol_s"),
+            "distillate_withdrawal_flow_mol_s": self._read_value(
+                f"{column_prefix}/distillate_withdrawal_flow_mol_s"
+            ),
+            "bottoms_withdrawal_flow_mol_s": self._read_value(
+                f"{column_prefix}/bottoms_withdrawal_flow_mol_s"
+            ),
             "realized_condensed_flow_mol_s": self._read_value(
                 f"{column_prefix}/realized_condensed_flow_mol_s"
             ),
             "realized_reboiler_boilup_flow_mol_s": self._read_value(
                 f"{column_prefix}/realized_reboiler_boilup_flow_mol_s"
+            ),
+            "column_pressure_pa": self._read_value(f"{column_prefix}/column_pressure_pa"),
+            "top_pressure_pa": self._read_value(f"{column_prefix}/top_pressure_pa"),
+            "bottom_pressure_pa": self._read_value(f"{column_prefix}/bottom_pressure_pa"),
+            "distillate_temperature_K": self._read_value(
+                f"{column_prefix}/distillate_temperature_K"
+            ),
+            "bottoms_temperature_K": self._read_value(f"{column_prefix}/bottoms_temperature_K"),
+            "internal_liquid_traffic_mol_s": self._read_value(
+                f"{column_prefix}/internal_liquid_traffic_mol_s"
+            ),
+            "internal_vapor_traffic_mol_s": self._read_value(
+                f"{column_prefix}/internal_vapor_traffic_mol_s"
             ),
             "distillate_light_key_component_x": self._read_value(
                 f"{column_prefix}/distillate_mole_fraction/{light_species}"
@@ -158,12 +177,16 @@ def run_backend_gas_starter_causal_proof(
 
     harness.column.condenser_duty_request_W = -12_000.0
     harness.column.reboiler_duty_request_W = 9_000.0
+    harness.column.distillate_withdrawal_flow = 3.0
+    harness.column.bottoms_withdrawal_flow = 2.5
 
     first_window = max(2, post_disturbance_steps // 2)
     for step_index in range(post_disturbance_steps):
         if step_index == first_window:
             harness.column.condenser_duty_request_W = -24_000.0
             harness.column.reboiler_duty_request_W = 18_000.0
+            harness.column.distillate_withdrawal_flow = 8.0
+            harness.column.bottoms_withdrawal_flow = 7.0
         history.append(harness.step_and_capture())
 
     return {
@@ -175,10 +198,14 @@ def run_backend_gas_starter_causal_proof(
                 "phase_1": {
                     "condenser_duty_request_W": -12_000.0,
                     "reboiler_duty_request_W": 9_000.0,
+                    "distillate_withdrawal_flow_mol_s": 3.0,
+                    "bottoms_withdrawal_flow_mol_s": 2.5,
                 },
                 "phase_2": {
                     "condenser_duty_request_W": -24_000.0,
                     "reboiler_duty_request_W": 18_000.0,
+                    "distillate_withdrawal_flow_mol_s": 8.0,
+                    "bottoms_withdrawal_flow_mol_s": 7.0,
                 },
             },
         },
@@ -186,15 +213,13 @@ def run_backend_gas_starter_causal_proof(
             "demonstrated": [
                 "backend-only stagewise column proof assembled through existing flowsheet/runtime/session surfaces",
                 "multi-step reflux-drum and bottoms-sump holdup dynamics after condenser/reboiler duty disturbances",
-                "runtime process-state evidence for passive product-flow readouts, realized condensed/boilup flows, and product/stage compositions",
-                "passive product-withdrawal readouts remain observational in this proof, not the main manipulation story",
+                "runtime process-state evidence for stronger pressure (column/top/bottom), thermal (top/bottom temperatures), and representative internal hydraulic traffic response",
+                "connected-runtime observability shows requested vs realized distillate/bottoms withdrawal and conservative no-overdraw behavior",
             ],
             "deferred": [
-                "realistic pressure control dynamics are not modeled in this proof",
-                "rigorous enthalpy-coupled condenser/reboiler thermal realism and temperature realism are deferred",
-                "physical thermosyphon/pump-loop reboiler circulation is deferred",
-                "current behavior still uses unit-internal Q/lambda condenser/reboiler surrogate (follow-up ModularSimulator-9tr.5.2)",
-                "no gameplay/Godot/public-session contract widening and no generic controller-to-network auto-staging claim",
+                "flooding/weeping/entrainment regime-switch hydraulics are deferred",
+                "full rigorous MESH or rate-based tray mass-transfer closure is deferred",
+                "no gameplay/Godot/public-session/controller coupling widening claim in this backend proof",
             ],
         },
     }
@@ -219,7 +244,7 @@ def plot_backend_gas_starter_causal_proof(
     first_marker_time = baseline_steps * dt_s
     second_marker_time = (baseline_steps + first_window) * dt_s
 
-    figure, axes = plt.subplots(3, 2, figsize=(14, 11), sharex=True)
+    figure, axes = plt.subplots(4, 2, figsize=(14, 14), sharex=True)
     plot_axes = list(axes.flat)
 
     panel_specs = (
@@ -237,27 +262,44 @@ def plot_backend_gas_starter_causal_proof(
         ),
         (
             plot_axes[2],
-            "Product withdrawal readouts",
+            "Requested vs realized withdrawals",
             "Flow [mol/s]",
-            ("distillate_flow_mol_s", "bottoms_flow_mol_s"),
+            (
+                "distillate_withdrawal_flow_mol_s",
+                "distillate_flow_mol_s",
+                "bottoms_withdrawal_flow_mol_s",
+                "bottoms_flow_mol_s",
+            ),
         ),
         (
             plot_axes[3],
+            "Pressure realism signals",
+            "Pressure [Pa]",
+            ("column_pressure_pa", "top_pressure_pa", "bottom_pressure_pa"),
+        ),
+        (
+            plot_axes[4],
+            "Thermal realism signals",
+            "Temperature [K]",
+            ("distillate_temperature_K", "bottoms_temperature_K"),
+        ),
+        (
+            plot_axes[5],
             "Realized internal flows",
             "Flow [mol/s]",
             ("realized_condensed_flow_mol_s", "realized_reboiler_boilup_flow_mol_s"),
         ),
         (
-            plot_axes[4],
+            plot_axes[6],
+            "Internal hydraulic realism signals",
+            "Flow [mol/s]",
+            ("internal_liquid_traffic_mol_s", "internal_vapor_traffic_mol_s"),
+        ),
+        (
+            plot_axes[7],
             "Product composition indicators",
             "Mole fraction [-]",
             ("distillate_light_key_component_x", "bottoms_heavy_key_component_x"),
-        ),
-        (
-            plot_axes[5],
-            "Stage 1 light-component composition",
-            "Mole fraction [-]",
-            ("feed_stage_light_component_x",),
         ),
     )
 
@@ -273,8 +315,8 @@ def plot_backend_gas_starter_causal_proof(
         axis.grid(True, alpha=0.3)
         axis.legend(loc="best")
 
-    plot_axes[4].set_xlabel("Time [s]")
-    plot_axes[5].set_xlabel("Time [s]")
+    plot_axes[6].set_xlabel("Time [s]")
+    plot_axes[7].set_xlabel("Time [s]")
     figure.tight_layout()
 
     if show:

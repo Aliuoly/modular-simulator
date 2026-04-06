@@ -21,10 +21,13 @@ from modular_simulation.thermodynamics.hydraulic_participation import (
     HydraulicScalarStateRef,
 )
 from modular_simulation.thermodynamics.stream import PortAttributeMap, StreamData
-from modular_simulation.utils.typing import ArrayIndex
+from modular_simulation.utils.typing import ArrayIndex, Seconds
 
 _COMPOSITION_TOL = 1.0e-8
 _MIN_SUM = 1.0e-12
+_MIN_STEP_SECONDS = 1.0e-12
+_MAX_REFINEMENT_SUBDIVISIONS = 16
+_MIN_REFINEMENT_SUBSTEP_S = 1.0e-3
 
 
 def _coerce_1d(
@@ -77,42 +80,19 @@ def _owner_fraction_from_moles(
     return clipped / total
 
 
-def _realized_withdrawal_flow(*, requested_flow: float, owner_moles: NDArray[np.float64]) -> float:
+def _realized_withdrawal_flow(
+    *, requested_flow: float, owner_moles: NDArray[np.float64], dt_s: float | None = None
+) -> float:
     bounded_request = max(0.0, float(requested_flow))
     owner_total = float(
         np.sum(np.clip(np.asarray(owner_moles, dtype=np.float64).reshape(-1), 0.0, None))
     )
     if owner_total <= _MIN_SUM:
         return 0.0
-    return min(bounded_request, owner_total)
-
-
-def _realized_phase_change_flow_from_duty(
-    *,
-    duty_request_w: float,
-    latent_heat_j_per_mol: float,
-    fallback_flow_mol_s: float,
-    inventory_limit_mol_s: float,
-    expects_negative_duty: bool,
-) -> tuple[float, float]:
-    inventory_limit = max(0.0, float(inventory_limit_mol_s))
-    latent = max(1.0e-9, float(latent_heat_j_per_mol))
-    request = float(duty_request_w)
-
-    if expects_negative_duty:
-        if request < 0.0:
-            requested_flow = max(0.0, -request / latent)
-        else:
-            requested_flow = 0.0
-    else:
-        if request > 0.0:
-            requested_flow = max(0.0, request / latent)
-        else:
-            requested_flow = 0.0
-
-    realized_flow = min(requested_flow, inventory_limit)
-    realized_duty = (-realized_flow if expects_negative_duty else realized_flow) * latent
-    return realized_duty, realized_flow
+    if dt_s is None:
+        return min(bounded_request, owner_total)
+    bounded_dt_s = max(float(dt_s), _MIN_STEP_SECONDS)
+    return min(bounded_request, owner_total / bounded_dt_s)
 
 
 class StagewiseDistillationColumn(ProcessModel):
@@ -164,11 +144,51 @@ class StagewiseDistillationColumn(ProcessModel):
     column_pressure_pa: Annotated[
         float,
         M(
-            type=T.DIFFERENTIAL,
+            type=T.ALGEBRAIC,
             unit="Pa",
-            description="shared dynamic pressure state for stages and product ports",
+            description="shared pressure interface derived from top/bottom vapor-region state solution",
         ),
     ] = 101325.0
+    stage_internal_energy_J: Annotated[
+        NDArray[np.float64],
+        M(
+            type=T.DIFFERENTIAL,
+            unit="J",
+            description="reduced-order stage liquid internal energies",
+        ),
+    ] = np.zeros(0, dtype=np.float64)
+    reflux_drum_internal_energy_J: Annotated[
+        float,
+        M(
+            type=T.DIFFERENTIAL,
+            unit="J",
+            description="reflux-drum internal energy state",
+        ),
+    ] = 0.0
+    bottoms_sump_internal_energy_J: Annotated[
+        float,
+        M(
+            type=T.DIFFERENTIAL,
+            unit="J",
+            description="bottoms-sump internal energy state",
+        ),
+    ] = 0.0
+    top_vapor_holdup_mol: Annotated[
+        float,
+        M(
+            type=T.DIFFERENTIAL,
+            unit="mol",
+            description="top-region vapor holdup pressure-driving state",
+        ),
+    ] = 1.0
+    bottom_vapor_holdup_mol: Annotated[
+        float,
+        M(
+            type=T.DIFFERENTIAL,
+            unit="mol",
+            description="bottom-region vapor holdup pressure-driving state",
+        ),
+    ] = 1.0
 
     feed_flows: Annotated[
         NDArray[np.float64],
@@ -410,6 +430,22 @@ class StagewiseDistillationColumn(ProcessModel):
             description="diameter-scaled liquid handling throughput capacity limit",
         ),
     ] = 0.0
+    representative_internal_liquid_traffic_mol_s: Annotated[
+        float,
+        M(
+            type=T.ALGEBRAIC,
+            unit="mol/s",
+            description="representative internal liquid tray-traffic from reduced hydraulic calculation",
+        ),
+    ] = 0.0
+    representative_internal_vapor_traffic_mol_s: Annotated[
+        float,
+        M(
+            type=T.ALGEBRAIC,
+            unit="mol/s",
+            description="representative internal vapor tray-traffic from reduced hydraulic calculation",
+        ),
+    ] = 0.0
 
     _ports: UnitProcessPorts = UnitProcessPorts(
         ("feed_1", "reflux_return"), ("distillate", "bottoms", "reflux_outlet")
@@ -535,6 +571,43 @@ class StagewiseDistillationColumn(ProcessModel):
             n_species=self.n_species,
         )
 
+        liquid_cp_j_per_mol_k = 120.0
+        reference_temperature_k = 298.15
+        self.stage_internal_energy_J = _coerce_1d(
+            self.stage_internal_energy_J,
+            expected_size=self.n_stages,
+            default=per_stage_holdup * liquid_cp_j_per_mol_k * (340.0 - reference_temperature_k),
+            name="stage_internal_energy_J",
+        )
+
+        area = pi * 0.25 * self.shell_diameter_m * self.shell_diameter_m
+        vapor_space_height_m = max(0.15, 0.2 * self.tray_spacing_m)
+        vapor_space_volume_m3 = max(1.0e-4, area * vapor_space_height_m)
+        r_gas_j_per_mol_k = 8.314462618
+        nominal_holdup = max(
+            1.0e-6,
+            self.column_pressure_pa * vapor_space_volume_m3 / (r_gas_j_per_mol_k * 340.0),
+        )
+        self.top_vapor_holdup_mol = max(1.0e-6, float(self.top_vapor_holdup_mol or nominal_holdup))
+        self.bottom_vapor_holdup_mol = max(
+            1.0e-6, float(self.bottom_vapor_holdup_mol or nominal_holdup)
+        )
+
+        drum_total_moles = max(
+            _MIN_SUM, float(np.sum(np.clip(self.reflux_drum_component_moles, 0.0, None)))
+        )
+        sump_total_moles = max(
+            _MIN_SUM, float(np.sum(np.clip(self.bottoms_sump_component_moles, 0.0, None)))
+        )
+        if float(self.reflux_drum_internal_energy_J) == 0.0:
+            self.reflux_drum_internal_energy_J = (
+                drum_total_moles * liquid_cp_j_per_mol_k * (340.0 - reference_temperature_k)
+            )
+        if float(self.bottoms_sump_internal_energy_J) == 0.0:
+            self.bottoms_sump_internal_energy_J = (
+                sump_total_moles * liquid_cp_j_per_mol_k * (340.0 - reference_temperature_k)
+            )
+
         self.feed_stage_indices = _coerce_1d(
             self.feed_stage_indices,
             expected_size=self.n_feeds,
@@ -575,6 +648,11 @@ class StagewiseDistillationColumn(ProcessModel):
             default=1.0 / float(self.n_species),
             name="reflux_outlet_composition",
         )
+
+        self._runtime_distillate_withdrawal_demand_latched = False
+        self._runtime_bottoms_withdrawal_demand_latched = False
+        self._runtime_distillate_withdrawal_demand_mol_s = 0.0
+        self._runtime_bottoms_withdrawal_demand_mol_s = 0.0
 
     @property
     def ports(self) -> UnitProcessPorts:
@@ -683,6 +761,128 @@ class StagewiseDistillationColumn(ProcessModel):
             allowed_outlet_ports=self.ports.outlets,
         )
 
+    def apply_requested_outlet_through_flow_demand(
+        self, port_name: str, through_molar_flow_rate: float
+    ) -> None:
+        if port_name not in self.ports.outlets:
+            valid_ports = ", ".join(self.ports.outlets)
+            raise ValueError(
+                f"Invalid outlet port '{port_name}' for {type(self).__name__}. Valid outlet ports: {valid_ports}."
+            )
+
+        demand = max(0.0, float(through_molar_flow_rate))
+        if port_name == "distillate":
+            self._runtime_distillate_withdrawal_demand_latched = True
+            self._runtime_distillate_withdrawal_demand_mol_s = demand
+            return
+        if port_name == "bottoms":
+            self._runtime_bottoms_withdrawal_demand_latched = True
+            self._runtime_bottoms_withdrawal_demand_mol_s = demand
+            return
+        # reflux_outlet demand is accepted for runtime compatibility, but the
+        # reflux path remains internally solved from condensation minus
+        # distillate withdrawal in this monolithic closure.
+
+    @override
+    def step(self, dt: Seconds) -> None:
+        dt_s = max(float(dt), _MIN_STEP_SECONDS)
+        distillate_request = (
+            self._runtime_distillate_withdrawal_demand_mol_s
+            if self._runtime_distillate_withdrawal_demand_latched
+            else max(0.0, float(self.distillate_withdrawal_flow))
+        )
+        bottoms_request = (
+            self._runtime_bottoms_withdrawal_demand_mol_s
+            if self._runtime_bottoms_withdrawal_demand_latched
+            else max(0.0, float(self.bottoms_withdrawal_flow))
+        )
+
+        drum_moles = np.asarray(self.reflux_drum_component_moles, dtype=np.float64)
+        sump_moles = np.asarray(self.bottoms_sump_component_moles, dtype=np.float64)
+
+        distillate_at_macro = _realized_withdrawal_flow(
+            requested_flow=distillate_request,
+            owner_moles=drum_moles,
+            dt_s=dt_s,
+        )
+        bottoms_at_macro = _realized_withdrawal_flow(
+            requested_flow=bottoms_request,
+            owner_moles=sump_moles,
+            dt_s=dt_s,
+        )
+
+        distillate_mismatch = distillate_request > distillate_at_macro + 1.0e-12
+        bottoms_mismatch = bottoms_request > bottoms_at_macro + 1.0e-12
+
+        original_distillate = float(self.distillate_withdrawal_flow)
+        original_bottoms = float(self.bottoms_withdrawal_flow)
+
+        realized_distillate_flow = distillate_at_macro
+        realized_bottoms_flow = bottoms_at_macro
+
+        if distillate_mismatch or bottoms_mismatch:
+            # GE-PW-3 step 2: bounded internal substep refinement before
+            # fallback cap.  Subdividing allows internal state (condensation,
+            # feed, boilup) to replenish owner regions between substeps so
+            # that progressive withdrawal may satisfy more of the demand than
+            # a single conservative macro-step cap.
+            n_sub = min(
+                _MAX_REFINEMENT_SUBDIVISIONS,
+                max(1, int(round(dt_s / _MIN_REFINEMENT_SUBSTEP_S))),
+            )
+            sub_dt = dt_s / float(n_sub)
+            total_distillate_withdrawn = 0.0
+            total_bottoms_withdrawn = 0.0
+
+            for _ in range(n_sub):
+                current_drum = np.asarray(self.reflux_drum_component_moles, dtype=np.float64)
+                current_sump = np.asarray(self.bottoms_sump_component_moles, dtype=np.float64)
+
+                sub_distillate_flow = _realized_withdrawal_flow(
+                    requested_flow=distillate_request,
+                    owner_moles=current_drum,
+                    dt_s=sub_dt,
+                )
+                sub_bottoms_flow = _realized_withdrawal_flow(
+                    requested_flow=bottoms_request,
+                    owner_moles=current_sump,
+                    dt_s=sub_dt,
+                )
+                self.distillate_withdrawal_flow = sub_distillate_flow
+                self.bottoms_withdrawal_flow = sub_bottoms_flow
+
+                super().step(float(sub_dt))
+
+                # Capture what the model actually realized for this substep
+                # after all internal algebraic/differential constraints.
+                total_distillate_withdrawn += max(0.0, float(self.distillate_flow)) * sub_dt
+                total_bottoms_withdrawn += max(0.0, float(self.bottoms_flow)) * sub_dt
+
+            realized_distillate_flow = total_distillate_withdrawn / dt_s
+            realized_bottoms_flow = total_bottoms_withdrawn / dt_s
+        else:
+            self.distillate_withdrawal_flow = distillate_at_macro
+            self.bottoms_withdrawal_flow = bottoms_at_macro
+
+            super().step(float(dt))
+
+            realized_distillate_flow = max(0.0, float(self.distillate_flow))
+            realized_bottoms_flow = max(0.0, float(self.bottoms_flow))
+
+        # Report macro-step realized through-flow so runtime observability and
+        # line-side coupling evidence cannot mistake substep-local transients
+        # for a fully satisfied accepted-step demand.
+        self.distillate_flow = max(0.0, float(realized_distillate_flow))
+        self.bottoms_flow = max(0.0, float(realized_bottoms_flow))
+
+        self.distillate_withdrawal_flow = original_distillate
+        self.bottoms_withdrawal_flow = original_bottoms
+
+        self._runtime_distillate_withdrawal_demand_latched = False
+        self._runtime_bottoms_withdrawal_demand_latched = False
+        self._runtime_distillate_withdrawal_demand_mol_s = 0.0
+        self._runtime_bottoms_withdrawal_demand_mol_s = 0.0
+
     @staticmethod
     @override
     def calculate_algebraic_values(
@@ -702,65 +902,202 @@ class StagewiseDistillationColumn(ProcessModel):
         stage_moles = np.asarray(y[y_map["stage_component_moles"]], dtype=np.float64).reshape(
             n_stages, n_species
         )
+        stage_internal_energy = np.asarray(
+            y[y_map["stage_internal_energy_J"]], dtype=np.float64
+        ).reshape(n_stages)
+        top_vapor_holdup = max(1.0e-9, float(y[y_map["top_vapor_holdup_mol"]]))
+        bottom_vapor_holdup = max(1.0e-9, float(y[y_map["bottom_vapor_holdup_mol"]]))
         drum_moles = np.asarray(y[y_map["reflux_drum_component_moles"]], dtype=np.float64).reshape(
             -1
         )
         sump_moles = np.asarray(y[y_map["bottoms_sump_component_moles"]], dtype=np.float64).reshape(
             -1
         )
+        drum_energy = float(y[y_map["reflux_drum_internal_energy_J"]])
+        sump_energy = float(y[y_map["bottoms_sump_internal_energy_J"]])
 
         alpha = np.asarray(k[k_map["relative_volatility_reference"]], dtype=np.float64).reshape(-1)
         if alpha.size != n_species:
             raise ValueError("relative_volatility_reference length mismatch.")
 
-        effective_alpha = np.clip(alpha, 0.1, 10.0)
-
         drum_x = _owner_fraction_from_moles(drum_moles, n_species=n_species)
         sump_x = _owner_fraction_from_moles(sump_moles, n_species=n_species)
 
-        top_x = _safe_fraction_from_moles(stage_moles[0], n_species=n_species)
-        y_top = _safe_fraction_from_moles(effective_alpha * top_x, n_species=n_species)
-
         vapor_flow = max(0.0, float(k[k_map["stage_vapor_flow_mol_s"]]))
-        liquid_flow = max(0.0, float(k[k_map["stage_liquid_flow_mol_s"]]))
+
+        liquid_density_kg_m3 = 750.0
+        liquid_mw_kg_mol = 0.08
+        weir_height_m = 0.005
+        liquid_hydraulic_coeff = 10000.0
+        area_active_m2 = pi * 0.25 * max(1.0e-9, float(k[k_map["shell_diameter_m"]])) ** 2
+        stage_total_moles = np.sum(np.clip(stage_moles, 0.0, None), axis=1)
+        stage_liquid_volume = (
+            stage_total_moles * liquid_mw_kg_mol / max(liquid_density_kg_m3, 1.0e-9)
+        )
+        stage_liquid_head = stage_liquid_volume / max(area_active_m2, 1.0e-9)
+        stage_liquid_flow = liquid_hydraulic_coeff * np.power(
+            np.clip(stage_liquid_head - weir_height_m, 0.0, None), 1.5
+        )
+        representative_liquid_flow = (
+            float(np.mean(stage_liquid_flow)) if stage_liquid_flow.size else 0.0
+        )
+
         shell_diameter_m = max(1.0e-9, float(k[k_map["shell_diameter_m"]]))
         area = pi * 0.25 * shell_diameter_m * shell_diameter_m
+        vapor_space_height_m = max(0.15, 0.2 * float(k[k_map["tray_spacing_m"]]))
+        vapor_volume_m3 = max(1.0e-4, area * vapor_space_height_m)
+        r_gas_j_per_mol_k = 8.314462618
+        liquid_cp_j_per_mol_k = 120.0
+        reference_temperature_k = 298.15
+        stage_safe_moles = np.clip(np.sum(np.clip(stage_moles, 0.0, None), axis=1), _MIN_SUM, None)
+        stage_temperature = np.clip(
+            reference_temperature_k
+            + stage_internal_energy / (stage_safe_moles * liquid_cp_j_per_mol_k),
+            250.0,
+            700.0,
+        )
+        drum_total = max(_MIN_SUM, float(np.sum(np.clip(drum_moles, 0.0, None))))
+        sump_total = max(_MIN_SUM, float(np.sum(np.clip(sump_moles, 0.0, None))))
+        drum_temperature = float(
+            np.clip(
+                reference_temperature_k + drum_energy / (drum_total * liquid_cp_j_per_mol_k),
+                250.0,
+                700.0,
+            )
+        )
+        sump_temperature = float(
+            np.clip(
+                reference_temperature_k + sump_energy / (sump_total * liquid_cp_j_per_mol_k),
+                250.0,
+                700.0,
+            )
+        )
+        p_top = r_gas_j_per_mol_k * drum_temperature * top_vapor_holdup / vapor_volume_m3
+        p_bottom = r_gas_j_per_mol_k * sump_temperature * bottom_vapor_holdup / vapor_volume_m3
+        stage_pressure = np.linspace(p_top, p_bottom, n_stages, dtype=np.float64)
+        if n_stages > 1:
+            delta_p_links = np.clip(stage_pressure[1:] - stage_pressure[:-1], 0.0, None)
+            rho_vapor = np.clip(
+                stage_pressure[:-1] * 0.08 / (r_gas_j_per_mol_k * stage_temperature[:-1]),
+                0.2,
+                5.0,
+            )
+            dry_loss_pa = 5.0
+            delta_p_head = liquid_density_kg_m3 * 9.81 * stage_liquid_head[:-1]
+            delta_p_available = np.clip(delta_p_links - dry_loss_pa - delta_p_head, 0.0, None)
+            vapor_capacity_coeff = 5.0
+            vapor_internal_flow = vapor_capacity_coeff * np.sqrt(
+                delta_p_available / np.clip(rho_vapor, 1.0e-9, None)
+            )
+            representative_vapor_flow = float(np.mean(vapor_internal_flow))
+        else:
+            representative_vapor_flow = vapor_flow
         reference_area = pi * 0.25
         capacity_factor = max(1.0e-6, area / reference_area)
-        maximum_vapor_capacity_flow = max(0.0, vapor_flow * capacity_factor)
-        maximum_liquid_capacity_flow = max(0.0, liquid_flow * capacity_factor)
+        dynamic_vapor_capacity = (
+            representative_vapor_flow if representative_vapor_flow > 1.0e-9 else vapor_flow
+        )
+        maximum_vapor_capacity_flow = max(
+            0.0, min(vapor_flow, dynamic_vapor_capacity) * capacity_factor
+        )
+        maximum_liquid_capacity_flow = max(0.0, representative_liquid_flow * capacity_factor)
         condenser_duty_request_w = float(u[u_map["condenser_duty_request_W"]])
         reboiler_duty_request_w = float(u[u_map["reboiler_duty_request_W"]])
         condenser_latent = float(k[k_map["condenser_latent_heat_j_per_mol"]])
         reboiler_latent = float(k[k_map["reboiler_latent_heat_j_per_mol"]])
 
-        condenser_duty_w, realized_condensed_flow = _realized_phase_change_flow_from_duty(
-            duty_request_w=condenser_duty_request_w,
-            latent_heat_j_per_mol=condenser_latent,
-            fallback_flow_mol_s=vapor_flow,
-            inventory_limit_mol_s=min(vapor_flow, maximum_vapor_capacity_flow),
-            expects_negative_duty=True,
+        top_vapor_release_tau_s = 2.0
+        top_vapor_release_capacity = top_vapor_holdup / top_vapor_release_tau_s
+        top_vapor_supply = min(
+            maximum_vapor_capacity_flow,
+            max(top_vapor_release_capacity, representative_vapor_flow, 0.2 * vapor_flow),
         )
-        support_available_mol = max(0.0, float(np.sum(sump_moles)))
-        support_time_constant_s = 4.0
-        support_limited_flow = support_available_mol / support_time_constant_s
+        if condenser_duty_request_w < 0.0:
+            thermal_condensation_drive = np.clip(
+                (stage_temperature[0] - drum_temperature) / 30.0,
+                0.0,
+                1.0,
+            )
+            pressure_condensation_drive = np.clip(
+                np.log(np.clip(p_top, 1.0e3, None) / 101325.0) + 0.5,
+                0.0,
+                1.0,
+            )
+            condenser_duty_drive = np.clip(
+                -condenser_duty_request_w
+                / max(condenser_latent * max(top_vapor_supply, 1.0e-9), 1.0e-9),
+                0.0,
+                1.0,
+            )
+            condensation_drive = np.clip(
+                0.55 * condenser_duty_drive
+                + 0.25 * thermal_condensation_drive
+                + 0.20 * pressure_condensation_drive,
+                0.0,
+                1.0,
+            )
+            realized_condensed_flow = top_vapor_supply * condensation_drive
+        else:
+            realized_condensed_flow = 0.0
+        condenser_duty_w = -realized_condensed_flow * condenser_latent
 
-        reboiler_duty_w, realized_reboiler_boilup_flow = _realized_phase_change_flow_from_duty(
-            duty_request_w=reboiler_duty_request_w,
-            latent_heat_j_per_mol=reboiler_latent,
-            fallback_flow_mol_s=0.6 * vapor_flow,
-            inventory_limit_mol_s=min(support_limited_flow, maximum_vapor_capacity_flow),
-            expects_negative_duty=False,
+        rho_liq_sump = np.clip(
+            690.0 + 0.25 * (sump_temperature - reference_temperature_k), 550.0, 900.0
         )
+        duty_density_factor = np.clip(
+            max(0.0, reboiler_duty_request_w)
+            / max(reboiler_latent * max(maximum_vapor_capacity_flow, 1.0e-9), 1.0e-9),
+            0.0,
+            1.0,
+        )
+        rho_downcomer = rho_liq_sump
+        rho_riser = np.clip(rho_liq_sump * (1.0 - 0.55 * duty_density_factor), 120.0, rho_liq_sump)
+        loop_static_head_m = max(0.3, 0.15 * float(k[k_map["active_contact_height_m"]]))
+        delta_p_drive = max((rho_downcomer - rho_riser) * 9.81 * loop_static_head_m, 0.0)
+        circulation_capacity_coeff = 80.0
+        circulation_flow = circulation_capacity_coeff * np.sqrt(
+            delta_p_drive / max(rho_liq_sump, 1.0e-9)
+        )
+        support_available_mol = max(0.0, float(np.sum(np.clip(sump_moles, 0.0, None))))
+        bottom_vapor_capacity = min(
+            circulation_flow, maximum_vapor_capacity_flow, support_available_mol
+        )
+        if reboiler_duty_request_w > 0.0:
+            q_per_circulation_mol = reboiler_duty_request_w / max(circulation_flow, 1.0e-9)
+            thermal_boilup_drive = np.clip(
+                q_per_circulation_mol / max(3.0 * reboiler_latent, 1.0e-9),
+                0.0,
+                1.0,
+            )
+            pressure_boilup_drive = np.clip(
+                np.log(101325.0 / np.clip(p_bottom, 1.0e3, None)) + 0.5,
+                0.0,
+                1.0,
+            )
+            volatility_drive = np.clip(
+                float(np.dot(sump_x, np.clip(alpha / max(np.max(alpha), 1.0), 0.0, 1.0))),
+                0.0,
+                1.0,
+            )
+            beta_boilup = np.clip(
+                thermal_boilup_drive
+                * (0.75 + 0.25 * pressure_boilup_drive)
+                * (0.85 + 0.15 * volatility_drive),
+                0.0,
+                1.0,
+            )
+            realized_reboiler_boilup_flow = min(
+                beta_boilup * circulation_flow, bottom_vapor_capacity
+            )
+        else:
+            realized_reboiler_boilup_flow = 0.0
+        reboiler_duty_w = realized_reboiler_boilup_flow * reboiler_latent
         distillate_withdrawal_request = max(0.0, float(u[u_map["distillate_withdrawal_flow"]]))
         bottoms_withdrawal_request = max(0.0, float(u[u_map["bottoms_withdrawal_flow"]]))
 
-        distillate_flow = min(
-            _realized_withdrawal_flow(
-                requested_flow=distillate_withdrawal_request,
-                owner_moles=drum_moles,
-            ),
-            maximum_liquid_capacity_flow,
+        distillate_flow = _realized_withdrawal_flow(
+            requested_flow=distillate_withdrawal_request,
+            owner_moles=drum_moles,
         )
         reflux_nominal_flow = max(0.0, realized_condensed_flow - distillate_flow)
         reflux_outlet_flow = min(
@@ -770,12 +1107,9 @@ class StagewiseDistillationColumn(ProcessModel):
             ),
             maximum_liquid_capacity_flow,
         )
-        bottoms_flow = min(
-            _realized_withdrawal_flow(
-                requested_flow=bottoms_withdrawal_request,
-                owner_moles=sump_moles,
-            ),
-            maximum_liquid_capacity_flow,
+        bottoms_flow = _realized_withdrawal_flow(
+            requested_flow=bottoms_withdrawal_request,
+            owner_moles=sump_moles,
         )
 
         feed_flows = np.asarray(u[u_map["feed_flows"]], dtype=np.float64).reshape(n_feeds)
@@ -790,15 +1124,19 @@ class StagewiseDistillationColumn(ProcessModel):
                 np.dot(np.clip(feed_flows, 0.0, None), feed_temperatures) / total_feed
             )
 
+        distillate_temperature = drum_temperature
+        bottoms_temperature = sump_temperature
+        reflux_temperature = float(np.clip(stage_temperature[0], 250.0, 700.0))
+
         result = np.zeros(algebraic_size, dtype=np.float64)
         result[algebraic_map["distillate_flow"]] = max(0.0, distillate_flow)
         result[algebraic_map["bottoms_flow"]] = max(0.0, bottoms_flow)
         result[algebraic_map["distillate_composition"]] = drum_x
         result[algebraic_map["bottoms_composition"]] = sump_x
-        result[algebraic_map["distillate_temperature"]] = mixed_feed_temperature
-        result[algebraic_map["bottoms_temperature"]] = mixed_feed_temperature + 12.0
+        result[algebraic_map["distillate_temperature"]] = distillate_temperature
+        result[algebraic_map["bottoms_temperature"]] = bottoms_temperature
         result[algebraic_map["reflux_outlet_flow"]] = reflux_outlet_flow
-        result[algebraic_map["reflux_outlet_temperature"]] = mixed_feed_temperature
+        result[algebraic_map["reflux_outlet_temperature"]] = reflux_temperature
         result[algebraic_map["reflux_outlet_composition"]] = drum_x
         result[algebraic_map["condenser_duty_W"]] = condenser_duty_w
         result[algebraic_map["reboiler_duty_W"]] = reboiler_duty_w
@@ -806,6 +1144,13 @@ class StagewiseDistillationColumn(ProcessModel):
         result[algebraic_map["realized_reboiler_boilup_flow_mol_s"]] = realized_reboiler_boilup_flow
         result[algebraic_map["maximum_vapor_capacity_flow_mol_s"]] = maximum_vapor_capacity_flow
         result[algebraic_map["maximum_liquid_capacity_flow_mol_s"]] = maximum_liquid_capacity_flow
+        result[algebraic_map["representative_internal_liquid_traffic_mol_s"]] = (
+            representative_liquid_flow
+        )
+        result[algebraic_map["representative_internal_vapor_traffic_mol_s"]] = (
+            representative_vapor_flow
+        )
+        result[algebraic_map["column_pressure_pa"]] = 0.5 * (p_top + p_bottom)
         return result
 
     @staticmethod
@@ -830,12 +1175,19 @@ class StagewiseDistillationColumn(ProcessModel):
         stage_moles = np.asarray(y[y_map["stage_component_moles"]], dtype=np.float64).reshape(
             n_stages, n_species
         )
+        stage_internal_energy = np.asarray(
+            y[y_map["stage_internal_energy_J"]], dtype=np.float64
+        ).reshape(n_stages)
         drum_moles = np.asarray(y[y_map["reflux_drum_component_moles"]], dtype=np.float64).reshape(
             -1
         )
         sump_moles = np.asarray(y[y_map["bottoms_sump_component_moles"]], dtype=np.float64).reshape(
             -1
         )
+        drum_internal_energy = float(y[y_map["reflux_drum_internal_energy_J"]])
+        sump_internal_energy = float(y[y_map["bottoms_sump_internal_energy_J"]])
+        top_vapor_holdup = max(1.0e-9, float(y[y_map["top_vapor_holdup_mol"]]))
+        bottom_vapor_holdup = max(1.0e-9, float(y[y_map["bottom_vapor_holdup_mol"]]))
 
         feed_flows = np.clip(
             np.asarray(u[u_map["feed_flows"]], dtype=np.float64).reshape(n_feeds), 0.0, None
@@ -850,9 +1202,7 @@ class StagewiseDistillationColumn(ProcessModel):
         alpha = np.asarray(k[k_map["relative_volatility_reference"]], dtype=np.float64).reshape(-1)
         effective_alpha = np.clip(alpha, 0.1, 10.0)
 
-        liquid_flow = max(0.0, float(k[k_map["stage_liquid_flow_mol_s"]]))
         vapor_flow = max(0.0, float(k[k_map["stage_vapor_flow_mol_s"]]))
-        boilup_ratio = max(1.0e-9, float(k[k_map["boilup_ratio"]]))
         reflux_return_flow = max(0.0, float(u[u_map["reflux_return_flow"]]))
         reflux_return_composition = _safe_fraction_from_moles(
             np.asarray(u[u_map["reflux_return_composition"]], dtype=np.float64).reshape(-1),
@@ -865,17 +1215,8 @@ class StagewiseDistillationColumn(ProcessModel):
                 for stage_index in range(n_stages)
             ]
         )
-        y_stage = np.vstack(
-            [
-                _safe_fraction_from_moles(
-                    effective_alpha * x_stage[stage_index], n_species=n_species
-                )
-                for stage_index in range(n_stages)
-            ]
-        )
         x_drum = _owner_fraction_from_moles(drum_moles, n_species=n_species)
         x_sump = _owner_fraction_from_moles(sump_moles, n_species=n_species)
-        y_reboiler = _safe_fraction_from_moles(effective_alpha * x_sump, n_species=n_species)
 
         condenser_flow = max(0.0, float(algebraic[algebraic_map["realized_condensed_flow_mol_s"]]))
         distillate_flow = float(algebraic[algebraic_map["distillate_flow"]])
@@ -883,6 +1224,20 @@ class StagewiseDistillationColumn(ProcessModel):
         reflux_flow = max(0.0, float(algebraic[algebraic_map["reflux_outlet_flow"]]))
         reboiler_vapor_flow = max(
             0.0, float(algebraic[algebraic_map["realized_reboiler_boilup_flow_mol_s"]])
+        )
+
+        liquid_density_kg_m3 = 750.0
+        liquid_mw_kg_mol = 0.08
+        weir_height_m = 0.005
+        liquid_hydraulic_coeff = 10000.0
+        area_active_m2 = pi * 0.25 * max(1.0e-9, float(k[k_map["shell_diameter_m"]])) ** 2
+        stage_total_moles = np.sum(np.clip(stage_moles, 0.0, None), axis=1)
+        stage_liquid_volume = (
+            stage_total_moles * liquid_mw_kg_mol / max(liquid_density_kg_m3, 1.0e-9)
+        )
+        stage_liquid_head = stage_liquid_volume / max(area_active_m2, 1.0e-9)
+        stage_liquid_flow = liquid_hydraulic_coeff * np.power(
+            np.clip(stage_liquid_head - weir_height_m, 0.0, None), 1.5
         )
 
         feed_to_stage = np.zeros((n_stages, n_species), dtype=np.float64)
@@ -893,41 +1248,253 @@ class StagewiseDistillationColumn(ProcessModel):
             z = _safe_fraction_from_moles(feed_compositions[feed_index], n_species=n_species)
             feed_to_stage[stage_index] += feed_flows[feed_index] * z
 
+        liquid_cp_j_per_mol_k = 120.0
+        reference_temperature_k = 298.15
+        stage_safe_moles = np.clip(stage_total_moles, _MIN_SUM, None)
+        stage_temperature = np.clip(
+            reference_temperature_k
+            + stage_internal_energy / (stage_safe_moles * liquid_cp_j_per_mol_k),
+            250.0,
+            700.0,
+        )
+        drum_total = max(_MIN_SUM, float(np.sum(np.clip(drum_moles, 0.0, None))))
+        sump_total = max(_MIN_SUM, float(np.sum(np.clip(sump_moles, 0.0, None))))
+        drum_temperature = float(
+            np.clip(
+                reference_temperature_k
+                + drum_internal_energy / (drum_total * liquid_cp_j_per_mol_k),
+                250.0,
+                700.0,
+            )
+        )
+        sump_temperature = float(
+            np.clip(
+                reference_temperature_k
+                + sump_internal_energy / (sump_total * liquid_cp_j_per_mol_k),
+                250.0,
+                700.0,
+            )
+        )
+        shell_diameter_m = max(1.0e-9, float(k[k_map["shell_diameter_m"]]))
+        area = pi * 0.25 * shell_diameter_m * shell_diameter_m
+        vapor_space_height_m = max(0.15, 0.2 * float(k[k_map["tray_spacing_m"]]))
+        vapor_volume_m3 = max(1.0e-4, area * vapor_space_height_m)
+        r_gas_j_per_mol_k = 8.314462618
+        p_top = r_gas_j_per_mol_k * drum_temperature * top_vapor_holdup / vapor_volume_m3
+        p_bottom = r_gas_j_per_mol_k * sump_temperature * bottom_vapor_holdup / vapor_volume_m3
+        stage_pressure = np.linspace(p_top, p_bottom, n_stages, dtype=np.float64)
+        temp_sensitivity = np.linspace(450.0, 250.0, n_species, dtype=np.float64)
+        pressure_sensitivity = np.linspace(0.18, 0.06, n_species, dtype=np.float64)
+        inv_t_shift = (1.0 / stage_temperature[:, None]) - (1.0 / 340.0)
+        log_p_shift_stage = np.log(np.clip(stage_pressure[:, None], 1.0e3, None) / 101325.0)
+        k_stage = np.clip(
+            effective_alpha[None, :]
+            * np.exp(
+                temp_sensitivity[None, :] * inv_t_shift
+                - pressure_sensitivity[None, :] * log_p_shift_stage
+            ),
+            0.05,
+            50.0,
+        )
+        y_stage = np.vstack(
+            [
+                _safe_fraction_from_moles(
+                    k_stage[stage_index] * x_stage[stage_index], n_species=n_species
+                )
+                for stage_index in range(n_stages)
+            ]
+        )
+        k_top = np.clip(
+            effective_alpha
+            * np.exp(
+                temp_sensitivity * ((1.0 / drum_temperature) - (1.0 / 340.0))
+                - pressure_sensitivity * np.log(np.clip(p_top, 1.0e3, None) / 101325.0)
+            ),
+            0.05,
+            50.0,
+        )
+        top_contact_factor = 1.0 - np.exp(-0.2 * float(n_stages))
+        k_top = 1.0 + top_contact_factor * (k_top - 1.0)
+        y_top_equilibrium = _safe_fraction_from_moles(k_top * x_stage[0], n_species=n_species)
+        k_bottom = np.clip(
+            effective_alpha
+            * np.exp(
+                temp_sensitivity * ((1.0 / sump_temperature) - (1.0 / 340.0))
+                - pressure_sensitivity * np.log(np.clip(p_bottom, 1.0e3, None) / 101325.0)
+            ),
+            0.05,
+            50.0,
+        )
+        y_reboiler = _safe_fraction_from_moles(k_bottom * x_sump, n_species=n_species)
+
+        cp_liq_species = np.linspace(95.0, 145.0, n_species, dtype=np.float64)
+        cp_vap_species = np.linspace(60.0, 95.0, n_species, dtype=np.float64)
+        latent_species = np.linspace(26000.0, 34000.0, n_species, dtype=np.float64)
+        h_liq_stage = np.sum(x_stage * cp_liq_species[None, :], axis=1) * (
+            stage_temperature - reference_temperature_k
+        )
+        h_vap_stage = np.sum(y_stage * cp_vap_species[None, :], axis=1) * (
+            stage_temperature - reference_temperature_k
+        ) + np.sum(y_stage * latent_species[None, :], axis=1)
+        h_liq_drum = float(
+            np.dot(x_drum, cp_liq_species) * (drum_temperature - reference_temperature_k)
+        )
+        h_liq_sump = float(
+            np.dot(x_sump, cp_liq_species) * (sump_temperature - reference_temperature_k)
+        )
+        h_vap_top = float(
+            np.dot(y_top_equilibrium, cp_vap_species)
+            * (stage_temperature[0] - reference_temperature_k)
+            + np.dot(y_top_equilibrium, latent_species)
+        )
+        h_vap_boilup = float(
+            np.dot(y_reboiler, cp_vap_species) * (sump_temperature - reference_temperature_k)
+            + np.dot(y_reboiler, latent_species)
+        )
+
+        stage_feed_energy_in = np.zeros(n_stages, dtype=np.float64)
+        feed_temperatures = np.asarray(u[u_map["feed_temperatures"]], dtype=np.float64).reshape(
+            n_feeds
+        )
+        for feed_index in range(n_feeds):
+            stage_index = int(
+                np.clip(round(float(feed_stage_indices[feed_index])) - 1, 0, n_stages - 1)
+            )
+            feed_flow = float(feed_flows[feed_index])
+            if feed_flow <= 0.0:
+                continue
+            feed_z = _safe_fraction_from_moles(feed_compositions[feed_index], n_species=n_species)
+            h_feed = float(
+                np.dot(feed_z, cp_liq_species)
+                * (float(feed_temperatures[feed_index]) - reference_temperature_k)
+            )
+            stage_feed_energy_in[stage_index] += feed_flow * h_feed
+
+        if n_stages > 1:
+            delta_p_links = np.clip(stage_pressure[1:] - stage_pressure[:-1], 0.0, None)
+            rho_vapor = np.clip(
+                stage_pressure[:-1] * 0.08 / (r_gas_j_per_mol_k * stage_temperature[:-1]),
+                0.2,
+                5.0,
+            )
+            dry_loss_pa = 5.0
+            delta_p_head = liquid_density_kg_m3 * 9.81 * stage_liquid_head[:-1]
+            delta_p_available = np.clip(delta_p_links - dry_loss_pa - delta_p_head, 0.0, None)
+            vapor_capacity_coeff = 5.0
+            vapor_internal_flow = vapor_capacity_coeff * np.sqrt(
+                delta_p_available / np.clip(rho_vapor, 1.0e-9, None)
+            )
+        else:
+            vapor_internal_flow = np.zeros(0, dtype=np.float64)
+        vapor_internal_flow = np.clip(vapor_internal_flow, 0.0, vapor_flow)
+
+        d_stage_energy = np.zeros(n_stages, dtype=np.float64)
+        for stage_index in range(n_stages):
+            liquid_in_energy = (
+                reflux_flow * h_liq_drum
+                if stage_index == 0
+                else stage_liquid_flow[stage_index - 1] * h_liq_stage[stage_index - 1]
+            )
+            liquid_out_energy = stage_liquid_flow[stage_index] * h_liq_stage[stage_index]
+            vapor_in_energy = (
+                reboiler_vapor_flow * h_vap_boilup
+                if stage_index == n_stages - 1
+                else vapor_internal_flow[stage_index] * h_vap_stage[stage_index + 1]
+            )
+            vapor_out_energy = (
+                condenser_flow * h_vap_top
+                if stage_index == 0
+                else vapor_internal_flow[stage_index - 1] * h_vap_stage[stage_index]
+            )
+            d_stage_energy[stage_index] = (
+                stage_feed_energy_in[stage_index]
+                + liquid_in_energy
+                + vapor_in_energy
+                - liquid_out_energy
+                - vapor_out_energy
+            )
+
+        condenser_heat_removal_w = max(0.0, -float(algebraic[algebraic_map["condenser_duty_W"]]))
+        d_drum_energy = (
+            condenser_flow * h_vap_top
+            - condenser_heat_removal_w
+            + reflux_return_flow
+            * float(
+                np.dot(reflux_return_composition, cp_liq_species)
+                * (float(u[u_map["reflux_return_temperature"]]) - reference_temperature_k)
+            )
+            - distillate_flow * h_liq_drum
+            - reflux_flow * h_liq_drum
+        )
+        d_sump_energy = (
+            stage_liquid_flow[-1] * h_liq_stage[-1]
+            + float(algebraic[algebraic_map["reboiler_duty_W"]])
+            - reboiler_vapor_flow * h_vap_boilup
+            - bottoms_flow * h_liq_sump
+        )
+
+        d_top_vapor = condenser_flow - (vapor_internal_flow[0] if vapor_internal_flow.size else 0.0)
+        d_bottom_vapor = reboiler_vapor_flow - (
+            vapor_internal_flow[-1] if vapor_internal_flow.size else 0.0
+        )
+
+        d_t_top = d_drum_energy / max(drum_total * liquid_cp_j_per_mol_k, _MIN_SUM)
+        d_t_bottom = d_sump_energy / max(sump_total * liquid_cp_j_per_mol_k, _MIN_SUM)
+        d_p_top = (
+            r_gas_j_per_mol_k
+            / vapor_volume_m3
+            * (drum_temperature * d_top_vapor + top_vapor_holdup * d_t_top)
+        )
+        d_p_bottom = (
+            r_gas_j_per_mol_k
+            / vapor_volume_m3
+            * (sump_temperature * d_bottom_vapor + bottom_vapor_holdup * d_t_bottom)
+        )
         d_stage = np.zeros_like(stage_moles)
         for stage_index in range(n_stages):
             liquid_in = (
-                reflux_flow * x_drum if stage_index == 0 else liquid_flow * x_stage[stage_index - 1]
+                reflux_flow * x_drum
+                if stage_index == 0
+                else stage_liquid_flow[stage_index - 1] * x_stage[stage_index - 1]
             )
-            liquid_out = liquid_flow * x_stage[stage_index]
+            liquid_out = stage_liquid_flow[stage_index] * x_stage[stage_index]
 
             vapor_in = (
                 reboiler_vapor_flow * y_reboiler
                 if stage_index == n_stages - 1
-                else vapor_flow * y_stage[stage_index + 1]
+                else vapor_internal_flow[stage_index] * y_stage[stage_index + 1]
             )
-            vapor_out = (condenser_flow if stage_index == 0 else vapor_flow) * y_stage[stage_index]
+            vapor_out = (
+                condenser_flow * y_top_equilibrium
+                if stage_index == 0
+                else vapor_internal_flow[stage_index - 1] * y_stage[stage_index]
+            )
 
             d_stage[stage_index] = (
                 feed_to_stage[stage_index] + liquid_in + vapor_in - liquid_out - vapor_out
             )
 
         d_drum = (
-            condenser_flow * y_stage[0]
+            condenser_flow * y_top_equilibrium
             + reflux_return_flow * reflux_return_composition
             - reflux_flow * x_drum
             - distillate_flow * x_drum
         )
         d_sump = (
-            liquid_flow * x_stage[-1] - reboiler_vapor_flow * y_reboiler - bottoms_flow * x_sump
+            stage_liquid_flow[-1] * x_stage[-1]
+            - reboiler_vapor_flow * y_reboiler
+            - bottoms_flow * x_sump
         )
-
-        d_pressure = 0.0
 
         dy = np.zeros_like(y)
         dy[y_map["stage_component_moles"]] = d_stage.reshape(-1)
         dy[y_map["reflux_drum_component_moles"]] = d_drum
         dy[y_map["bottoms_sump_component_moles"]] = d_sump
-        dy[y_map["column_pressure_pa"]] = d_pressure
+        dy[y_map["stage_internal_energy_J"]] = d_stage_energy
+        dy[y_map["reflux_drum_internal_energy_J"]] = d_drum_energy
+        dy[y_map["bottoms_sump_internal_energy_J"]] = d_sump_energy
+        dy[y_map["top_vapor_holdup_mol"]] = d_top_vapor
+        dy[y_map["bottom_vapor_holdup_mol"]] = d_bottom_vapor
         return dy
 
 

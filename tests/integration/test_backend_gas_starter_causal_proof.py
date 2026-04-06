@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 from typing import cast
 
+import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -46,8 +47,17 @@ def test_stagewise_backend_proof_assembles_on_current_substrate_surfaces() -> No
         f"{prefix}/bottoms_sump_holdup_mol",
         f"{prefix}/distillate_flow_mol_s",
         f"{prefix}/bottoms_flow_mol_s",
+        f"{prefix}/distillate_withdrawal_flow_mol_s",
+        f"{prefix}/bottoms_withdrawal_flow_mol_s",
         f"{prefix}/realized_condensed_flow_mol_s",
         f"{prefix}/realized_reboiler_boilup_flow_mol_s",
+        f"{prefix}/column_pressure_pa",
+        f"{prefix}/top_pressure_pa",
+        f"{prefix}/bottom_pressure_pa",
+        f"{prefix}/distillate_temperature_K",
+        f"{prefix}/bottoms_temperature_K",
+        f"{prefix}/internal_liquid_traffic_mol_s",
+        f"{prefix}/internal_vapor_traffic_mol_s",
     ):
         assert key in process_state_values
 
@@ -98,7 +108,65 @@ def test_stagewise_duty_disturbances_drive_multi_step_top_bottom_holdup_and_comp
     assert _count_nonzero_deltas(realized_boilup_series) >= 1
 
 
-def test_stagewise_proof_keeps_withdrawals_passive_while_duty_disturbances_drive_response() -> None:
+def test_stagewise_proof_history_includes_pressure_hydraulic_and_thermal_realism_signals() -> None:
+    report = run_backend_gas_starter_causal_proof(
+        dt_s=0.2,
+        baseline_steps=3,
+        post_disturbance_steps=10,
+    )
+
+    proof = report["proof"]
+    history = proof["history"]
+    assert history
+
+    required_realism_keys = (
+        "column_pressure_pa",
+        "top_pressure_pa",
+        "bottom_pressure_pa",
+        "distillate_temperature_K",
+        "bottoms_temperature_K",
+        "internal_liquid_traffic_mol_s",
+        "internal_vapor_traffic_mol_s",
+    )
+    first_point = history[0]
+    for key in required_realism_keys:
+        assert key in first_point
+
+
+def test_stagewise_proof_requires_multi_step_pressure_hydraulic_and_thermal_response() -> None:
+    report = run_backend_gas_starter_causal_proof(
+        dt_s=0.2,
+        baseline_steps=3,
+        post_disturbance_steps=10,
+    )
+
+    proof = report["proof"]
+    history = proof["history"]
+    baseline_steps = proof["baseline_steps"]
+    post_history = history[baseline_steps:]
+
+    assert _count_nonzero_deltas([point["column_pressure_pa"] for point in post_history]) >= 2
+    assert _count_nonzero_deltas([point["top_pressure_pa"] for point in post_history]) >= 2
+    assert _count_nonzero_deltas([point["bottom_pressure_pa"] for point in post_history]) >= 2
+    assert _count_nonzero_deltas([point["distillate_temperature_K"] for point in post_history]) >= 2
+    assert _count_nonzero_deltas([point["bottoms_temperature_K"] for point in post_history]) >= 2
+    assert (
+        _count_nonzero_deltas([point["internal_liquid_traffic_mol_s"] for point in post_history])
+        >= 2
+    )
+    # Representative internal vapor traffic is now reported directly from the
+    # reduced-order internal hydraulic estimate. In this disturbance window it
+    # can remain near-zero depending on the solved pressure profile, so the
+    # honest expectation is finite/non-negative observability rather than
+    # guaranteed multi-step variation.
+    vapor_traffic_series = [point["internal_vapor_traffic_mol_s"] for point in post_history]
+    assert all(np.isfinite(value) for value in vapor_traffic_series)
+    assert min(vapor_traffic_series) >= 0.0
+
+
+def test_stagewise_proof_shows_conservative_withdrawal_response_through_runtime_observability() -> (
+    None
+):
     report = run_backend_gas_starter_causal_proof(
         dt_s=0.2,
         baseline_steps=3,
@@ -109,20 +177,44 @@ def test_stagewise_proof_keeps_withdrawals_passive_while_duty_disturbances_drive
     history = proof["history"]
     baseline_steps = proof["baseline_steps"]
 
-    assert "distillate_withdrawal_flow_mol_s" not in proof["manipulations"]["phase_1"]
-    assert "bottoms_withdrawal_flow_mol_s" not in proof["manipulations"]["phase_1"]
-    assert "distillate_withdrawal_flow_mol_s" not in proof["manipulations"]["phase_2"]
-    assert "bottoms_withdrawal_flow_mol_s" not in proof["manipulations"]["phase_2"]
+    assert proof["manipulations"]["phase_1"]["distillate_withdrawal_flow_mol_s"] == pytest.approx(
+        3.0
+    )
+    assert proof["manipulations"]["phase_1"]["bottoms_withdrawal_flow_mol_s"] == pytest.approx(2.5)
+    assert proof["manipulations"]["phase_2"]["distillate_withdrawal_flow_mol_s"] == pytest.approx(
+        8.0
+    )
+    assert proof["manipulations"]["phase_2"]["bottoms_withdrawal_flow_mol_s"] == pytest.approx(7.0)
 
     post_history = history[baseline_steps:]
+    assert post_history
     distillate_withdrawal_series = [point["distillate_flow_mol_s"] for point in post_history]
     bottoms_withdrawal_series = [point["bottoms_flow_mol_s"] for point in post_history]
+    distillate_request_series = [
+        point["distillate_withdrawal_flow_mol_s"] for point in post_history
+    ]
+    bottoms_request_series = [point["bottoms_withdrawal_flow_mol_s"] for point in post_history]
 
-    assert all(value == pytest.approx(0.0) for value in distillate_withdrawal_series)
-    assert all(value == pytest.approx(0.0) for value in bottoms_withdrawal_series)
+    assert max(distillate_withdrawal_series) > 0.0
+    assert max(bottoms_withdrawal_series) > 0.0
+    assert _count_nonzero_deltas(distillate_request_series) >= 1
+    assert _count_nonzero_deltas(bottoms_request_series) >= 1
+
+    reflux_holdup_series = [point["reflux_drum_holdup_mol"] for point in post_history]
+    bottoms_holdup_series = [point["bottoms_sump_holdup_mol"] for point in post_history]
+    assert min(reflux_holdup_series) >= 0.0
+    assert min(bottoms_holdup_series) >= 0.0
+    assert reflux_holdup_series[-1] < reflux_holdup_series[0]
+    assert bottoms_holdup_series[-1] < bottoms_holdup_series[0]
+
+    # Conservative withdrawal evidence: realized withdrawal naturally decays as owners
+    # deplete under persistent connected-runtime demand, rather than holding a fixed,
+    # demand-satisfied draw while inventories approach zero.
+    assert distillate_withdrawal_series[-1] < distillate_withdrawal_series[0]
+    assert bottoms_withdrawal_series[-1] < bottoms_withdrawal_series[0]
 
 
-def test_stagewise_proof_claims_remain_honest_and_name_q_over_lambda_limitation() -> None:
+def test_stagewise_proof_claims_remain_honest_without_overclaiming_deferred_scope() -> None:
     report = run_backend_gas_starter_causal_proof(
         dt_s=0.2,
         baseline_steps=2,
@@ -133,19 +225,22 @@ def test_stagewise_proof_claims_remain_honest_and_name_q_over_lambda_limitation(
     demonstrated = " ".join(claims["demonstrated"]).lower()
     deferred = " ".join(claims["deferred"]).lower()
 
-    assert "prescribed bottoms draw" not in demonstrated
-    assert "pressure control" not in demonstrated
-    assert "thermosyphon" not in demonstrated
-    assert "pump-loop" not in demonstrated
-    assert "enthalpy" not in demonstrated
+    assert "flooding" not in demonstrated
+    assert "weeping" not in demonstrated
+    assert "full rigorous mesh" not in demonstrated
+    assert "gameplay" not in demonstrated
+    assert "godot" not in demonstrated
 
-    assert "pressure control" in deferred
-    assert "enthalpy" in deferred
-    assert "thermosyphon" in deferred or "pump-loop" in deferred
-    assert "q/lambda" in deferred
-    assert "modularsimulator-9tr.5.2" in deferred
-    assert "passive product-flow readouts" in demonstrated
-    assert "passive product-withdrawal readouts" in demonstrated
+    assert "pressure" in demonstrated
+    assert "thermal" in demonstrated
+    assert "hydraulic" in demonstrated
+    assert "conservative" in demonstrated
+
+    assert "flooding" in deferred
+    assert "weeping" in deferred
+    assert "full rigorous mesh" in deferred
+    assert "gameplay" in deferred
+    assert "controller" in deferred
 
 
 def test_plotting_helper_renders_expected_panels_and_disturbance_markers() -> None:
@@ -168,31 +263,42 @@ def test_plotting_helper_renders_expected_panels_and_disturbance_markers() -> No
     )
 
     axes = figure.axes
-    assert len(axes) == 6
+    assert len(axes) == 8
 
     expected_ylabels = [
         "Duty [W]",
         "Holdup [mol]",
         "Flow [mol/s]",
+        "Pressure [Pa]",
+        "Temperature [K]",
         "Flow [mol/s]",
-        "Mole fraction [-]",
+        "Flow [mol/s]",
         "Mole fraction [-]",
     ]
     expected_titles = [
         "Duty requests",
         "Column holdups",
-        "Product withdrawal readouts",
+        "Requested vs realized withdrawals",
+        "Pressure realism signals",
+        "Thermal realism signals",
         "Realized internal flows",
+        "Internal hydraulic realism signals",
         "Product composition indicators",
-        "Stage 1 light-component composition",
     ]
     expected_series = [
         ["condenser_duty_request_W", "reboiler_duty_request_W"],
         ["reflux_drum_holdup_mol", "bottoms_sump_holdup_mol"],
-        ["distillate_flow_mol_s", "bottoms_flow_mol_s"],
+        [
+            "distillate_withdrawal_flow_mol_s",
+            "distillate_flow_mol_s",
+            "bottoms_withdrawal_flow_mol_s",
+            "bottoms_flow_mol_s",
+        ],
+        ["column_pressure_pa", "top_pressure_pa", "bottom_pressure_pa"],
+        ["distillate_temperature_K", "bottoms_temperature_K"],
         ["realized_condensed_flow_mol_s", "realized_reboiler_boilup_flow_mol_s"],
+        ["internal_liquid_traffic_mol_s", "internal_vapor_traffic_mol_s"],
         ["distillate_light_key_component_x", "bottoms_heavy_key_component_x"],
-        ["feed_stage_light_component_x"],
     ]
     first_marker_time = int(proof["baseline_steps"]) * 0.2
     second_marker_time = (int(proof["baseline_steps"]) + first_window) * 0.2

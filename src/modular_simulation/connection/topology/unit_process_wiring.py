@@ -227,12 +227,64 @@ def _snapshot_stagewise_distillation_state_values(
     stage_matrix = stage_moles.reshape(n_stages, n_species)
     feed_matrix = feed_compositions.reshape(n_feeds, n_species)
 
+    liquid_cp_j_per_mol_k = 120.0
+    reference_temperature_k = 298.15
+    shell_diameter_m = max(1.0e-9, float(getattr(unit, "shell_diameter_m")))
+    area_m2 = np.pi * 0.25 * shell_diameter_m * shell_diameter_m
+    vapor_space_height_m = max(0.15, 0.2 * float(getattr(unit, "tray_spacing_m")))
+    vapor_volume_m3 = max(1.0e-4, area_m2 * vapor_space_height_m)
+    r_gas_j_per_mol_k = 8.314462618
+
+    min_sum = 1.0e-12
+    drum_total_moles = max(min_sum, float(np.sum(np.clip(reflux_drum_moles, 0.0, None))))
+    sump_total_moles = max(min_sum, float(np.sum(np.clip(bottoms_sump_moles, 0.0, None))))
+    drum_temperature_k = float(
+        np.clip(
+            reference_temperature_k
+            + float(getattr(unit, "reflux_drum_internal_energy_J"))
+            / (drum_total_moles * liquid_cp_j_per_mol_k),
+            250.0,
+            700.0,
+        )
+    )
+    sump_temperature_k = float(
+        np.clip(
+            reference_temperature_k
+            + float(getattr(unit, "bottoms_sump_internal_energy_J"))
+            / (sump_total_moles * liquid_cp_j_per_mol_k),
+            250.0,
+            700.0,
+        )
+    )
+    top_pressure_pa = (
+        r_gas_j_per_mol_k
+        * drum_temperature_k
+        * max(1.0e-9, float(getattr(unit, "top_vapor_holdup_mol")))
+        / vapor_volume_m3
+    )
+    bottom_pressure_pa = (
+        r_gas_j_per_mol_k
+        * sump_temperature_k
+        * max(1.0e-9, float(getattr(unit, "bottom_vapor_holdup_mol")))
+        / vapor_volume_m3
+    )
+
     scalar_projection: dict[str, float] = {
         f"{unit_id}/column_pressure_pa": float(getattr(unit, "column_pressure_pa")),
+        f"{unit_id}/top_pressure_pa": float(top_pressure_pa),
+        f"{unit_id}/bottom_pressure_pa": float(bottom_pressure_pa),
         f"{unit_id}/active_contact_height_m": float(getattr(unit, "active_contact_height_m")),
         f"{unit_id}/shell_diameter_m": float(getattr(unit, "shell_diameter_m")),
         f"{unit_id}/distillate_flow_mol_s": float(getattr(unit, "distillate_flow")),
         f"{unit_id}/bottoms_flow_mol_s": float(getattr(unit, "bottoms_flow")),
+        f"{unit_id}/distillate_temperature_K": float(getattr(unit, "distillate_temperature")),
+        f"{unit_id}/bottoms_temperature_K": float(getattr(unit, "bottoms_temperature")),
+        f"{unit_id}/internal_liquid_traffic_mol_s": float(
+            max(0.0, float(getattr(unit, "representative_internal_liquid_traffic_mol_s")))
+        ),
+        f"{unit_id}/internal_vapor_traffic_mol_s": float(
+            max(0.0, float(getattr(unit, "representative_internal_vapor_traffic_mol_s")))
+        ),
         f"{unit_id}/reflux_return_flow_mol_s": float(getattr(unit, "reflux_return_flow")),
         f"{unit_id}/distillate_withdrawal_flow_mol_s": float(
             getattr(unit, "distillate_withdrawal_flow")
