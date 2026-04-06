@@ -6,9 +6,6 @@
   - Beads is the live execution ledger.
   - `tasks.md` is planning only, not execution state.
   - `beads-identity.md` stores the OpenSpec to Beads linkage.
-  - Delegated implementation and review agents must persist packet-level results to the claimed Beads item before returning, so execution context survives session loss.
-  - The orchestrator owns final Beads status transitions such as `closed` and top-level `blocked` unless a narrower workflow explicitly says otherwise.
-  - If an agent stops blocked or rerouted on claimed work, it must update the Beads status and notes with the reason before returning to the user.
 - For Beads usage guidance, refer to the `beads` skill.
 - If a Beads-backed worktree is needed, use `bd worktree`, not raw `git worktree`, so Beads keeps working inside the worktree.
 - Use `grepai search` first for semantic code exploration. Use English queries. Fall back to `grep` or `glob` only for exact text or path matching.

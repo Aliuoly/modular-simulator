@@ -5,7 +5,7 @@ agent: orchestrator
 
 Implement work from a `modsim-contract` change.
 
-**Precondition**: Execution requires an approved OpenSpec change with a complete planning pack and valid Beads linkage. If either is missing, stop and route through `modsim-propose` or `modsim-continue` before proceeding.
+**Precondition**: Execution requires an approved OpenSpec change with a complete planning pack and valid Beads linkage. If either is missing, stop and route through `modsim-propose` or `modsim-continue`.
 
 **Input**: Optionally specify a change name after `/modsim-apply` (for example `/modsim-apply add-auth`). If omitted, infer from conversation context when safe; if ambiguous, prompt with the `question` tool.
 
@@ -30,7 +30,7 @@ Implement work from a `modsim-contract` change.
    ```
    Handle returned states:
    - `blocked`: explain what is missing and suggest `modsim-continue` or `modsim-propose`
-   - `all_done`: report completion and suggest `modsim-archive`
+   - `all_done`: report completion and suggest `modsim-verify` or `modsim-archive`
    - otherwise: proceed
 
 4. **Read context files**
@@ -53,7 +53,7 @@ Implement work from a `modsim-contract` change.
    - dynamic instruction from the CLI output
 
 7. **Implement linked work until done or blocked**
-   - Claim the correct Beads task before implementation.
+   - Select the next ready linked Beads task and claim it before implementation.
    - When a worktree is needed, use `bd worktree`, not raw `git worktree`, so Beads keeps working inside the worktree.
    - Keep changes focused on the claimed task packet.
    - Pass the claimed Beads task ID into every delegated executor or reviewer packet.
@@ -64,7 +64,11 @@ Implement work from a `modsim-contract` change.
    - If implementation reveals a design contradiction, spec defect, or missing decision, stop and route back through planning.
    - The orchestrator keeps ownership of final `closed` and top-level `blocked` status transitions.
 
-8. **Show completion or pause state**
+8. **Continue until the change is complete or blocked**
+   - After each completed task, select the next ready linked Beads task and continue.
+   - Stop only when the full change is complete, a real blocker stops progress, or replanning is required.
+
+9. **Show completion or pause state**
    Report:
    - Beads tasks completed or advanced this session
    - verification evidence gathered
@@ -80,4 +84,4 @@ Implement work from a `modsim-contract` change.
 - Do not proceed if Beads linkage is stale or ambiguous.
 - Keep code changes minimal and task-scoped.
 
-Finish with the `question` tool and concrete next-step options.
+Use the `question` tool only when a missing decision blocks execution.

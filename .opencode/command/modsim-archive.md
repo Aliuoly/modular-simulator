@@ -107,6 +107,4 @@ Archive a completed modsim change after checking artifacts, linked Beads state, 
 - Do not rely on `tasks.md` checkboxes as the archive gate.
 - Preserve `.openspec.yaml` when moving the change directory.
 - Show clear warnings before archiving incomplete or partially closed work.
-- Use the `question` tool for decision points.
-
-Finish with the `question` tool and concrete next-step options.
+- Use the `question` tool only for real archive decisions or blockers.

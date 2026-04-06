@@ -1,7 +1,7 @@
 # gitignore template taken from https://github.com/github/gitignore/blob/main/Python.gitignore
 # scripts
 scripts/
-
+.tmp/
 # opencode stuff
 
 # Byte-compiled / optimized / DLL files

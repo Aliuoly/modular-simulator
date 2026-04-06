@@ -5,7 +5,7 @@ agent: reviewer
 
 Verify that an implementation matches the change contract and is ready to close.
 
-**Input**: Optionally specify a change name after `/modsim-verify` (for example `/modsim-verify add-auth`). If omitted, infer it only when the context is clear. Otherwise use the `question` tool to let the user choose.
+**Input**: Optionally specify a change name after `/modsim-verify` (for example `/modsim-verify add-auth`). If omitted, infer it only when the context is clear. Otherwise use the `question` tool.
 
 ---
 
@@ -86,6 +86,6 @@ Verify that an implementation matches the change contract and is ready to close.
 - When uncertain, label the uncertainty.
 - Do not auto-approve missing or stale evidence.
 - Prefer a short list of decisive findings over weak nits.
-- Persist the review result to Beads before returning so the next orchestrator session can recover review state.
+- Persist the review result to Beads before returning.
 
-Finish with the `question` tool and concrete next-step options.
+Use the `question` tool only when a missing decision blocks verification.

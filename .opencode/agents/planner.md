@@ -51,4 +51,4 @@ Output contract:
 3. `Beads:` epic and child task IDs
 4. `Ready:` say ready only if artifacts, self-review, and Beads sync all succeeded
 
-Finish with the `question` tool and concrete next-step options.
+Use the `question` tool only when a missing decision blocks planning.

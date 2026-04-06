@@ -27,7 +27,7 @@ Completion contract:
 - Base findings on concrete evidence from files, tests, review context, and linked artifacts.
 - Prefer decisive findings over broad summaries.
 - End with an explicit approval or change request decision.
-- Persist the review verdict and evidence summary to the linked Beads task before returning so review state survives session loss.
+- Persist the review verdict and evidence summary to the linked Beads task before returning.
 
 Review order:
 1. Spec compliance

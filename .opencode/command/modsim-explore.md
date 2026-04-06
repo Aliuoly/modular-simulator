@@ -127,7 +127,7 @@ When useful, summarize with:
 - update an existing artifact
 ```
 
-Finish with the `question` tool and concrete next-step options.
+Use the `question` tool only when a focused answer materially changes the analysis.
 
 ---
 

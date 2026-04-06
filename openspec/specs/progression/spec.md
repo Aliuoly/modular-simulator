@@ -58,7 +58,7 @@ The abstract research submission action SHALL use exactly this research id and i
 - **THEN** those exact fields are present and no separate client-only unlock schema is required to discover current stage state
 
 ### Requirement: Main-World Progression Snapshot Semantics Are Frozen
-For `phase1_process_sandbox_v1`:
+For `phase1_process_sandbox_v1`, the progression snapshot semantics SHALL be exactly as follows:
 
 - `active_stage_id` SHALL mean the highest unlocked stage in the fixed gas-first ladder.
 - `available_item_ids` SHALL be the cumulative unlocked subset of the main-world `allowed_item_ids`, preserving stage order and keeping `build_process_line` at the tail.

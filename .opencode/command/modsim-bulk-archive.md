@@ -119,4 +119,4 @@ This command handles batch archive work, including spec conflicts, linked Beads 
 - Do not rely on `tasks.md` checkboxes as the batch archive gate.
 - If the archive target already exists for one change, fail that change and continue with the rest.
 
-Finish with the `question` tool and concrete next-step options.
+Use the `question` tool only for selection, archive choice, or a real blocker.

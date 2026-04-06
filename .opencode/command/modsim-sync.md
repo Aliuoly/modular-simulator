@@ -100,4 +100,4 @@ The system SHALL do something new.
 - Keep the merge idempotent.
 - Ask only when the delta is genuinely ambiguous.
 
-Finish with the `question` tool and concrete next-step options.
+Use the `question` tool only when the delta is genuinely ambiguous.

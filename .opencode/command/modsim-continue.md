@@ -52,4 +52,4 @@ Continue working on an existing OpenSpec change by creating the next ready artif
 - Ask only when missing information materially changes the artifact.
 - Verify the artifact exists before reporting success.
 
-Finish with the `question` tool and concrete next-step options.
+Use the `question` tool only when change selection is ambiguous or missing information materially changes the artifact.

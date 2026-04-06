@@ -109,4 +109,4 @@ Never treat `/modsim-propose` as default intake for vague work.
 - Do not report readiness until artifact completion, self-review, and Beads sync all succeed.
 - Do not leave placeholder Beads IDs in `beads-identity.md`.
 
-Finish with the `question` tool and concrete next-step options.
+Use the `question` tool only when a missing decision or change-name choice blocks planning.
