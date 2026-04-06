@@ -6,7 +6,7 @@
 ## Beads Epic
 
 - Epic ID: `ModularSimulator-6l3`
-- Last sync note: `2026-04-06T02:25:41Z: created epic plus child tasks for Waves 1-6; wave mapping is authoritative even though Beads child numbering does not match wave numbering.`
+- Last sync note: `2026-04-06T02:25:41Z: created epic plus child tasks for Waves 1-6; wave mapping is authoritative even though Beads child numbering does not match wave numbering. 2026-04-06: clarified Howard GE-H70-8 so Wave 2 uses direct Eq. (28) and Eq. (29) closure as the normative first slice; Eq. (30) is optional only when source-exact or deterministically derived, and surrogate F/G/K families do not satisfy the contract.`
 
 ## Child Tasks
 
@@ -34,3 +34,4 @@
 - Delegated implementation and review agents append packet-level notes to linked child tasks before returning.
 - The orchestrator owns final `closed` and top-level `blocked` status transitions.
 - Child-task IDs are intentionally recorded by planning-wave mapping, not by Beads suffix order.
+- Howard Wave 2 unblocks against the clarified pack by proving direct Eq. (28) and Eq. (29) closure; Eq. (30) is no longer a mandatory first-slice runtime interface unless exact or deterministically derived.

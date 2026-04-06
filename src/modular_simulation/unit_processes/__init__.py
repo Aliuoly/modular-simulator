@@ -3,6 +3,8 @@ from .reactors import CSTR, PFR, ConversionReactor
 from .separation import (
     ComponentSeparator,
     FlashDrum,
+    Gani1986DistillationColumn,
+    Howard1970DistillationColumn,
     StagewiseDistillationColumn,
 )
 from .storage import HoldingTank
@@ -14,6 +16,8 @@ __all__ = [
     "ConversionReactor",
     "CSTR",
     "FlashDrum",
+    "Gani1986DistillationColumn",
+    "Howard1970DistillationColumn",
     "HeatExchanger",
     "HeaterCooler",
     "HoldingTank",

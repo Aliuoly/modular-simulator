@@ -5,7 +5,7 @@
 ## Wave 1 — Write the failing paper-faithful tests and seam checks first
 
 - [ ] 1.1 `simulation-realism-required: true` Add failing unit coverage in `tests/unit_process/test_layer4_howard1970_distillation.py` and `tests/unit_process/test_layer4_gani1986_distillation.py` for class construction, package exports, explicit sibling coexistence with `StagewiseDistillationColumn`, and the shared monolithic feed/product runtime seam.
-- [ ] 1.2 `simulation-realism-required: true` Add equation-fidelity regression fixtures in those same test files that evaluate small synthetic states against the frozen governing equations `GE-H70-1` through `GE-H70-8` and `GE-G86-1` through `GE-G86-8`, including Howard Eq. (7), Eq. (8), Eq. (25), Eq. (29), and Gani Appendix A.1–A.8 so sign, coefficient, and closure drift fails red.
+- [ ] 1.2 `simulation-realism-required: true` Add equation-fidelity regression fixtures in those same test files that evaluate small synthetic states against the frozen governing equations `GE-H70-1` through `GE-H70-8` and `GE-G86-1` through `GE-G86-8`, including Howard Eq. (7), Eq. (8), Eq. (25), Eq. (28), Eq. (29), and Gani Appendix A.1–A.8 so sign, coefficient, and closure drift fails red. If Howard Eq. (30) is exposed, verify it only against the source-exact or deterministically derived family rather than invented surrogate coefficients.
 - [ ] 1.3 `simulation-realism-required: true` Add failing runtime-compatibility coverage in `tests/integration/test_paper_faithful_distillation_runtime.py` for feed/product routing, explicit holdup ownership, runtime outlet-demand application, and non-widening of gameplay/start exposure.
 - [ ] 1.4 Run the red boundary:
   - `uv run pytest tests/unit_process/test_layer4_howard1970_distillation.py`
@@ -17,7 +17,7 @@
 
 - [ ] 2.1 `simulation-realism-required: true` Create `src/modular_simulation/unit_processes/separation/howard1970_distillation.py` with `Howard1970DistillationColumn` as a `ProcessModel` sibling to the existing stagewise model.
 - [ ] 2.2 `simulation-realism-required: true` Implement the frozen Howard plate-balance, equilibrium, efficiency, and implicit temperature-solve family from `GE-H70-1` through `GE-H70-6` without replacing them with the repo's reduced-order stagewise hydraulic or thermal closure family.
-- [ ] 2.3 `simulation-realism-required: true` Implement the Howard feed-plate and constant-volume-holdup forms from `GE-H70-7` and `GE-H70-8`; if additional Howard specification families are discovered necessary during execution, create new Beads work instead of silently widening this pack.
+- [ ] 2.3 `simulation-realism-required: true` Implement the Howard feed-plate and constant-volume-holdup forms from `GE-H70-7` and `GE-H70-8` using the direct Eq. (28) derivative balance and Eq. (29) rearranged closure as the normative first-slice runtime path. Do not invent surrogate `F_j`/`G_j`/`K_j` families; only expose Howard Eq. (30) if it is kept source-exact or derived deterministically from the direct equations. If additional Howard specification families are discovered necessary during execution, create new Beads work instead of silently widening this pack.
 - [ ] 2.4 `simulation-realism-required: true` Export `Howard1970DistillationColumn` in `src/modular_simulation/unit_processes/separation/__init__.py` and `src/modular_simulation/unit_processes/__init__.py` while keeping `StagewiseDistillationColumn` unchanged as the existing reduced-order baseline.
 
 ## Wave 3 — Implement the Gani 1986 model slice
@@ -39,6 +39,7 @@
 - [ ] 5.1 `simulation-realism-required: true` Run `modsim-verify` plus an independent code review focused on source-equation fidelity, runtime seam compatibility, and protection against hidden shortcut-shim reintroduction.
 - [ ] 5.2 `simulation-realism-required: true` Do not close implementation until review evidence is non-blocking and still shows:
   - Howard behavior follows `GE-H70-1` through `GE-H70-8`
+  - Howard constant-volume holdup follows direct Eq. (28) and Eq. (29), unless any Eq. (30) shorthand used is source-exact or deterministically derived
   - Gani behavior follows `GE-G86-1` through `GE-G86-8`
   - `StagewiseDistillationColumn` remains intact as a separate reduced-order baseline
   - gameplay/start/build exposure is unchanged
@@ -55,7 +56,7 @@
   - `openspec validate --specs --strict --no-interactive`
 - [ ] 6.2 Expected evidence:
   - Howard and Gani classes exist, export cleanly, and remain explicit siblings of `StagewiseDistillationColumn`
-  - equation-fidelity regressions prove the implementation still matches the frozen Howard and Gani governing equations instead of a prose-only interpretation
+  - equation-fidelity regressions prove the implementation still matches the frozen Howard and Gani governing equations instead of a prose-only interpretation, including Howard direct Eq. (28) and Eq. (29) closure
   - the existing stagewise regression suite still passes unchanged
   - no shortcut shim is present
   - gameplay/start/build exposure remains unchanged

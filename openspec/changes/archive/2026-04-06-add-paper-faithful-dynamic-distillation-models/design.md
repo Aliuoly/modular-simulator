@@ -7,6 +7,7 @@
   - Howard, G. M. (1970), *Unsteady State Behavior of Multicomponent Distillation Columns: Part I: Simulation*
   - Gani, R., Ruiz, C. A., and Cameroni, I. T. (1986), *A generalized model for distillation columns—I. Model description and applications*
 - Howard was verified from extracted text plus optimized page images covering the plate-balance, equilibrium/efficiency, bubble-point derivative, feed-plate, and constant-volume-holdup blocks.
+- Howard Eqs. (22) through (30), including the constant-volume-holdup page that shows Eqs. (26) through (30), are backed locally by `.tmp/paper_eq_images_optimized/howard-5.png`.
 - Gani was verified from extracted text plus optimized main-text images and the optimized appendix image for `A.1` through `A.8`; appendix `A.25` through `A.34` had already been verified separately.
 - The current separation package exports only `StagewiseDistillationColumn`, so later implementation will need explicit sibling-module and package-export updates.
 
@@ -46,9 +47,12 @@
    - To keep the contract executable instead of underdetermined, this pack freezes the first Howard slice around:
      - the general component-balance family,
      - equilibrium and tray-efficiency relations,
-     - the implicit-variable temperature/bubble-point block,
-     - the feed-plate extension,
-     - and the constant-volume-holdup closure from Eqs. (26)–(30).
+      - the implicit-variable temperature/bubble-point block,
+      - the feed-plate extension,
+      - and the direct constant-volume-holdup closure from Eqs. (26)–(29).
+   - Howard Eq. (30) is treated in this repo as a coefficient-family shorthand derived from the Eq. (28) expansion, not as a required first executable interface.
+   - If Eq. (30) is later recovered exactly from source evidence or derived deterministically from the direct equations, implementation may expose that coefficient family as a secondary algebraic convenience.
+   - Invented or heuristic `F_j`, `G_j`, `K_j` surrogates do **not** satisfy this contract.
    - This keeps the implementation source-faithful without promising every alternative Howard specification family on day one.
 
 4. **Gani's first executable slice is a single-column, open-loop generalized model with the paper's core ODE balances, thermodynamic/property closures, reflux-drum/reboiler balances, generic hydraulic dependency family, and bubble-cap appendix A.1–A.8.**
@@ -130,19 +134,24 @@
 
   `+ F * ((h_F - h_j) - D_j)`
 
-- `GE-H70-8` Constant-volume-holdup closure (Howard Eqs. 26–30):
+- `GE-H70-8` Constant-volume-holdup closure (Howard Eqs. 26–29, with Eq. 30 optional only as a source-exact or deterministically derived shorthand):
 
   `R_j = V_bar * v(x_j, T_j)`
 
   `v(x_j, T_j) = sum_i x_{j,i} * v_i(T_j)`
 
+  `-V_bar * d(v(x_j, T_j)) / dt = V_{j+1} + L_{j-1} - V_j - L_j`
+
   `0 = V_{j+1} * (1 - F_j) + L_{j-1} * (1 - G_j) - V_j * (1 - K_j) - L_j`
 
-  with `F_j`, `G_j`, and `K_j` kept explicit from the paper's Eq. (30) coefficient family rather than replaced by unnamed heuristics.
+  with the first executable slice required to satisfy the direct Eq. (28) derivative balance and the Eq. (29) rearranged closure without inventing surrogate coefficient families.
+
+  If the Eq. (30) shorthand is used, `F_j`, `G_j`, and `K_j` must come from the source-exact or deterministically derived coefficient family implied by the Eq. (28) expansion, not from unnamed heuristics.
 
 **Howard first-slice boundary for this repo**
 - Open-loop, single-column execution only.
 - Constant-volume holdup is the frozen first executable holdup specification in this pack.
+- Direct Eq. (28) and Eq. (29) closure is the normative runtime path for this first slice; Eq. (30) shorthand is optional only when source-exact or deterministically derived.
 - Pressure, holdup-specification inputs, and heat-leak terms remain named inputs or named closures rather than being silently replaced by the repo's reduced-order stagewise hydraulics.
 
 ### Gani, Ruiz, Cameroni (1986) first-slice contract

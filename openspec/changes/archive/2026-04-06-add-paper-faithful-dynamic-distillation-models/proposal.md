@@ -12,6 +12,7 @@ Howard (1970) and Gani, Ruiz, Cameroni (1986) are now source-verified strongly e
 - Keep `StagewiseDistillationColumn` as the existing reduced-order runtime baseline.
 - Modify the `units-and-components` contract so runtime distillation is no longer stagewise-only, while still forbidding any `ShortcutDistillation` class, alias, or compatibility shim.
 - Freeze the governing-equation contract for the Howard and Gani model families in `specs/units-and-components/spec.md` and preserve equation provenance and first-slice boundaries in `design.md`.
+- For Howard constant-volume holdup, freeze the executable first slice around direct Howard Eqs. (26) through (29); treat Eq. (30) as an optional coefficient-family shorthand only when it is recovered exactly from source evidence or derived deterministically from the direct equations.
 - Keep this change backend-only:
   - no gameplay/catalog/start widening,
   - no automatic replacement of stagewise units,

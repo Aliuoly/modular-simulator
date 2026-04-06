@@ -48,15 +48,19 @@
 
   `+ F * ((h_F - h_j) - D_j)`
 
-- `GE-H70-8` Constant-volume-holdup closure (Howard Eqs. 26–30):
+- `GE-H70-8` Constant-volume-holdup closure (Howard Eqs. 26–29, with Eq. 30 optional only as a source-exact or deterministically derived shorthand):
 
   `R_j = V_bar * v(x_j, T_j)`
 
   `v(x_j, T_j) = sum_i x_{j,i} * v_i(T_j)`
 
+  `-V_bar * d(v(x_j, T_j)) / dt = V_{j+1} + L_{j-1} - V_j - L_j`
+
   `0 = V_{j+1} * (1 - F_j) + L_{j-1} * (1 - G_j) - V_j * (1 - K_j) - L_j`
 
-  with `F_j`, `G_j`, and `K_j` preserved as the explicit coefficient family from Howard Eq. (30).
+  with the first executable slice required to satisfy the direct Eq. (28) derivative balance and the Eq. (29) rearranged closure without inventing surrogate coefficient families.
+
+  If the Eq. (30) shorthand is used, `F_j`, `G_j`, and `K_j` SHALL come from the source-exact or deterministically derived coefficient family implied by the Eq. (28) expansion; heuristic surrogate coefficients do **not** satisfy this requirement.
 
 - Symbols and assumptions:
   - `j` = plate index, `i` = component index
@@ -66,13 +70,14 @@
   - `h_j`, `H_j` = liquid and vapor enthalpies
   - `Q_{Lj}` = plate heat-loss term
   - vapor holdup is neglected, liquid on each plate is well mixed, and vapor-liquid relation is established instantaneously as in the paper
-  - this change freezes Howard's constant-volume-holdup executable slice; it does not require every alternative Howard specification family in the first implementation.
+  - this change freezes Howard's constant-volume-holdup executable slice around direct Eq. (28) and Eq. (29); it does not require every alternative Howard specification family in the first implementation.
 
 #### Scenario: Howard runtime behavior follows the published balance family
 - **WHEN** implementation or tests evaluate `Howard1970DistillationColumn`
 - **THEN** its dynamic plate behavior follows `GE-H70-1` through `GE-H70-8`
 - **AND** the model does not replace those equations with the repo's existing reduced-order stagewise hydraulic and thermal closure family
-- **AND** Howard's feed-plate and constant-volume-holdup forms remain explicit rather than implied by prose.
+- **AND** Howard's feed-plate and constant-volume-holdup forms remain explicit rather than implied by prose
+- **AND** the constant-volume-holdup runtime closure satisfies Howard Eq. (28) and Eq. (29) directly unless a source-exact or deterministically derived Eq. (30) shorthand is used.
 
 ### Requirement: Gani 1986 Comparison Model Preserves Published Generalized Column Family
 `Gani1986DistillationColumn` SHALL implement the Gani, Ruiz, Cameroni (1986) single-column open-loop generalized column family with explicit plate balances, algebraic thermodynamic/property closures, generic hydraulic dependencies, reflux-drum/reboiler balances, and bubble-cap appendix hydraulics rather than collapsing the model into the repo's reduced-order stagewise closure.
