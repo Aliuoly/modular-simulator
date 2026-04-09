@@ -14,6 +14,16 @@ from .species import ActiveSpeciesRegistry
 
 _COMPOSITION_SUM_TOL = 1.0e-8
 _PHASE_FRACTION_EPS = 1.0e-9
+_DEFAULT_PR_SPECIES_CAS: tuple[str, ...] = (
+    "74-98-6",  # propane
+    "106-97-8",  # n-butane
+    "109-66-0",  # n-pentane
+    "110-54-3",  # n-hexane
+    "142-82-5",  # n-heptane
+    "111-65-9",  # n-octane
+    "71-43-2",  # benzene
+    "108-88-3",  # toluene
+)
 
 
 @dataclass(frozen=True)
@@ -349,7 +359,18 @@ def create_property_package(species: ActiveSpeciesRegistry, model: str = "PR") -
     return PengRobinsonPackage(species_ids=species.cas_list)
 
 
+def create_default_peng_robinson_package(n_species: int) -> PengRobinsonPackage:
+    if n_species <= 0:
+        raise ValueError("n_species must be positive.")
+    if n_species > len(_DEFAULT_PR_SPECIES_CAS):
+        raise ValueError(
+            f"n_species exceeds default PR species set size ({len(_DEFAULT_PR_SPECIES_CAS)})."
+        )
+    return PengRobinsonPackage(species_ids=_DEFAULT_PR_SPECIES_CAS[:n_species])
+
+
 __all__ = [
+    "create_default_peng_robinson_package",
     "FlashResult",
     "PengRobinsonPackage",
     "PropertyPackage",

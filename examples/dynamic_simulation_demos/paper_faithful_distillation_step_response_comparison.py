@@ -23,7 +23,7 @@ from modular_simulation.unit_processes import (
 
 DEFAULT_DURATION_S = 4.0 * 3600.0
 DEFAULT_STEP_TIME_S = 1.0 * 3600.0
-DEFAULT_DT_S = 300.0
+DEFAULT_DT_S = 30.0
 DEFAULT_SUBSTEPS = 5
 DEFAULT_OUTPUT_DIR = Path(".tmp/step_response_reports")
 

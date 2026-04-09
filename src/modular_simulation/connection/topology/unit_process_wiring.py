@@ -161,6 +161,12 @@ def _bind_process_state_projection(
                 unit_id=unit_id,
                 runtime_context=runtime_context,
             )
+        if unit_type_name == "ThermoTrayDistillationColumn":
+            return _snapshot_thermo_tray_distillation_state_values(
+                unit=unit,
+                unit_id=unit_id,
+                runtime_context=runtime_context,
+            )
         return {}
 
     setattr(subsystem, "snapshot_process_state_values", _snapshot_process_state_values)
@@ -354,6 +360,109 @@ def _snapshot_stagewise_distillation_state_values(
         )
         scalar_projection[f"{unit_id}/feed_{feed_label}/stage_index"] = float(
             feed_stage_indices[feed_index]
+        )
+        for species_index, cas_id in enumerate(cas_ids[:n_species]):
+            scalar_projection[f"{unit_id}/feed_{feed_label}/mole_fraction/{cas_id}"] = float(
+                feed_matrix[feed_index, species_index]
+            )
+
+    return scalar_projection
+
+
+def _snapshot_thermo_tray_distillation_state_values(
+    *,
+    unit: ProcessModel,
+    unit_id: str,
+    runtime_context: SimulationRuntimeContext | None,
+) -> dict[str, float]:
+    tray_holdup = np.asarray(getattr(unit, "tray_component_holdup"), dtype=np.float64).reshape(-1)
+    drum_moles = np.asarray(
+        getattr(unit, "condenser_drum_component_moles"), dtype=np.float64
+    ).reshape(-1)
+    kettle_moles = np.asarray(
+        getattr(unit, "reboiler_kettle_component_moles"), dtype=np.float64
+    ).reshape(-1)
+    feed_flows = np.asarray(getattr(unit, "feed_flows"), dtype=np.float64).reshape(-1)
+    feed_temperatures = np.asarray(getattr(unit, "feed_temperatures"), dtype=np.float64).reshape(-1)
+    feed_pressures = np.asarray(getattr(unit, "feed_pressures"), dtype=np.float64).reshape(-1)
+    feed_compositions = np.asarray(getattr(unit, "feed_compositions"), dtype=np.float64).reshape(-1)
+    feed_tray_indices = np.asarray(getattr(unit, "feed_tray_indices"), dtype=np.float64).reshape(-1)
+    distillate_composition = np.asarray(
+        getattr(unit, "distillate_composition"), dtype=np.float64
+    ).reshape(-1)
+    bottoms_composition = np.asarray(
+        getattr(unit, "bottoms_composition"), dtype=np.float64
+    ).reshape(-1)
+
+    n_species = int(getattr(unit, "n_species"))
+    n_trays = int(getattr(unit, "n_trays"))
+    n_feeds = int(getattr(unit, "n_feeds"))
+    tray_matrix = tray_holdup.reshape(n_trays, n_species)
+    feed_matrix = feed_compositions.reshape(n_feeds, n_species)
+
+    p_top = float(getattr(unit, "p_top_pa"))
+    delta_p = float(getattr(unit, "delta_p_tray_pa"))
+    bottom_pressure = p_top + max(0, n_trays - 1) * delta_p
+
+    scalar_projection: dict[str, float] = {
+        f"{unit_id}/column_pressure_pa": p_top,
+        f"{unit_id}/top_pressure_pa": p_top,
+        f"{unit_id}/bottom_pressure_pa": bottom_pressure,
+        f"{unit_id}/distillate_flow_mol_s": float(getattr(unit, "distillate_flow")),
+        f"{unit_id}/bottoms_flow_mol_s": float(getattr(unit, "bottoms_flow")),
+        f"{unit_id}/distillate_temperature_K": float(getattr(unit, "distillate_temperature")),
+        f"{unit_id}/bottoms_temperature_K": float(getattr(unit, "bottoms_temperature")),
+        f"{unit_id}/reflux_drum_holdup_mol": float(np.sum(drum_moles)),
+        f"{unit_id}/bottoms_sump_holdup_mol": float(np.sum(kettle_moles)),
+        f"{unit_id}/distillate_withdrawal_flow_mol_s": float(
+            getattr(unit, "distillate_withdrawal_flow")
+        ),
+        f"{unit_id}/bottoms_withdrawal_flow_mol_s": float(getattr(unit, "bottoms_withdrawal_flow")),
+        f"{unit_id}/condenser_duty_request_W": float(getattr(unit, "condenser_duty_request_W")),
+        f"{unit_id}/reboiler_duty_request_W": float(getattr(unit, "reboiler_duty_request_W")),
+    }
+
+    if runtime_context is not None:
+        cas_ids = tuple(runtime_context.species_registry.cas_list)
+    else:
+        cas_ids = tuple(str(index) for index in range(n_species))
+
+    for species_index, cas_id in enumerate(cas_ids[:n_species]):
+        scalar_projection[f"{unit_id}/distillate_mole_fraction/{cas_id}"] = float(
+            distillate_composition[species_index]
+        )
+        scalar_projection[f"{unit_id}/bottoms_mole_fraction/{cas_id}"] = float(
+            bottoms_composition[species_index]
+        )
+
+    selected_trays: set[int] = {0, max(0, n_trays - 1)}
+    for feed_tray_index in feed_tray_indices:
+        selected_trays.add(int(np.clip(round(float(feed_tray_index)) - 1, 0, n_trays - 1)))
+
+    for tray_index_zero_based in sorted(selected_trays):
+        tray_label = tray_index_zero_based + 1
+        tray_inventory = np.clip(tray_matrix[tray_index_zero_based], 0.0, None)
+        tray_total = float(np.sum(tray_inventory))
+        if tray_total <= 0.0:
+            tray_x = np.full(n_species, 1.0 / float(n_species), dtype=np.float64)
+        else:
+            tray_x = tray_inventory / tray_total
+        for species_index, cas_id in enumerate(cas_ids[:n_species]):
+            scalar_projection[f"{unit_id}/stage_{tray_label}/mole_fraction/{cas_id}"] = float(
+                tray_x[species_index]
+            )
+
+    for feed_index in range(n_feeds):
+        feed_label = feed_index + 1
+        scalar_projection[f"{unit_id}/feed_{feed_label}/flow_mol_s"] = float(feed_flows[feed_index])
+        scalar_projection[f"{unit_id}/feed_{feed_label}/temperature_K"] = float(
+            feed_temperatures[feed_index]
+        )
+        scalar_projection[f"{unit_id}/feed_{feed_label}/pressure_pa"] = float(
+            feed_pressures[feed_index]
+        )
+        scalar_projection[f"{unit_id}/feed_{feed_label}/stage_index"] = float(
+            feed_tray_indices[feed_index]
         )
         for species_index, cas_id in enumerate(cas_ids[:n_species]):
             scalar_projection[f"{unit_id}/feed_{feed_label}/mole_fraction/{cas_id}"] = float(
