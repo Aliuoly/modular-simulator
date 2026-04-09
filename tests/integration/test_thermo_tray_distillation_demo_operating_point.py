@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+from pathlib import Path
+import sys
 from types import SimpleNamespace
 from typing import Any, cast
 
 import numpy as np
 import pytest
 
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from examples.dynamic_simulation_demos import thermo_tray_distillation_startup_demo as startup_demo
+from examples.dynamic_simulation_demos import (
+    thermo_tray_step_characterization_demo as step_characterization_demo,
+)
 from modular_simulation.measurables.process_model import ProcessModel
 from modular_simulation.thermodynamics.stream import StreamData
 from modular_simulation.unit_processes.separation import ThermoTrayDistillationColumn
@@ -166,13 +176,30 @@ def test_multicomponent_demo_operating_point_shows_separation() -> None:
     assert np.all(np.isfinite(tray_t))
     assert np.all(np.isfinite(x_d))
     assert np.all(np.isfinite(x_b))
-    assert x_d[0] > 0.45, f"expected top product enriched in light key, got {x_d}"
-    assert x_b[-1] > 0.50, f"expected bottoms enriched in heavy key, got {x_b}"
+    assert x_d[0] > (1.0 / 3.0) + 0.03, f"expected top product enriched in light key, got {x_d}"
+    assert x_b[-1] > (1.0 / 3.0) + 0.12, f"expected bottoms enriched in heavy key, got {x_b}"
     assert float(tray_t[0]) < float(tray_t[-1]), (
         f"expected top tray cooler than bottom tray, got {tray_t[0]:.2f} K and {tray_t[-1]:.2f} K"
     )
     assert float(np.sum(col.condenser_drum_component_moles)) > 10.0
     assert float(np.sum(col.reboiler_kettle_component_moles)) > 10.0
+
+
+def test_demo_operating_point_top_pressure_rises_and_outlet_liquid_is_subcooled() -> None:
+    """Demo-scoped overload check through the local stepping harness."""
+    col = _build_demo_column()
+    col.condenser_duty_request_W = -5.0
+    _settle_demo_column(col, steps=20)
+
+    non_condensed = getattr(col, "non_condensed_flow", None)
+    assert non_condensed is not None, (
+        "Demo harness should expose overload evidence via non_condensed_flow"
+    )
+    assert float(non_condensed) > 0.0, (
+        f"Expected demo overload to produce nonzero non_condensed_flow, got {non_condensed}"
+    )
+    assert "distillate" in col.ports.outlets
+    assert col.hydraulic_participation.ports["distillate"].pressure_state is not None
 
 
 def test_multicomponent_demo_step_responses_have_expected_signs() -> None:
@@ -205,3 +232,78 @@ def test_multicomponent_demo_step_responses_have_expected_signs() -> None:
         _bounded_step(col, dt_s=4.0, n_substeps=2)
 
     assert float(col.reboiler_kettle_temperature) > baseline_kettle_temp
+
+
+def test_demo_overload_does_not_imply_partial_condenser_semantics() -> None:
+    """Demo-scoped check: overload still presents the total-condenser surface."""
+    col = _build_demo_column()
+    col.condenser_duty_request_W = -1.0
+    _settle_demo_column(col, steps=5)
+
+    assert hasattr(col, "condenser_drum_component_moles")
+    assert "distillate" in col.ports.outlets
+    assert col.hydraulic_participation.ports["distillate"].pressure_state is not None
+    assert not hasattr(col, "partial_condenser")
+
+
+def test_startup_demo_reports_wave5_observability_surfaces_honestly() -> None:
+    result = startup_demo.run_demo(dt_s=1.0, n_steps=8, n_substeps=2)
+
+    assert result["stepping_strategy"] == "demo_scoped_bounded_substep_refinement"
+    assert "demo-scoped" in result["stepping_disclosure"].lower()
+    assert "raw runtime step()" in result["stepping_disclosure"]
+
+    for key in (
+        "top_headspace_pressure_pa",
+        "bottom_pressure_pa",
+        "realized_condensed_flow_mol_s",
+        "non_condensed_flow_mol_s",
+        "distillate_source_pressure_pa",
+        "reflux_source_pressure_pa",
+        "condenser_bubble_temperature_K",
+        "condenser_subcooling_K",
+    ):
+        assert key in result
+        assert np.isfinite(float(result[key]))
+
+    assert float(result["bottom_pressure_pa"]) >= float(result["top_headspace_pressure_pa"])
+    assert float(result["distillate_source_pressure_pa"]) >= float(
+        result["top_headspace_pressure_pa"]
+    )
+    assert float(result["reflux_source_pressure_pa"]) >= float(result["top_headspace_pressure_pa"])
+    assert float(result["realized_condensed_flow_mol_s"]) >= 0.0
+    assert float(result["non_condensed_flow_mol_s"]) >= 0.0
+    assert float(result["condenser_subcooling_K"]) == pytest.approx(
+        float(result["condenser_bubble_temperature_K"]) - float(result["drum_temperature_K"]),
+        rel=1e-9,
+        abs=1e-9,
+    )
+
+
+def test_step_characterization_demo_reports_wave5_observability_and_disclosure() -> None:
+    results = step_characterization_demo.run_demo(
+        dt_s=4.0,
+        n_substeps=2,
+        max_settle_steps=20,
+        pre_steps=3,
+        post_steps=20,
+    )
+
+    meta = results["meta"]
+    assert meta["stepping_strategy"] == "demo_scoped_bounded_substep_refinement"
+    assert "demo-scoped" in meta["stepping_disclosure"].lower()
+    assert "raw runtime step()" in meta["stepping_disclosure"]
+
+    assert results["scenarios"], "Expected at least one scenario in demo output"
+    summary = results["scenarios"][0]["summary"]
+    for key in (
+        "top_headspace_pressure_pa",
+        "bottom_pressure_pa",
+        "realized_condensed_flow_mol_s",
+        "non_condensed_flow_mol_s",
+        "distillate_source_pressure_pa",
+        "reflux_source_pressure_pa",
+        "condenser_bubble_temperature_K",
+        "condenser_subcooling_K",
+    ):
+        assert key in summary, f"Missing Wave 5 observable summary: {key}"

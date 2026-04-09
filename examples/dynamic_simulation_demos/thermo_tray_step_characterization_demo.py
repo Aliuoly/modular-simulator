@@ -21,6 +21,7 @@ from typing import Any, Callable, cast
 import numpy as np
 
 from modular_simulation.measurables.process_model import ProcessModel
+import modular_simulation.thermodynamics.property_package as pp
 from modular_simulation.thermodynamics.stream import StreamData
 from modular_simulation.unit_processes.separation import ThermoTrayDistillationColumn
 
@@ -35,6 +36,25 @@ BASELINE_REBOILER_W = 100000.0
 BASELINE_REFLUX = 1.5
 BASELINE_DISTILLATE = 0.8
 BASELINE_BOTTOMS = 1.1
+
+
+def _build_demo_property_package() -> pp.PengRobinsonPackage:
+    species_ids = tuple(pp._DEFAULT_PR_SPECIES_CAS[int(index)] for index in SPECIES_SELECTOR)
+    return pp.PengRobinsonPackage(species_ids=species_ids)
+
+
+def _condenser_bubble_temperature_k(col: ThermoTrayDistillationColumn) -> float:
+    package = _build_demo_property_package()
+    try:
+        state = package._flasher.flash(
+            P=float(col.headspace_pressure_pa),
+            VF=0.0,
+            zs=list(np.asarray(col.distillate_composition, dtype=np.float64)),
+        )
+        value = float(state.T)
+        return value if math.isfinite(value) else math.nan
+    except Exception:
+        return math.nan
 
 
 def _attach(model: ProcessModel) -> None:
@@ -206,6 +226,16 @@ def _output_extractors(
         "kettle_total_mol": lambda m: _total(m.reboiler_kettle_component_moles),
         "top_tray_liquid_flow_mol_s": lambda m: _safe_float(m.tray_liquid_flow[top]),
         "top_tray_vapor_flow_mol_s": lambda m: _safe_float(m.tray_vapor_flow[top]),
+        "top_headspace_pressure_pa": lambda m: _safe_float(m.headspace_pressure_pa),
+        "bottom_pressure_pa": lambda m: _safe_float(m.bottom_pressure_pa),
+        "realized_condensed_flow_mol_s": lambda m: _safe_float(m.realized_condensed_flow),
+        "non_condensed_flow_mol_s": lambda m: _safe_float(m.non_condensed_flow),
+        "distillate_source_pressure_pa": lambda m: _safe_float(m.distillate_source_pressure_pa),
+        "reflux_source_pressure_pa": lambda m: _safe_float(m.reflux_source_pressure_pa),
+        "condenser_bubble_temperature_K": _condenser_bubble_temperature_k,
+        "condenser_subcooling_K": lambda m: _safe_float(
+            _condenser_bubble_temperature_k(m) - float(m.condenser_drum_temperature)
+        ),
     }
 
 
@@ -522,6 +552,7 @@ def run_demo(
             "pre_steps": pre_steps,
             "post_steps": post_steps,
             "post_horizon_s": post_steps * dt_s,
+            "stepping_strategy": "demo_scoped_bounded_substep_refinement",
             "baseline": {
                 "feed_flow_mol_s": BASELINE_FEED_FLOW,
                 "feed_temperature_K": BASELINE_FEED_TEMPERATURE,
@@ -537,6 +568,11 @@ def run_demo(
                 "Approximate characterization on a tuned multicomponent operating point. "
                 "The rollout uses bounded substeps and state clipping to keep the step test in "
                 "the physically relevant envelope while still exercising the real tray equations."
+            ),
+            "stepping_disclosure": (
+                "This demo uses a local bounded-substep refinement harness with stabilization "
+                "clipping to advance runtime thermo-tray equations. It is a demo-scoped numerical "
+                "aid and should not be read as raw runtime step() output or a separate physics model."
             ),
         },
         "scenarios": scenarios,
@@ -558,6 +594,8 @@ def _print_summary(results: dict[str, Any]) -> None:
     print(f"Settle time:       {meta['settle_time_s']:.1f} s")
     print(f"Post-step horizon: {meta['post_horizon_s']:.1f} s")
     print(f"Note:              {meta['note']}")
+    print(f"Stepping:          {meta['stepping_strategy']}")
+    print(f"Disclosure:        {meta['stepping_disclosure']}")
 
     for scenario in results["scenarios"]:
         print("-" * 88)
@@ -663,6 +701,13 @@ def _plot_results(results: dict[str, Any], output_dir: pathlib.Path) -> list[str
         "kettle_temperature_K",
         "drum_total_mol",
         "kettle_total_mol",
+        "top_headspace_pressure_pa",
+        "bottom_pressure_pa",
+        "realized_condensed_flow_mol_s",
+        "non_condensed_flow_mol_s",
+        "distillate_source_pressure_pa",
+        "reflux_source_pressure_pa",
+        "condenser_subcooling_K",
     ]
     fig2, axes2 = plt.subplots(
         len(key_outputs),

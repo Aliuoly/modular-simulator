@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from types import MappingProxyType
 
+import numpy as np
+
 import pytest
 
 from modular_simulation.connection.hydraulics.hydraulic_compile import HydraulicCompileLifecycle
@@ -21,7 +23,10 @@ from modular_simulation.connection.runtime.connection_layer import TransportAndM
 from modular_simulation.connection.topology.unit_process_wiring import create_subsystem_for_unit
 from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
 from modular_simulation.thermodynamics.stream import StreamData
-from modular_simulation.unit_processes import StagewiseDistillationColumn
+from modular_simulation.unit_processes import (
+    StagewiseDistillationColumn,
+    ThermoTrayDistillationColumn,
+)
 
 
 def _linear_equation(
@@ -546,6 +551,115 @@ def test_observability_snapshot_process_state_values_numerically_match_runtime_s
         assert process_state_values[f"stage_col/feed_2/mole_fraction/{cas_id}"] == pytest.approx(
             float(feed_matrix[1, idx])
         )
+
+
+def test_observability_snapshot_process_state_values_match_runtime_thermo_tray_state() -> None:
+    context = SimulationRuntimeContext.create(species_names=["n-hexane", "n-heptane", "n-octane"])
+
+    column = ThermoTrayDistillationColumn(
+        n_species=3,
+        species_selector=np.asarray((3.0, 4.0, 5.0), dtype=np.float64),
+        n_trays=6,
+        feed_tray_indices=(3,),
+        p_top_pa=150000.0,
+        delta_p_tray_pa=500.0,
+    )
+    subsystem = create_subsystem_for_unit(
+        unit=column,
+        unit_id="thermo_col",
+        dt=0.1,
+        runtime_context=context,
+    )
+    column.attach_system(type("_S", (), {"solver_options": {}})())
+    column.apply_inlet(
+        "feed_1",
+        StreamData(
+            temperature=385.0,
+            pressure=150000.0,
+            mole_fractions=(1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0),
+            molar_flow_rate=2.0,
+        ),
+    )
+    column.condenser_duty_request_W = -100000.0
+    column.reboiler_duty_request_W = 100000.0
+    column.reflux_withdrawal_flow = 1.5
+    column.distillate_withdrawal_flow = 0.8
+    column.bottoms_withdrawal_flow = 1.1
+
+    runtime = ConnectionRuntimeOrchestrator(
+        hydraulic_solve_step=(
+            lambda *, network, macro_step_time_s: network.compiled.hydraulic.solve()  # type: ignore[union-attr]
+        ),
+        transport_and_mixing_step=(
+            lambda *, network, hydraulic_result, macro_step_time_s: TransportAndMixingUpdate(
+                transport_results={}
+            )
+        ),
+        boundary_propagation_step=(
+            lambda *, network, hydraulic_result, transport_and_mixing_update, macro_step_time_s: {}
+        ),
+        runtime_context=context,
+    )
+    network = ConnectionNetwork(
+        compile_lifecycle=HydraulicCompileLifecycle(),
+        hydraulic_system_builder=lambda topology: _valid_system(),
+        runtime_orchestrator=runtime,
+    )
+    network.add_process(
+        "thermo_col",
+        inlet_ports=subsystem.descriptor.inlet_ports,
+        outlet_ports=subsystem.descriptor.outlet_ports,
+    )
+    network.add_boundary_source("feed")
+    network.add_boundary_sink("dist")
+    network.add_boundary_sink("bot")
+    _ = network.connect("feed", "thermo_col.feed_1")
+    _ = network.connect("thermo_col.distillate", "dist")
+    _ = network.connect("thermo_col.bottoms", "bot")
+    _ = network.compile()
+
+    orchestrator = ConnectedPlantOrchestrator(
+        subsystems=(subsystem,),
+        network=network,
+        runtime_orchestrator=runtime,
+        runtime_context=context,
+    )
+    _ = orchestrator.step(macro_step_time_s=0.2)
+
+    process_state_values = network.get_observability_snapshot()["observables"][
+        "process_state_values"
+    ]
+    assert process_state_values["thermo_col/top_pressure_pa"] == pytest.approx(
+        column.headspace_pressure_pa
+    )
+    assert process_state_values["thermo_col/headspace_pressure_pa"] == pytest.approx(
+        column.headspace_pressure_pa
+    )
+    assert process_state_values["thermo_col/bottom_pressure_pa"] == pytest.approx(
+        column.bottom_pressure_pa
+    )
+    assert process_state_values["thermo_col/realized_condensed_flow_mol_s"] == pytest.approx(
+        column.realized_condensed_flow
+    )
+    assert process_state_values["thermo_col/non_condensed_flow_mol_s"] == pytest.approx(
+        column.non_condensed_flow
+    )
+    assert process_state_values["thermo_col/distillate_source_pressure_pa"] == pytest.approx(
+        column.distillate_source_pressure_pa
+    )
+    assert process_state_values["thermo_col/reflux_source_pressure_pa"] == pytest.approx(
+        column.reflux_source_pressure_pa
+    )
+    assert process_state_values["thermo_col/condenser_drum_temperature_K"] == pytest.approx(
+        column.condenser_drum_temperature
+    )
+    assert process_state_values["thermo_col/condenser_bubble_temperature_K"] >= 0.0
+    assert process_state_values["thermo_col/condenser_subcooling_K"] == pytest.approx(
+        process_state_values["thermo_col/condenser_bubble_temperature_K"]
+        - process_state_values["thermo_col/condenser_drum_temperature_K"],
+        rel=1e-9,
+        abs=1e-9,
+    )
 
 
 def test_observability_snapshot_is_distinct_from_save_runtime_snapshot() -> None:

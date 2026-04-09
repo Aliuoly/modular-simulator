@@ -15,12 +15,32 @@ from typing import Any, cast
 import numpy as np
 
 from modular_simulation.measurables.process_model import ProcessModel
+import modular_simulation.thermodynamics.property_package as pp
 from modular_simulation.thermodynamics.stream import StreamData
 from modular_simulation.unit_processes.separation import ThermoTrayDistillationColumn
 
 SPECIES_NAMES = ("n-hexane", "n-heptane", "n-octane")
 SPECIES_SELECTOR = np.asarray((3.0, 4.0, 5.0), dtype=np.float64)
 FEED_COMPOSITION = (1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0)
+
+
+def _build_demo_property_package() -> pp.PengRobinsonPackage:
+    species_ids = tuple(pp._DEFAULT_PR_SPECIES_CAS[int(index)] for index in SPECIES_SELECTOR)
+    return pp.PengRobinsonPackage(species_ids=species_ids)
+
+
+def _condenser_bubble_temperature_k(col: ThermoTrayDistillationColumn) -> float:
+    package = _build_demo_property_package()
+    try:
+        state = package._flasher.flash(
+            P=float(col.headspace_pressure_pa),
+            VF=0.0,
+            zs=list(np.asarray(col.distillate_composition, dtype=np.float64)),
+        )
+        value = float(state.T)
+        return value if np.isfinite(value) else float("nan")
+    except Exception:
+        return float("nan")
 
 
 def _attach(model: ProcessModel) -> None:
@@ -156,11 +176,20 @@ def run_demo(*, dt_s: float = 1.0, n_steps: int = 240, n_substeps: int = 3) -> d
         and drum_total > 10.0
         and kettle_total > 10.0
     )
+    bubble_temperature_k = _condenser_bubble_temperature_k(col)
+    condenser_subcooling_k = bubble_temperature_k - float(col.condenser_drum_temperature)
 
     result = {
         "model_role": "backend_only_thermo_tray_actual",
         "startup_mode": "numerically_dry",
         "settle_mode": "runtime_equations_reused",
+        "stepping_strategy": "demo_scoped_bounded_substep_refinement",
+        "stepping_disclosure": (
+            "This demo advances the runtime thermo-tray equations through a local bounded-substep "
+            "refinement harness with stabilization clipping. It does not call raw runtime step() "
+            "directly and should be interpreted as a demo-scoped numerical aid, not a separate "
+            "physics model."
+        ),
         "has_tray_temperatures": "yes",
         "has_tray_holdups": "yes",
         "has_condenser_drum": "yes",
@@ -172,6 +201,7 @@ def run_demo(*, dt_s: float = 1.0, n_steps: int = 240, n_substeps: int = 3) -> d
         "feed_tray": 6,
         "steps_taken": n_steps,
         "dt_s": dt_s,
+        "n_substeps": n_substeps,
         "sim_time_s": n_steps * dt_s,
         "physical_separation": "yes" if physical_separation else "no",
         "distillate_x": [float(value) for value in x_d],
@@ -185,6 +215,14 @@ def run_demo(*, dt_s: float = 1.0, n_steps: int = 240, n_substeps: int = 3) -> d
         "distillate_flow_mol_s": float(col.distillate_flow),
         "reflux_flow_mol_s": float(col.reflux_flow),
         "bottoms_flow_mol_s": float(col.bottoms_flow),
+        "top_headspace_pressure_pa": float(col.headspace_pressure_pa),
+        "bottom_pressure_pa": float(col.bottom_pressure_pa),
+        "distillate_source_pressure_pa": float(col.distillate_source_pressure_pa),
+        "reflux_source_pressure_pa": float(col.reflux_source_pressure_pa),
+        "realized_condensed_flow_mol_s": float(col.realized_condensed_flow),
+        "non_condensed_flow_mol_s": float(col.non_condensed_flow),
+        "condenser_bubble_temperature_K": float(bubble_temperature_k),
+        "condenser_subcooling_K": float(condenser_subcooling_k),
         "top_tray_x": [float(value) for value in tray_x[0]],
         "mid_tray_x": [float(value) for value in tray_x[int(col.n_trays) // 2]],
         "bottom_tray_x": [float(value) for value in tray_x[-1]],
@@ -215,6 +253,24 @@ def run_demo(*, dt_s: float = 1.0, n_steps: int = 240, n_substeps: int = 3) -> d
         f"B={result['bottoms_flow_mol_s']:.3f}"
     )
     print(
+        "Pressure observables:     "
+        f"P_head={result['top_headspace_pressure_pa']:.1f} Pa, "
+        f"P_bottom={result['bottom_pressure_pa']:.1f} Pa, "
+        f"P_Dsrc={result['distillate_source_pressure_pa']:.1f} Pa, "
+        f"P_Rsrc={result['reflux_source_pressure_pa']:.1f} Pa"
+    )
+    print(
+        "Condenser split (mol/s):  "
+        f"V_cond={result['realized_condensed_flow_mol_s']:.3f}, "
+        f"V_noncond={result['non_condensed_flow_mol_s']:.3f}"
+    )
+    print(
+        "Subcooling evidence:      "
+        f"T_bubble={result['condenser_bubble_temperature_K']:.2f} K, "
+        f"T_drum={result['drum_temperature_K']:.2f} K, "
+        f"subcooling={result['condenser_subcooling_K']:.3f} K"
+    )
+    print(
         f"Distillate composition:   {np.array2string(np.asarray(result['distillate_x']), precision=4)}"
     )
     print(
@@ -230,6 +286,8 @@ def run_demo(*, dt_s: float = 1.0, n_steps: int = 240, n_substeps: int = 3) -> d
         f"Bottom tray x:            {np.array2string(np.asarray(result['bottom_tray_x']), precision=4)}"
     )
     print(f"Final settle metric:      {result['settle_metric_final']:.6e}")
+    print(f"Stepping strategy:        {result['stepping_strategy']}")
+    print(f"Stepping disclosure:      {result['stepping_disclosure']}")
 
     return result
 

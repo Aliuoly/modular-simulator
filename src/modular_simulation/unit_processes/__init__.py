@@ -7,6 +7,8 @@ from .separation import (
     Howard1970DistillationColumn,
     StagewiseDistillationColumn,
     ThermoTrayDistillationColumn,
+    ThermoTrayDistillationColumnPartialCondenser,
+    ThermoTrayDistillationColumnTotalCondenser,
 )
 from .storage import HoldingTank
 from .thermal import HeatExchanger, HeaterCooler
@@ -25,5 +27,7 @@ __all__ = [
     "PFR",
     "QualityControlLab",
     "StagewiseDistillationColumn",
+    "ThermoTrayDistillationColumnTotalCondenser",
+    "ThermoTrayDistillationColumnPartialCondenser",
     "ThermoTrayDistillationColumn",
 ]

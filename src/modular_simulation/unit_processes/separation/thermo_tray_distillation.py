@@ -26,6 +26,7 @@ from modular_simulation.utils.typing import ArrayIndex, Seconds
 _MIN_SUM = 1.0e-12
 _MIN_STEP_SECONDS = 1.0e-12
 _G = 9.81
+_R = 8.314462618
 
 
 @lru_cache(maxsize=8)
@@ -95,18 +96,46 @@ def _realized_withdrawal_flow(
     return min(bounded_request, owner_total / bounded_dt_s)
 
 
-class ThermoTrayDistillationColumn(ProcessModel):
+def _pr_bubble_pressure_pa(
+    package: pp.PengRobinsonPackage,
+    *,
+    temperature_k: float,
+    composition: NDArray[np.float64],
+    fallback_pressure_pa: float,
+) -> float:
+    z = tuple(float(v) for v in np.asarray(composition, dtype=np.float64).reshape(-1))
+    try:
+        state = package._flasher.flash(T=round(float(temperature_k), 2), VF=0.0, zs=list(z))
+        p = float(state.P)
+        if np.isfinite(p) and p > 0.0:
+            return p
+    except Exception:
+        pass
+    return max(1.0, float(fallback_pressure_pa))
+
+
+def _liquid_volume_m3(
+    *, total_moles: float, molecular_weight_kg_per_mol: float, liquid_density_kg_m3: float
+) -> float:
+    return (
+        max(0.0, float(total_moles))
+        * max(1.0e-9, float(molecular_weight_kg_per_mol))
+        / max(1.0e-9, float(liquid_density_kg_m3))
+    )
+
+
+class ThermoTrayDistillationColumnTotalCondenser(ProcessModel):
     _OUTLET_MAP: ClassVar[dict[str, PortAttributeMap]] = {
         "distillate": PortAttributeMap(
             flow="distillate_flow",
             temperature="distillate_temperature",
-            pressure="p_top_pa",
+            pressure="distillate_source_pressure_pa",
             composition="distillate_composition",
         ),
         "bottoms": PortAttributeMap(
             flow="bottoms_flow",
             temperature="bottoms_temperature",
-            pressure="p_bottom_pa",
+            pressure="bottom_pressure_pa",
             composition="bottoms_composition",
         ),
     }
@@ -126,6 +155,18 @@ class ThermoTrayDistillationColumn(ProcessModel):
     condenser_drum_temperature: Annotated[
         float,
         M(type=T.DIFFERENTIAL, unit="K", description="condenser drum liquid temperature"),
+    ] = 340.0
+    condenser_headspace_component_moles: Annotated[
+        NDArray[np.float64],
+        M(
+            type=T.DIFFERENTIAL,
+            unit="mol",
+            description="condenser excess-headspace component inventory",
+        ),
+    ] = np.zeros(0, dtype=np.float64)
+    condenser_headspace_temperature: Annotated[
+        float,
+        M(type=T.DIFFERENTIAL, unit="K", description="condenser excess-headspace temperature"),
     ] = 340.0
     reboiler_kettle_component_moles: Annotated[
         NDArray[np.float64],
@@ -184,6 +225,22 @@ class ThermoTrayDistillationColumn(ProcessModel):
         float,
         M(type=T.BOUNDARY, unit="W", description="requested reboiler duty (positive adds heat)"),
     ] = 0.0
+    blanket_gas_component_flow: Annotated[
+        NDArray[np.float64],
+        M(
+            type=T.BOUNDARY,
+            unit="mol/s",
+            description="optional blanket-gas addition rate by species",
+        ),
+    ] = np.zeros(0, dtype=np.float64)
+    headspace_vent_component_flow: Annotated[
+        NDArray[np.float64],
+        M(
+            type=T.BOUNDARY,
+            unit="mol/s",
+            description="optional headspace vent withdrawal rate by species",
+        ),
+    ] = np.zeros(0, dtype=np.float64)
 
     n_species: Annotated[int, M(type=T.CONSTANT, unit="", description="number of species")] = 3
     species_selector: Annotated[
@@ -206,7 +263,19 @@ class ThermoTrayDistillationColumn(ProcessModel):
     ] = 150000.0
     delta_p_tray_pa: Annotated[
         float,
-        M(type=T.CONSTANT, unit="Pa", description="uniform tray pressure increment"),
+        M(
+            type=T.CONSTANT,
+            unit="Pa",
+            description="legacy uniform tray pressure increment alias for the residual term",
+        ),
+    ] = 500.0
+    tray_residual_pressure_drop_pa: Annotated[
+        float,
+        M(
+            type=T.CONSTANT,
+            unit="Pa",
+            description="named residual tray pressure-drop term (GE-TTD-MAT-3b)",
+        ),
     ] = 500.0
     p_bottom_pa: Annotated[
         float,
@@ -253,6 +322,10 @@ class ThermoTrayDistillationColumn(ProcessModel):
         float,
         M(type=T.CONSTANT, unit="J/K", description="heat-capacity denominator epsilon"),
     ] = 1.0e3
+    eps_v: Annotated[
+        float,
+        M(type=T.CONSTANT, unit="m3", description="headspace volume epsilon"),
+    ] = 1.0e-6
     eps_start: Annotated[
         float,
         M(type=T.CONSTANT, unit="mol", description="startup tray epsilon holdup"),
@@ -265,6 +338,38 @@ class ThermoTrayDistillationColumn(ProcessModel):
         float,
         M(type=T.CONSTANT, unit="mol", description="startup kettle epsilon holdup"),
     ] = 5.0
+    eps_headspace: Annotated[
+        float,
+        M(type=T.CONSTANT, unit="mol", description="startup excess-headspace epsilon holdup"),
+    ] = 0.1
+    condenser_shell_volume_m3: Annotated[
+        float,
+        M(
+            type=T.CONSTANT,
+            unit="m3",
+            description="condenser shell volume assigned to drum plus headspace",
+        ),
+    ] = 1.0
+    distillate_nozzle_submergence_m: Annotated[
+        float,
+        M(type=T.CONSTANT, unit="m", description="distillate nozzle hydrostatic submergence"),
+    ] = 0.5
+    reflux_nozzle_submergence_m: Annotated[
+        float,
+        M(type=T.CONSTANT, unit="m", description="reflux nozzle hydrostatic submergence"),
+    ] = 0.5
+    headspace_compressibility: Annotated[
+        float,
+        M(type=T.CONSTANT, unit="", description="headspace excess-gas compressibility factor"),
+    ] = 1.0
+    headspace_temperature_relaxation_1_s: Annotated[
+        float,
+        M(
+            type=T.CONSTANT,
+            unit="1/s",
+            description="first-order headspace temperature relaxation rate",
+        ),
+    ] = 0.5
     dry_guard_drum_threshold_mol: Annotated[
         float,
         M(
@@ -370,10 +475,66 @@ class ThermoTrayDistillationColumn(ProcessModel):
         float,
         M(type=T.ALGEBRAIC, unit="K", description="bottoms temperature"),
     ] = 298.15
+    realized_condensed_flow: Annotated[
+        float,
+        M(type=T.ALGEBRAIC, unit="mol/s", description="realized total-condenser condensation flow"),
+    ] = 0.0
+    non_condensed_flow: Annotated[
+        float,
+        M(type=T.ALGEBRAIC, unit="mol/s", description="non-condensed vapor carryover to headspace"),
+    ] = 0.0
+    headspace_pressure_pa: Annotated[
+        float,
+        M(type=T.ALGEBRAIC, unit="Pa", description="condenser vapor-headspace pressure"),
+    ] = 150000.0
+    distillate_source_pressure_pa: Annotated[
+        float,
+        M(
+            type=T.ALGEBRAIC,
+            unit="Pa",
+            description="distillate liquid source pressure with hydrostatic head",
+        ),
+    ] = 150000.0
+    reflux_source_pressure_pa: Annotated[
+        float,
+        M(
+            type=T.ALGEBRAIC,
+            unit="Pa",
+            description="reflux liquid source pressure with hydrostatic head",
+        ),
+    ] = 150000.0
+    bottom_pressure_pa: Annotated[
+        float,
+        M(
+            type=T.ALGEBRAIC,
+            unit="Pa",
+            description="live bottom pressure from dynamic pressure-drop closure",
+        ),
+    ] = 152000.0
 
     _ports: UnitProcessPorts = UnitProcessPorts(("feed_1",), ("distillate", "bottoms"))
 
+    @staticmethod
+    def _collapsed_headspace_interface_recondensation_flow(
+        *, realized_condensed_flow: float, non_condensed_flow: float, y_top: NDArray[np.float64]
+    ) -> NDArray[np.float64]:
+        del realized_condensed_flow, non_condensed_flow
+        return np.zeros_like(np.asarray(y_top, dtype=np.float64).reshape(-1))
+
     def __init__(self, **data: object) -> None:
+        if "tray_residual_pressure_drop_pa" not in data and "delta_p_tray_pa" in data:
+            data["tray_residual_pressure_drop_pa"] = data["delta_p_tray_pa"]
+        elif "tray_residual_pressure_drop_pa" in data and "delta_p_tray_pa" not in data:
+            data["delta_p_tray_pa"] = data["tray_residual_pressure_drop_pa"]
+        elif (
+            "tray_residual_pressure_drop_pa" in data
+            and "delta_p_tray_pa" in data
+            and float(cast(float, data["tray_residual_pressure_drop_pa"]))
+            != float(cast(float, data["delta_p_tray_pa"]))
+        ):
+            raise ValueError(
+                "tray_residual_pressure_drop_pa and delta_p_tray_pa must match when both are provided."
+            )
         feed_tray_indices_data = data.pop("feed_tray_indices", None)
         n_trays = int(data.get("n_trays", 4))
         if feed_tray_indices_data is None:
@@ -407,7 +568,8 @@ class ThermoTrayDistillationColumn(ProcessModel):
         if not isfinite(self.eps_c) or self.eps_c <= 0.0:
             raise ValueError("eps_c must be finite and positive.")
 
-        self.p_bottom_pa = float(self.p_top_pa + self.n_trays * self.delta_p_tray_pa)
+        self.delta_p_tray_pa = float(self.tray_residual_pressure_drop_pa)
+        self.p_bottom_pa = float(self.p_top_pa + self.n_trays * self.tray_residual_pressure_drop_pa)
 
         if np.asarray(self.species_selector, dtype=np.float64).size == 0:
             self.species_selector = np.arange(self.n_species, dtype=np.float64)
@@ -456,6 +618,18 @@ class ThermoTrayDistillationColumn(ProcessModel):
             expected_size=self.n_feeds * self.n_species,
             default=1.0 / float(self.n_species),
             name="feed_compositions",
+        )
+        self.blanket_gas_component_flow = _coerce_1d(
+            np.asarray(self.blanket_gas_component_flow, dtype=np.float64).reshape(-1),
+            expected_size=self.n_species,
+            default=0.0,
+            name="blanket_gas_component_flow",
+        )
+        self.headspace_vent_component_flow = _coerce_1d(
+            np.asarray(self.headspace_vent_component_flow, dtype=np.float64).reshape(-1),
+            expected_size=self.n_species,
+            default=0.0,
+            name="headspace_vent_component_flow",
         )
         feed_matrix = self.feed_compositions.reshape(self.n_feeds, self.n_species)
         for idx in range(self.n_feeds):
@@ -550,6 +724,16 @@ class ThermoTrayDistillationColumn(ProcessModel):
             default=5.0 / float(self.n_species),
             name="condenser_drum_component_moles",
         )
+        if np.asarray(self.condenser_headspace_component_moles, dtype=np.float64).size == 0:
+            self.condenser_headspace_component_moles = max(
+                float(self.eps_headspace), self.eps_n
+            ) * np.asarray(self.default_composition, dtype=np.float64)
+        self.condenser_headspace_component_moles = _coerce_1d(
+            self.condenser_headspace_component_moles,
+            expected_size=self.n_species,
+            default=max(float(self.eps_headspace), self.eps_n) / float(self.n_species),
+            name="condenser_headspace_component_moles",
+        )
         if np.asarray(self.reboiler_kettle_component_moles, dtype=np.float64).size == 0:
             self.reboiler_kettle_component_moles = 5.0 * np.asarray(
                 self.default_composition, dtype=np.float64
@@ -623,11 +807,11 @@ class ThermoTrayDistillationColumn(ProcessModel):
         ports: dict[str, HydraulicPortSpec] = {
             "distillate": HydraulicPortSpec(
                 role="pressure_state",
-                pressure_state=HydraulicScalarStateRef(state="p_top_pa"),
+                pressure_state=HydraulicScalarStateRef(state="distillate_source_pressure_pa"),
             ),
             "bottoms": HydraulicPortSpec(
                 role="pressure_state",
-                pressure_state=HydraulicScalarStateRef(state="p_bottom_pa"),
+                pressure_state=HydraulicScalarStateRef(state="bottom_pressure_pa"),
             ),
         }
         for feed_index in range(self.n_feeds):
@@ -691,9 +875,11 @@ class ThermoTrayDistillationColumn(ProcessModel):
             )
         )
         if port_name == "bottoms":
-            pressure = float(self.p_bottom_pa)
+            pressure = float(self.bottom_pressure_pa)
+        elif port_name == "distillate":
+            pressure = float(self.distillate_source_pressure_pa)
         else:
-            pressure = float(self.p_top_pa)
+            pressure = float(self.reflux_source_pressure_pa)
         return StreamData(
             temperature=float(getattr(self, port_map.temperature)),
             pressure=pressure,
@@ -739,8 +925,10 @@ class ThermoTrayDistillationColumn(ProcessModel):
         self.tray_component_holdup = tray.reshape(-1)
         self.tray_temperature = np.full(self.n_trays, t0, dtype=np.float64)
         self.condenser_drum_component_moles = max(float(self.eps_drum), self.eps_n) * z0
+        self.condenser_headspace_component_moles = max(float(self.eps_headspace), self.eps_n) * z0
         self.reboiler_kettle_component_moles = max(float(self.eps_kettle), self.eps_n) * z0
         self.condenser_drum_temperature = t0
+        self.condenser_headspace_temperature = t0
         self.reboiler_kettle_temperature = t0
         self._settle_hold_s = 0.0
         self._last_boundary_snapshot = None
@@ -803,66 +991,20 @@ class ThermoTrayDistillationColumn(ProcessModel):
 
     @override
     def step(self, dt: Seconds) -> None:
-        dt_s = max(float(dt), 1.0e-6)
+        dt_s = max(float(dt), _MIN_STEP_SECONDS)
         self.accepted_dt_s = dt_s
-        y = self.differential_view.to_array()
-        u = self.boundary_view.to_array()
-        algebraic = self.calculate_algebraic_values(
-            y=y,
-            u=u,
-            k=self._params.k,
-            y_map=self._params.y_map,
-            u_map=self._params.boundary_map,
-            k_map=self._params.k_map,
-            algebraic_map=self._params.algebraic_map,
-            algebraic_size=self._params.algebraic_size,
-        )
-        dy = self.differential_rhs(
-            t=self.t,
-            y=y,
-            u=u,
-            k=self._params.k,
-            algebraic=algebraic,
-            y_map=self._params.y_map,
-            u_map=self._params.boundary_map,
-            k_map=self._params.k_map,
-            algebraic_map=self._params.algebraic_map,
-        )
-        y = y + dt_s * dy
-        if not np.all(np.isfinite(y)):
-            raise RuntimeError(
-                "ThermoTrayDistillationColumn produced non-finite differential state"
-            )
-        for state_name, index in self._params.y_map.items():
-            if "holdup" in state_name or "moles" in state_name:
-                # GE-TTD-END-2: skip per-component epsilon flooring for drum
-                # states; the shared budget prevents total overdraw.
-                if state_name == "condenser_drum_component_moles":
-                    continue
-                y[index] = np.maximum(y[index], self.eps_n)
-        self.differential_view.update_from_array(y)
-        final_algebraic = self.calculate_algebraic_values(
-            y=y,
-            u=u,
-            k=self._params.k,
-            y_map=self._params.y_map,
-            u_map=self._params.boundary_map,
-            k_map=self._params.k_map,
-            algebraic_map=self._params.algebraic_map,
-            algebraic_size=self._params.algebraic_size,
-        )
-        self.algebraic_view.update_from_array(final_algebraic)
+        boundary_now = self.boundary_view.to_array()
+        super().step(dt_s)
         # GE-TTD-ST-4: reset settle hold when boundary conditions change
         if self._last_boundary_snapshot is not None:
-            if not np.array_equal(u, self._last_boundary_snapshot):
+            if not np.array_equal(boundary_now, self._last_boundary_snapshot):
                 self._settle_hold_s = 0.0
-        self._last_boundary_snapshot = u.copy()
+        self._last_boundary_snapshot = boundary_now.copy()
         settle_now = self.compute_settle_metric()
         if settle_now <= float(self.eps_settle):
             self._settle_hold_s = float(self._settle_hold_s + dt_s)
         else:
             self._settle_hold_s = 0.0
-        self.t = float(self.t + dt_s)
 
     @property
     def settle_metric(self) -> float:
@@ -902,12 +1044,17 @@ class ThermoTrayDistillationColumn(ProcessModel):
         drum_moles = np.asarray(
             y[y_map["condenser_drum_component_moles"]], dtype=np.float64
         ).reshape(-1)
+        drum_temp = float(y[y_map["condenser_drum_temperature"]])
+        headspace_moles = np.asarray(
+            y[y_map["condenser_headspace_component_moles"]], dtype=np.float64
+        ).reshape(-1)
+        headspace_temp = float(y[y_map["condenser_headspace_temperature"]])
         kettle_moles = np.asarray(
             y[y_map["reboiler_kettle_component_moles"]], dtype=np.float64
         ).reshape(-1)
 
-        p_top = float(k[k_map["p_top_pa"]])
-        delta_p = float(k[k_map["delta_p_tray_pa"]])
+        p_top_anchor = float(k[k_map["p_top_pa"]])
+        delta_p = float(k[k_map["tray_residual_pressure_drop_pa"]])
         area = max(1.0e-6, float(k[k_map["tray_active_area_m2"]]))
         weir_height = float(k[k_map["tray_weir_height_m"]])
         liquid_coeff = float(k[k_map["liquid_flow_coeff"]])
@@ -917,16 +1064,33 @@ class ThermoTrayDistillationColumn(ProcessModel):
         eps_sm = float(k[k_map["eps_sm"]])
         k_min = float(k[k_map["kettle_min_holdup_mol"]])
         k_coeff = float(k[k_map["kettle_boilup_coeff"]])
+        shell_volume = max(1.0e-6, float(k[k_map["condenser_shell_volume_m3"]]))
+        distillate_sub = max(0.0, float(k[k_map["distillate_nozzle_submergence_m"]]))
+        reflux_sub = max(0.0, float(k[k_map["reflux_nozzle_submergence_m"]]))
+        z_h = max(0.2, float(k[k_map["headspace_compressibility"]]))
+        eps_v = max(1.0e-12, float(k[k_map["eps_v"]]))
         eps_h = 1.0e-6
         eps_rho = 1.0e-6
 
         feed_flows = np.asarray(u[u_map["feed_flows"]], dtype=np.float64).reshape(n_feeds)
         feed_temps = np.asarray(u[u_map["feed_temperatures"]], dtype=np.float64).reshape(n_feeds)
+        feed_pressures = np.asarray(u[u_map["feed_pressures"]], dtype=np.float64).reshape(n_feeds)
         feed_comps = np.asarray(u[u_map["feed_compositions"]], dtype=np.float64).reshape(
             n_feeds, n_species
         )
         feed_trays = np.asarray(k[k_map["feed_tray_indices"]], dtype=np.float64).reshape(n_feeds)
+        blanket_flow = np.clip(
+            np.asarray(u[u_map["blanket_gas_component_flow"]], dtype=np.float64).reshape(-1),
+            0.0,
+            None,
+        )
+        vent_flow = np.clip(
+            np.asarray(u[u_map["headspace_vent_component_flow"]], dtype=np.float64).reshape(-1),
+            0.0,
+            None,
+        )
 
+        q_cond = float(u[u_map["condenser_duty_request_W"]])
         q_reb = float(u[u_map["reboiler_duty_request_W"]])
         distillate_request = max(0.0, float(u[u_map["distillate_withdrawal_flow"]]))
         reflux_request = max(0.0, float(u[u_map["reflux_withdrawal_flow"]]))
@@ -934,8 +1098,7 @@ class ThermoTrayDistillationColumn(ProcessModel):
         accepted_dt = max(float(u[u_map["accepted_dt_s"]]), _MIN_STEP_SECONDS)
 
         tray_pressures = np.asarray(
-            [p_top + j * delta_p for j in range(n_trays)],
-            dtype=np.float64,
+            [p_top_anchor + j * delta_p for j in range(n_trays)], dtype=np.float64
         )
         x = np.vstack([_safe_owner_fraction(row, n_species=n_species) for row in tray_holdup])
 
@@ -969,7 +1132,93 @@ class ThermoTrayDistillationColumn(ProcessModel):
             liq_flow[j] = liquid_coeff * dc.smooth_plus(h_liq - weir_height, eps_sp) ** 1.5
 
         z_kettle = _safe_owner_fraction(kettle_moles, n_species=n_species)
-        p_kettle = p_top + n_trays * delta_p
+        z_drum = _safe_owner_fraction_zeros(drum_moles, n_species=n_species)
+        z_drum_mw = _safe_owner_fraction(drum_moles, n_species=n_species)
+
+        h_liq_drum_anchor, _cp_liq_drum_anchor, rho_liq_drum = dc.thermo_pr_liq(
+            package,
+            temperature_k=float(drum_temp),
+            pressure_pa=float(p_top_anchor),
+            composition=z_drum,
+        )
+        mw_drum = float(package.molecular_weight(tuple(float(v) for v in z_drum_mw))) / 1000.0
+        drum_total_moles = float(np.sum(np.clip(drum_moles, 0.0, None)))
+        drum_liquid_volume = (
+            0.0
+            if drum_total_moles <= _MIN_SUM
+            else _liquid_volume_m3(
+                total_moles=drum_total_moles,
+                molecular_weight_kg_per_mol=float(
+                    package.molecular_weight(tuple(float(v) for v in z_drum))
+                )
+                / 1000.0,
+                liquid_density_kg_m3=rho_liq_drum,
+            )
+        )
+        headspace_volume = max(eps_v, shell_volume - drum_liquid_volume)
+        n_x = float(np.sum(np.clip(headspace_moles, 0.0, None)))
+        p_x = n_x * z_h * _R * max(1.0, headspace_temp) / headspace_volume
+        p_bubble_raw = _pr_bubble_pressure_pa(
+            package,
+            temperature_k=drum_temp,
+            composition=z_drum,
+            fallback_pressure_pa=p_top_anchor,
+        )
+        p_bubble = max(5.0e4, min(5.0e6, p_bubble_raw))
+        p_head = max(1.0, p_bubble + p_x)
+
+        # GE-TTD-MAT-3a: live top pressure anchor.
+        p_top_live = p_head
+
+        # GE-TTD-MAT-3b first-pass decomposition at initial live tray pressures.
+        tray_pressure_drop = dry_dp + rho_liq * _G * tray_height + delta_p
+        p_bottom_live = p_top_live + float(np.sum(tray_pressure_drop))
+
+        # GE-TTD-MAT-3c: interpolate tray pressures between live ends.
+        tray_span = max(n_trays - 1, 1)
+        tray_pressures = np.asarray(
+            [p_top_live + (j / tray_span) * (p_bottom_live - p_top_live) for j in range(n_trays)],
+            dtype=np.float64,
+        )
+
+        # Re-evaluate tray thermo closures at final live tray pressures.
+        for j in range(n_trays):
+            thermo = dc.thermo_pr(
+                package,
+                temperature_k=float(tray_temperature[j]),
+                pressure_pa=float(tray_pressures[j]),
+                composition=x[j],
+            )
+            y_vap[j] = dc.normalized_composition(
+                thermo.k_values * x[j],
+                n_species=n_species,
+            )
+            rho_liq[j] = max(eps_rho, float(thermo.rho_liq_kg_m3))
+            rho_vap[j] = max(eps_rho, float(thermo.rho_vap_kg_m3))
+
+        for j in range(n_trays):
+            v_liq = stage_total[j] * mw_liq[j] / max(rho_liq[j], eps_rho)
+            h_liq = v_liq / area
+            tray_height[j] = h_liq
+            liq_flow[j] = liquid_coeff * dc.smooth_plus(h_liq - weir_height, eps_sp) ** 1.5
+
+        tray_pressure_drop = dry_dp + rho_liq * _G * tray_height + delta_p
+        p_bottom_live = p_top_live + float(np.sum(tray_pressure_drop))
+        tray_pressures = np.asarray(
+            [p_top_live + (j / tray_span) * (p_bottom_live - p_top_live) for j in range(n_trays)],
+            dtype=np.float64,
+        )
+
+        _h_liq_drum_live_for_density, _cp_liq_drum_live, rho_liq_drum_live = dc.thermo_pr_liq(
+            package,
+            temperature_k=float(drum_temp),
+            pressure_pa=float(p_head),
+            composition=z_drum,
+        )
+        distillate_source_pressure = p_head + rho_liq_drum_live * _G * distillate_sub
+        reflux_source_pressure = p_head + rho_liq_drum_live * _G * reflux_sub
+
+        p_kettle = p_bottom_live
         kettle_flash = dc.feed_flash_pr(
             package,
             temperature_k=float(y[y_map["reboiler_kettle_temperature"]]),
@@ -989,7 +1238,7 @@ class ThermoTrayDistillationColumn(ProcessModel):
                 dc.feed_flash_pr(
                     package,
                     temperature_k=float(feed_temps[m]),
-                    pressure_pa=float(max(1.0, u[u_map["feed_pressures"]][m])),
+                    pressure_pa=float(max(1.0, feed_pressures[m])),
                     composition=feed_comps[m],
                 )
             )
@@ -1001,19 +1250,39 @@ class ThermoTrayDistillationColumn(ProcessModel):
                 f = max(0.0, float(feed_flows[m]))
                 vapor_feed += float(feed_flashes[m].vapor_fraction) * f
             dp_avail = dc.smooth_plus(
-                delta_p - rho_liq[j] * _G * tray_height[j] - dry_dp,
-                eps_sp,
+                tray_pressure_drop[j] - rho_liq[j] * _G * tray_height[j] - dry_dp, eps_sp
             )
             v_cap = vapor_coeff * np.sqrt(dp_avail / max(rho_vap[j], eps_rho))
             vap_flow[j] = dc.smooth_min(v_cap, vapor_supply + vapor_feed, eps_sm)
             vapor_supply = vap_flow[j]
 
-        z_drum = _safe_owner_fraction_zeros(drum_moles, n_species=n_species)
         z_bottom = _safe_owner_fraction_zeros(kettle_moles, n_species=n_species)
+
+        v_top = max(0.0, float(vap_flow[0]))
+        h_vap_top = float(
+            dc.thermo_pr(
+                package,
+                temperature_k=float(tray_temperature[0]),
+                pressure_pa=float(tray_pressures[0]),
+                composition=x[0],
+            ).h_vap_j_per_mol
+        )
+        h_liq_drum_live = float(
+            dc.thermo_pr_liq(
+                package,
+                temperature_k=float(drum_temp),
+                pressure_pa=float(p_head),
+                composition=z_drum,
+            )[0]
+        )
+        q_cond_avail = max(0.0, -q_cond)
+        v_cond_therm = q_cond_avail / max(h_vap_top - h_liq_drum_live, eps_h)
+        realized_condensed = min(v_top, max(0.0, v_cond_therm))
+        non_condensed = max(0.0, v_top - realized_condensed)
+
         # GE-TTD-END-2: shared condenser-drum realizability budget
         eps_n = float(k[k_map["eps_n"]])
-        drum_total = float(np.sum(np.clip(drum_moles, 0.0, None)))
-        D_R_budget = max(0.0, drum_total - eps_n) / accepted_dt
+        D_R_budget = max(0.0, drum_total_moles - eps_n) / accepted_dt
         if D_R_budget <= 0.0:
             distillate_flow = 0.0
             reflux_flow_val = 0.0
@@ -1047,6 +1316,12 @@ class ThermoTrayDistillationColumn(ProcessModel):
         result[algebraic_map["bottoms_temperature"]] = float(
             y[y_map["reboiler_kettle_temperature"]]
         )
+        result[algebraic_map["realized_condensed_flow"]] = realized_condensed
+        result[algebraic_map["non_condensed_flow"]] = non_condensed
+        result[algebraic_map["headspace_pressure_pa"]] = p_head
+        result[algebraic_map["distillate_source_pressure_pa"]] = distillate_source_pressure
+        result[algebraic_map["reflux_source_pressure_pa"]] = reflux_source_pressure
+        result[algebraic_map["bottom_pressure_pa"]] = p_bottom_live
         return result
 
     @staticmethod
@@ -1082,6 +1357,10 @@ class ThermoTrayDistillationColumn(ProcessModel):
             y[y_map["condenser_drum_component_moles"]], dtype=np.float64
         ).reshape(-1)
         drum_temp = float(y[y_map["condenser_drum_temperature"]])
+        headspace_moles = np.asarray(
+            y[y_map["condenser_headspace_component_moles"]], dtype=np.float64
+        ).reshape(-1)
+        headspace_temp = float(y[y_map["condenser_headspace_temperature"]])
         kettle_moles = np.asarray(
             y[y_map["reboiler_kettle_component_moles"]], dtype=np.float64
         ).reshape(-1)
@@ -1092,6 +1371,16 @@ class ThermoTrayDistillationColumn(ProcessModel):
         feed_pressures = np.asarray(u[u_map["feed_pressures"]], dtype=np.float64).reshape(n_feeds)
         feed_comps = np.asarray(u[u_map["feed_compositions"]], dtype=np.float64).reshape(
             n_feeds, n_species
+        )
+        blanket_flow = np.clip(
+            np.asarray(u[u_map["blanket_gas_component_flow"]], dtype=np.float64).reshape(-1),
+            0.0,
+            None,
+        )
+        vent_flow = np.clip(
+            np.asarray(u[u_map["headspace_vent_component_flow"]], dtype=np.float64).reshape(-1),
+            0.0,
+            None,
         )
         feed_trays = np.asarray(k[k_map["feed_tray_indices"]], dtype=np.float64).reshape(n_feeds)
 
@@ -1105,8 +1394,12 @@ class ThermoTrayDistillationColumn(ProcessModel):
         eps_sm = float(k[k_map["eps_sm"]])
         k_min = float(k[k_map["kettle_min_holdup_mol"]])
         k_coeff = float(k[k_map["kettle_boilup_coeff"]])
-        p_top = float(k[k_map["p_top_pa"]])
-        delta_p = float(k[k_map["delta_p_tray_pa"]])
+        p_top_anchor = float(k[k_map["p_top_pa"]])
+        delta_p = float(k[k_map["tray_residual_pressure_drop_pa"]])
+        shell_volume = max(1.0e-6, float(k[k_map["condenser_shell_volume_m3"]]))
+        z_h = max(0.2, float(k[k_map["headspace_compressibility"]]))
+        eps_v = max(1.0e-12, float(k[k_map["eps_v"]]))
+        tau_head = max(0.0, float(k[k_map["headspace_temperature_relaxation_1_s"]]))
 
         tray_pressures = np.asarray(
             algebraic[algebraic_map["tray_pressures_pa"]], dtype=np.float64
@@ -1127,8 +1420,14 @@ class ThermoTrayDistillationColumn(ProcessModel):
             n_trays
         )
         distillate_flow = float(algebraic[algebraic_map["distillate_flow"]])
+        reflux_flow = float(algebraic[algebraic_map["reflux_flow"]])
         bottoms_flow = float(algebraic[algebraic_map["bottoms_flow"]])
+        realized_condensed = float(algebraic[algebraic_map["realized_condensed_flow"]])
+        non_condensed = float(algebraic[algebraic_map["non_condensed_flow"]])
+        p_head = max(1.0, float(algebraic[algebraic_map["headspace_pressure_pa"]]))
+        p_bottom_live = max(p_head, float(algebraic[algebraic_map["bottom_pressure_pa"]]))
 
+        z_drum_mw = _safe_owner_fraction(drum_moles, n_species=n_species)
         z_drum = _safe_owner_fraction(drum_moles, n_species=n_species)
         z_kettle = _safe_owner_fraction(kettle_moles, n_species=n_species)
 
@@ -1154,7 +1453,7 @@ class ThermoTrayDistillationColumn(ProcessModel):
                 )
             )
 
-        p_kettle = p_top + n_trays * delta_p
+        p_kettle = p_bottom_live
         kettle_flash = dc.feed_flash_pr(
             package,
             temperature_k=float(kettle_temp),
@@ -1170,8 +1469,6 @@ class ThermoTrayDistillationColumn(ProcessModel):
         v_therm_b = dc.smooth_plus(q_reb, eps_sp) / latent_b
         v_cap_b = k_coeff * np.sqrt(dc.smooth_plus(float(np.sum(kettle_moles)) - k_min, eps_sp))
         boilup_flow = dc.smooth_min(v_therm_b, v_cap_b, eps_sm)
-        # GE-TTD-END-2a: reflux reads from explicit boundary via algebraic state
-        reflux_flow = float(algebraic[algebraic_map["reflux_flow"]])
 
         d_tray = np.zeros_like(tray_holdup)
         d_t_tray = np.zeros(n_trays, dtype=np.float64)
@@ -1208,7 +1505,10 @@ class ThermoTrayDistillationColumn(ProcessModel):
             h_liq_in = (
                 float(
                     dc.thermo_pr_liq(
-                        package, temperature_k=drum_temp, pressure_pa=p_top, composition=z_drum
+                        package,
+                        temperature_k=drum_temp,
+                        pressure_pa=p_head,
+                        composition=z_drum,
                     )[0]
                 )
                 if j == 0
@@ -1224,13 +1524,24 @@ class ThermoTrayDistillationColumn(ProcessModel):
                 hdot_in - hdot_out + tray_q[j] - h_liq_j * float(np.sum(d_tray[j]))
             ) / max(n_liq * cp_j, eps_c)
 
-        d_drum = max(0.0, vap_flow[0]) * y_vap[0] - distillate_flow * z_drum - reflux_flow * z_drum
+        interface_recondensation = ThermoTrayDistillationColumnTotalCondenser._collapsed_headspace_interface_recondensation_flow(
+            realized_condensed_flow=realized_condensed,
+            non_condensed_flow=non_condensed,
+            y_top=y_vap[0],
+        )
+        d_drum = (
+            realized_condensed * y_vap[0]
+            - distillate_flow * z_drum
+            - reflux_flow * z_drum
+            + interface_recondensation
+        )
+        d_headspace = non_condensed * y_vap[0] + blanket_flow - vent_flow - interface_recondensation
         d_kettle = max(0.0, liq_flow[-1]) * x[-1] - bottoms_flow * z_kettle - boilup_flow * y_kettle
 
         h_liq_drum, cp_drum, _ = dc.thermo_pr_liq(
             package,
             temperature_k=float(drum_temp),
-            pressure_pa=float(p_top),
+            pressure_pa=float(p_head),
             composition=z_drum,
         )
         h_vap_1 = float(tray_thermo[0].h_vap_j_per_mol)
@@ -1242,12 +1553,58 @@ class ThermoTrayDistillationColumn(ProcessModel):
             d_t_drum = 0.0
         else:
             d_t_drum = (
-                max(0.0, vap_flow[0]) * h_vap_1
+                realized_condensed * h_vap_1
                 - distillate_flow * h_liq_drum
                 - reflux_flow * h_liq_drum
                 + q_cond
                 - h_liq_drum * float(np.sum(d_drum))
             ) / max(n_drum * cp_drum, eps_c)
+
+        n_x = float(np.sum(np.clip(headspace_moles, 0.0, None)))
+        mw_head = (
+            float(
+                package.molecular_weight(
+                    tuple(
+                        float(v) for v in _safe_owner_fraction(headspace_moles, n_species=n_species)
+                    )
+                )
+            )
+            / 1000.0
+        )
+        rho_liq_drum = max(
+            1.0,
+            float(
+                dc.thermo_pr_liq(
+                    package,
+                    temperature_k=float(drum_temp),
+                    pressure_pa=float(max(1.0, p_top_anchor)),
+                    composition=z_drum,
+                )[2]
+            ),
+        )
+        drum_liq_volume = 0.0
+        if n_drum_raw > _MIN_SUM:
+            drum_liq_volume = _liquid_volume_m3(
+                total_moles=n_drum_raw,
+                molecular_weight_kg_per_mol=float(
+                    package.molecular_weight(tuple(float(v) for v in z_drum_mw))
+                )
+                / 1000.0,
+                liquid_density_kg_m3=rho_liq_drum,
+            )
+        headspace_volume = max(eps_v, shell_volume - drum_liq_volume)
+        cp_head = max(20.0, 35.0 + 8.0 * mw_head * 1000.0)
+        h_gas = cp_head * max(1.0, headspace_temp)
+        d_t_head = 0.0
+        if n_x > eps_n:
+            h_in = non_condensed * h_vap_1 + float(np.sum(blanket_flow)) * cp_head * max(
+                1.0, drum_temp
+            )
+            h_out = float(np.sum(vent_flow)) * h_gas
+            d_t_head = (h_in - h_out - h_gas * float(np.sum(d_headspace))) / max(
+                n_x * cp_head, eps_c
+            )
+        d_t_head += tau_head * (drum_temp - headspace_temp)
 
         h_liq_n = float(tray_thermo[-1].h_liq_j_per_mol)
         n_kettle = max(eps_n, float(np.sum(np.clip(kettle_moles, 0.0, None))))
@@ -1264,9 +1621,61 @@ class ThermoTrayDistillationColumn(ProcessModel):
         dy[y_map["tray_temperature"]] = d_t_tray
         dy[y_map["condenser_drum_component_moles"]] = d_drum
         dy[y_map["condenser_drum_temperature"]] = d_t_drum
+        dy[y_map["condenser_headspace_component_moles"]] = d_headspace
+        dy[y_map["condenser_headspace_temperature"]] = d_t_head
         dy[y_map["reboiler_kettle_component_moles"]] = d_kettle
         dy[y_map["reboiler_kettle_temperature"]] = d_t_kettle
         return dy
 
 
-__all__ = ["ThermoTrayDistillationColumn"]
+class ThermoTrayDistillationColumnPartialCondenser(ProcessModel):
+    @override
+    def model_post_init(self, context: object) -> None:
+        super().model_post_init(context)
+        raise NotImplementedError(
+            "ThermoTrayDistillationColumnPartialCondenser is a reserved backend-only "
+            "boundary and is not implemented in Wave 2."
+        )
+
+    @staticmethod
+    @override
+    def calculate_algebraic_values(
+        y: NDArray[np.float64],
+        u: NDArray[np.float64],
+        k: NDArray[np.float64],
+        y_map: dict[str, ArrayIndex],
+        u_map: dict[str, ArrayIndex],
+        k_map: dict[str, ArrayIndex],
+        algebraic_map: dict[str, ArrayIndex],
+        algebraic_size: int,
+    ) -> NDArray[np.float64]:
+        raise NotImplementedError(
+            "ThermoTrayDistillationColumnPartialCondenser is reserved for a future wave."
+        )
+
+    @staticmethod
+    @override
+    def differential_rhs(
+        t: float,
+        y: NDArray[np.float64],
+        u: NDArray[np.float64],
+        k: NDArray[np.float64],
+        algebraic: NDArray[np.float64],
+        y_map: dict[str, ArrayIndex],
+        u_map: dict[str, ArrayIndex],
+        k_map: dict[str, ArrayIndex],
+        algebraic_map: dict[str, ArrayIndex],
+    ) -> NDArray[np.float64]:
+        raise NotImplementedError(
+            "ThermoTrayDistillationColumnPartialCondenser is reserved for a future wave."
+        )
+
+
+ThermoTrayDistillationColumn = ThermoTrayDistillationColumnTotalCondenser
+
+
+__all__ = [
+    "ThermoTrayDistillationColumnTotalCondenser",
+    "ThermoTrayDistillationColumnPartialCondenser",
+    "ThermoTrayDistillationColumn",
+]

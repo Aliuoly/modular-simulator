@@ -15,6 +15,7 @@ from .subsystem_descriptor import (
 from modular_simulation.framework.system import System
 from modular_simulation.measurables.process_model import ProcessModel, StateType
 from modular_simulation.thermodynamics.algebraic_process_model import UnitProcessPorts
+import modular_simulation.thermodynamics.property_package as pp
 
 if TYPE_CHECKING:
     from modular_simulation.thermodynamics.runtime_context import SimulationRuntimeContext
@@ -161,7 +162,10 @@ def _bind_process_state_projection(
                 unit_id=unit_id,
                 runtime_context=runtime_context,
             )
-        if unit_type_name == "ThermoTrayDistillationColumn":
+        if unit_type_name in {
+            "ThermoTrayDistillationColumn",
+            "ThermoTrayDistillationColumnTotalCondenser",
+        }:
             return _snapshot_thermo_tray_distillation_state_values(
                 unit=unit,
                 unit_id=unit_id,
@@ -400,20 +404,32 @@ def _snapshot_thermo_tray_distillation_state_values(
     tray_matrix = tray_holdup.reshape(n_trays, n_species)
     feed_matrix = feed_compositions.reshape(n_feeds, n_species)
 
-    p_top = float(getattr(unit, "p_top_pa"))
-    delta_p = float(getattr(unit, "delta_p_tray_pa"))
-    bottom_pressure = p_top + max(0, n_trays - 1) * delta_p
+    headspace_pressure = float(getattr(unit, "headspace_pressure_pa"))
+    bottom_pressure = float(getattr(unit, "bottom_pressure_pa"))
+    bubble_temperature_k = _thermo_tray_bubble_temperature_k(unit)
+    drum_temperature_k = float(getattr(unit, "condenser_drum_temperature"))
+    subcooling_k = bubble_temperature_k - drum_temperature_k
 
     scalar_projection: dict[str, float] = {
-        f"{unit_id}/column_pressure_pa": p_top,
-        f"{unit_id}/top_pressure_pa": p_top,
+        f"{unit_id}/column_pressure_pa": headspace_pressure,
+        f"{unit_id}/top_pressure_pa": headspace_pressure,
+        f"{unit_id}/headspace_pressure_pa": headspace_pressure,
         f"{unit_id}/bottom_pressure_pa": bottom_pressure,
         f"{unit_id}/distillate_flow_mol_s": float(getattr(unit, "distillate_flow")),
         f"{unit_id}/bottoms_flow_mol_s": float(getattr(unit, "bottoms_flow")),
         f"{unit_id}/distillate_temperature_K": float(getattr(unit, "distillate_temperature")),
         f"{unit_id}/bottoms_temperature_K": float(getattr(unit, "bottoms_temperature")),
+        f"{unit_id}/condenser_drum_temperature_K": drum_temperature_k,
+        f"{unit_id}/condenser_bubble_temperature_K": bubble_temperature_k,
+        f"{unit_id}/condenser_subcooling_K": subcooling_k,
         f"{unit_id}/reflux_drum_holdup_mol": float(np.sum(drum_moles)),
         f"{unit_id}/bottoms_sump_holdup_mol": float(np.sum(kettle_moles)),
+        f"{unit_id}/realized_condensed_flow_mol_s": float(getattr(unit, "realized_condensed_flow")),
+        f"{unit_id}/non_condensed_flow_mol_s": float(getattr(unit, "non_condensed_flow")),
+        f"{unit_id}/distillate_source_pressure_pa": float(
+            getattr(unit, "distillate_source_pressure_pa")
+        ),
+        f"{unit_id}/reflux_source_pressure_pa": float(getattr(unit, "reflux_source_pressure_pa")),
         f"{unit_id}/distillate_withdrawal_flow_mol_s": float(
             getattr(unit, "distillate_withdrawal_flow")
         ),
@@ -470,6 +486,23 @@ def _snapshot_thermo_tray_distillation_state_values(
             )
 
     return scalar_projection
+
+
+def _thermo_tray_bubble_temperature_k(unit: ProcessModel) -> float:
+    selector = tuple(
+        int(value) for value in np.asarray(getattr(unit, "species_selector"), dtype=np.float64)
+    )
+    species_ids = tuple(pp._DEFAULT_PR_SPECIES_CAS[index] for index in selector)
+    package = pp.PengRobinsonPackage(species_ids=species_ids)
+    try:
+        state = package._flasher.flash(
+            P=float(getattr(unit, "headspace_pressure_pa")),
+            VF=0.0,
+            zs=list(np.asarray(getattr(unit, "distillate_composition"), dtype=np.float64)),
+        )
+        return float(state.T)
+    except Exception:
+        return float(getattr(unit, "condenser_drum_temperature"))
 
 
 __all__ = ["create_subsystem_for_unit", "create_system_for_unit"]
